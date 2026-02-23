@@ -1,0 +1,11 @@
+﻿<Project>
+    <PropertyGroup>
+        <PostWaitSeconds Condition="'$(IsMultiplayerTest)' == 'true'">5</PostWaitSeconds>
+        <PostWaitSeconds Condition="'$(IsMultiplayerTest)' != 'true'">1</PostWaitSeconds>
+    </PropertyGroup>
+
+    <Target Name="Copy built mod and run the game" AfterTargets="PostBuildEvent" Condition="'$(RunPostBuildEvent)' == 'OnBuildSuccess'">
+        <Message Text="Copying built mod to mods directory..." Importance="high" />
+        <Exec Command='copy "$(TargetPath)" "$(S1ModsDir)"'/>
+    </Target>
+</Project>

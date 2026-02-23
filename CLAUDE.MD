@@ -1,0 +1,1 @@
+C:/Users/SirTidez/RiderProjects/PackRat/AGENTS.md
