@@ -40,10 +40,12 @@ namespace PackRat;
 public class PlayerBackpack : MonoBehaviour
 {
     public const string StorageName = "Backpack";
-    public const int MaxStorageSlots = 128;
+    public const int MaxStorageSlots = 40;
 
     private bool _backpackEnabled = true;
     private StorageEntity _storage;
+    private int _lastTierIndex = -2; // sentinel: distinct from -1 (not unlocked) to force initial apply
+    private string _openTitle;
 
 #if !MONO
     public PlayerBackpack(IntPtr ptr) : base(ptr)
@@ -57,14 +59,49 @@ public class PlayerBackpack : MonoBehaviour
     public static PlayerBackpack Instance { get; private set; }
 
     /// <summary>
+    /// Returns the highest tier index the player has unlocked, or -1 if none.
+    /// </summary>
+    public int CurrentTierIndex
+    {
+        get
+        {
+            var currentRank = NetworkSingleton<LevelManager>.Instance.GetFullRank();
+            var result = -1;
+            for (var i = 0; i < Configuration.BackpackTiers.Length; i++)
+            {
+                if (currentRank >= Configuration.Instance.TierUnlockRanks[i])
+                    result = i;
+            }
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// Returns the current tier definition, or null if the backpack is not yet unlocked.
+    /// </summary>
+    public BackpackTierDefinition CurrentTier
+    {
+        get
+        {
+            var idx = CurrentTierIndex;
+            return idx >= 0 ? Configuration.BackpackTiers[idx] : null;
+        }
+    }
+
+    /// <summary>
     /// Whether the backpack has been unlocked at the current player rank.
     /// </summary>
-    public bool IsUnlocked => NetworkSingleton<LevelManager>.Instance.GetFullRank() >= Configuration.Instance.UnlockLevel;
+    public bool IsUnlocked => CurrentTierIndex >= 0;
+
+    /// <summary>
+    /// Whether police body searches include the backpack (true at tier 2 and above).
+    /// </summary>
+    public bool IsPoliceSearchable => CurrentTierIndex >= 2;
 
     /// <summary>
     /// Whether the backpack storage menu is currently open.
     /// </summary>
-    public bool IsOpen => Singleton<StorageMenu>.Instance.IsOpen && Singleton<StorageMenu>.Instance.TitleLabel.text == StorageName;
+    public bool IsOpen => Singleton<StorageMenu>.Instance.IsOpen && Singleton<StorageMenu>.Instance.TitleLabel.text == _openTitle;
 
 #if !MONO
     public Il2CppSystem.Collections.Generic.List<ItemSlot> ItemSlots =>
@@ -83,12 +120,23 @@ public class PlayerBackpack : MonoBehaviour
         }
 
         ModLogger.Info("Configuring backpack storage...");
-        UpdateSize(Configuration.Instance.StorageSlots);
+        var tierIdx = CurrentTierIndex;
+        var slotCount = tierIdx >= 0
+            ? Configuration.Instance.TierSlotCounts[tierIdx]
+            : Configuration.BackpackTiers[0].DefaultSlotCount;
+        UpdateSize(slotCount);
         OnStartClient(true);
     }
 
     private void Update()
     {
+        var tierIdx = CurrentTierIndex;
+        if (tierIdx != _lastTierIndex)
+        {
+            _lastTierIndex = tierIdx;
+            ApplyCurrentTier(tierIdx);
+        }
+
         if (!_backpackEnabled || !IsUnlocked || !Input.GetKeyDown(Configuration.Instance.ToggleKey))
             return;
 
@@ -103,6 +151,25 @@ public class PlayerBackpack : MonoBehaviour
         {
             ModLogger.Error("Error toggling backpack", e);
         }
+    }
+
+    /// <summary>
+    /// Applies the slot count for the given tier, resizing storage if needed.
+    /// </summary>
+    private void ApplyCurrentTier(int tierIdx)
+    {
+        if (tierIdx < 0)
+            return;
+
+        var targetSlots = Configuration.Instance.TierSlotCounts[tierIdx];
+        if (_storage.SlotCount == targetSlots)
+            return;
+
+        ModLogger.Info($"Auto-upgrading backpack to {Configuration.BackpackTiers[tierIdx].Name} ({targetSlots} slots).");
+        UpdateSize(targetSlots);
+
+        // TODO: Trigger manual upgrade mechanic here (animation, notification, item equip, etc.)
+        // For now, the upgrade is instant. Remove this TODO when the mechanic is implemented.
     }
 
     /// <summary>
@@ -126,13 +193,14 @@ public class PlayerBackpack : MonoBehaviour
             || Singleton<StorageMenu>.Instance.IsOpen || Phone.Instance.IsOpen)
             return;
 
+        _openTitle = CurrentTier?.Name ?? StorageName;
         var storageMenu = Singleton<StorageMenu>.Instance;
         storageMenu.SlotGridLayout.constraintCount = _storage.DisplayRowCount;
 
 #if !MONO
-        storageMenu.Open(StorageName, string.Empty, _storage.Cast<IItemSlotOwner>());
+        storageMenu.Open(_openTitle, string.Empty, _storage.Cast<IItemSlotOwner>());
 #else
-        storageMenu.Open(StorageName, string.Empty, _storage);
+        storageMenu.Open(_openTitle, string.Empty, _storage);
 #endif
 
         _storage.SendAccessor(Player.Local.NetworkObject);
@@ -191,6 +259,7 @@ public class PlayerBackpack : MonoBehaviour
     /// Adds slots to the backpack up to <see cref="MaxStorageSlots"/>.
     /// </summary>
     /// <param name="slotCount">Number of slots to add.</param>
+    // TODO: This method will be invoked by the future manual upgrade mechanic (e.g., backpack item equip).
     public void Upgrade(int slotCount)
     {
         if (slotCount is < 1 or > MaxStorageSlots)
@@ -211,6 +280,7 @@ public class PlayerBackpack : MonoBehaviour
     /// </summary>
     /// <param name="slotCount">Number of slots to remove.</param>
     /// <param name="force">If true, removes slots even if they contain items.</param>
+    // TODO: This method will be invoked by the future manual upgrade mechanic (e.g., backpack item equip).
     public void Downgrade(int slotCount, bool force = false)
     {
         if (slotCount < 1)

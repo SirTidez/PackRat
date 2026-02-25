@@ -1,30 +1,69 @@
-﻿$ModName = "PackRat"
+<#
+.SYNOPSIS
+    Builds Thunderstore and Nexus FOMOD packages for PackRat.
+.DESCRIPTION
+    Ensures both IL2CPP and Mono builds exist, updates manifest.json with version from MainMod.cs,
+    then runs package-thunderstore.ps1 and package-fomod.ps1.
+.EXAMPLE
+    .\assets\package-mod.ps1
+#>
 
-# Define paths
+$ErrorActionPreference = "Stop"
+
 $AssetDir = $PSScriptRoot
-$ProjectRoot = Resolve-Path "$AssetDir\.."
-$IL2CPPAssembly = Resolve-Path "$ProjectRoot\bin\Debug\net6\$ModName-IL2CPP.dll"
-$MonoAssembly = Resolve-Path "$ProjectRoot\bin\Debug\netstandard2.1\$ModName-Mono.dll"
-$TSZip = Join-Path $AssetDir "$ModName-TS.zip"
-$NexusIL2CPPZip = Join-Path $AssetDir "$ModName-IL2CPP.zip"
-$NexusMonoZip = Join-Path $AssetDir "$ModName-Mono.zip"
+$ProjectRoot = (Resolve-Path "$AssetDir\..").Path
 
-# Clean up any existing zips
-Remove-Item -Path $TSZip, $NexusIL2CPPZip, $NexusMonoZip -ErrorAction SilentlyContinue
+# Extract version from MainMod.cs
+$mainModPath = Join-Path $ProjectRoot "MainMod.cs"
+$mainModContent = Get-Content -LiteralPath $mainModPath -Raw
+if ($mainModContent -match 'Version\s*=\s*"([^"]+)"') {
+    $Version = $Matches[1]
+}
+else {
+    throw "Could not extract Version from MainMod.cs"
+}
 
-# --- Package TS ---
-$TSFiles = @(
-    "$AssetDir\icon.png",
-    "$ProjectRoot\README.md",
-    "$ProjectRoot\CHANGELOG.md",
-    "$AssetDir\manifest.json",
-    $IL2CPPAssembly,
-    $MonoAssembly
+Write-Host "PackRat version: $Version"
+Write-Host ""
+
+# Ensure both builds exist
+$IL2CPPAssembly = $null
+$MonoAssembly = $null
+
+$il2cppPaths = @(
+    (Join-Path $ProjectRoot "bin\Debug IL2CPP\net6\PackRat-IL2CPP.dll"),
+    (Join-Path $ProjectRoot "bin\Debug\net6\PackRat-IL2CPP.dll")
 )
-Compress-Archive -Path $TSFiles -DestinationPath $TSZip
-Write-Host "Created Thunderstore package: $TSZip"
+$monoPaths = @(
+    (Join-Path $ProjectRoot "bin\Debug Mono\netstandard2.1\PackRat-Mono.dll"),
+    (Join-Path $ProjectRoot "bin\Debug\netstandard2.1\PackRat-Mono.dll")
+)
 
-# --- Package Nexus ---
-Compress-Archive -Path $IL2CPPAssembly -DestinationPath $NexusIL2CPPZip
-Compress-Archive -Path $MonoAssembly -DestinationPath $NexusMonoZip
-Write-Host "Created Nexus zips: $NexusIL2CPPZip and $NexusMonoZip"
+foreach ($p in $il2cppPaths) {
+    if (Test-Path -LiteralPath $p) { $IL2CPPAssembly = $p; break }
+}
+foreach ($p in $monoPaths) {
+    if (Test-Path -LiteralPath $p) { $MonoAssembly = $p; break }
+}
+
+if (-not $IL2CPPAssembly) {
+    Write-Host "IL2CPP build not found. Building..."
+    dotnet build -c "Debug IL2CPP"
+}
+if (-not $MonoAssembly) {
+    Write-Host "Mono build not found. Building..."
+    dotnet build -c "Debug Mono"
+}
+
+# Run Thunderstore packaging
+Write-Host ""
+Write-Host "Creating Thunderstore package..."
+& "$AssetDir\package-thunderstore.ps1" -ProjectRoot $ProjectRoot -Version $Version
+
+# Run FOMOD packaging
+Write-Host ""
+Write-Host "Creating Nexus FOMOD package..."
+& "$AssetDir\package-fomod.ps1" -ProjectRoot $ProjectRoot -Version $Version
+
+Write-Host ""
+Write-Host "Done. Packages created in assets\ with version $Version in filenames."

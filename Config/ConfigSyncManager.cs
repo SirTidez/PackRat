@@ -44,9 +44,12 @@ public static class ConfigSyncManager
     {
         var payload = new StringBuilder();
         payload.Append($"{ModVersion}[");
-        payload.Append($"{Configuration.Instance.UnlockLevel.Rank}:{Configuration.Instance.UnlockLevel.Tier},");
-        payload.Append($"{Configuration.Instance.EnableSearch},");
-        payload.Append($"{Configuration.Instance.StorageSlots},");
+        for (var i = 0; i < Configuration.BackpackTiers.Length; i++)
+        {
+            var rank = Configuration.Instance.TierUnlockRanks[i];
+            var slots = Configuration.Instance.TierSlotCounts[i];
+            payload.Append($"{rank.Rank}:{rank.Tier}/{slots},");
+        }
         payload.Append(']');
 
         ModLogger.Info($"Syncing config payload to clients: {payload}");
@@ -83,7 +86,7 @@ public static class ConfigSyncManager
     private static void SyncFromHost(string payload)
     {
         var parts = payload.Split(['[', ']', ','], StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 2)
+        if (parts.Length < 1 + Configuration.BackpackTiers.Length)
         {
             ModLogger.Warn($"Invalid config payload format: {payload}");
             return;
@@ -95,16 +98,36 @@ public static class ConfigSyncManager
             return;
         }
 
-        var unlockLevel = parts[1].Split(':');
-        if (unlockLevel.Length != 2 || !Enum.TryParse(unlockLevel[0], out ERank rank) || !int.TryParse(unlockLevel[1], out var tier))
+        var newUnlockRanks = new FullRank[Configuration.BackpackTiers.Length];
+        var newSlotCounts = new int[Configuration.BackpackTiers.Length];
+
+        for (var i = 0; i < Configuration.BackpackTiers.Length; i++)
         {
-            ModLogger.Warn($"Invalid unlock level format in payload: {parts[1]}");
-            return;
+            var entry = parts[1 + i];
+            var colonIdx = entry.IndexOf(':');
+            var slashIdx = entry.IndexOf('/');
+            if (colonIdx < 0 || slashIdx < 0 || slashIdx <= colonIdx)
+            {
+                ModLogger.Warn($"Invalid tier entry format in payload: {entry}");
+                return;
+            }
+
+            var rankStr = entry[..colonIdx];
+            var tierStr = entry[(colonIdx + 1)..slashIdx];
+            var slotsStr = entry[(slashIdx + 1)..];
+
+            if (!Enum.TryParse(rankStr, out ERank rank) || !int.TryParse(tierStr, out var tier) || !int.TryParse(slotsStr, out var slots))
+            {
+                ModLogger.Warn($"Failed to parse tier entry: {entry}");
+                return;
+            }
+
+            newUnlockRanks[i] = new FullRank(rank, tier);
+            newSlotCounts[i] = slots;
         }
 
-        Configuration.Instance.UnlockLevel = new FullRank(rank, tier);
-        Configuration.Instance.EnableSearch = bool.Parse(parts[2]);
-        Configuration.Instance.StorageSlots = int.Parse(parts[3]);
+        Configuration.Instance.TierUnlockRanks = newUnlockRanks;
+        Configuration.Instance.TierSlotCounts = newSlotCounts;
         ModLogger.Info("Config synced from host successfully.");
     }
 }

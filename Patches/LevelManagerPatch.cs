@@ -13,7 +13,7 @@ namespace PackRat.Patches;
 
 /// <summary>
 /// Harmony patches for <see cref="LevelManager"/>.
-/// Registers the backpack as an unlockable at the configured rank.
+/// Registers all backpack tiers as unlockables at their configured ranks.
 /// </summary>
 [HarmonyPatch(typeof(LevelManager))]
 public static class LevelManagerPatch
@@ -42,8 +42,13 @@ public static class LevelManagerPatch
             new Vector2(0.5f, 0.5f)
         );
 
-        var unlockable = new Unlockable(Configuration.Instance.UnlockLevel, "Backpack", backpackSprite);
-        __instance.AddUnlockable(unlockable);
+        var cfg = Configuration.Instance;
+        for (var i = 0; i < Configuration.BackpackTiers.Length; i++)
+        {
+            var tier = Configuration.BackpackTiers[i];
+            var unlockable = new Unlockable(cfg.TierUnlockRanks[i], tier.Name, backpackSprite);
+            __instance.AddUnlockable(unlockable);
+        }
     }
 
     /// <summary>

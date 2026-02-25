@@ -2,3 +2,6 @@
 /obj
 FILELOCK.md
 TASKLIST.md
+*.zip
+/bin
+/.claude
