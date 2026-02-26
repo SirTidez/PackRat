@@ -56,6 +56,11 @@
     <!-- Embedded Resources -->
     <ItemGroup>
         <EmbeddedResource Include="assets\icon.png"/>
+        <EmbeddedResource Include="assets\Backpack Icons\rucksack.png"/>
+        <EmbeddedResource Include="assets\Backpack Icons\smallpack.png"/>
+        <EmbeddedResource Include="assets\Backpack Icons\duffelbag.png"/>
+        <EmbeddedResource Include="assets\Backpack Icons\tacticalpack.png"/>
+        <EmbeddedResource Include="assets\Backpack Icons\hikingbackpack.png"/>
     </ItemGroup>
 
     <!-- Events -->

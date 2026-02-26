@@ -24,6 +24,7 @@ public class Configuration
     private readonly MelonPreferences_Entry<KeyCode> _toggleKeyEntry;
     private readonly MelonPreferences_Entry<FullRank>[] _tierUnlockRankEntries;
     private readonly MelonPreferences_Entry<int>[] _tierSlotCountEntries;
+    private readonly MelonPreferences_Entry<bool>[] _tierEnabledEntries;
 
     /// <summary>
     /// Default tier definitions. Slot count and unlock rank are configurable by the host;
@@ -46,6 +47,7 @@ public class Configuration
 
         _tierUnlockRankEntries = new MelonPreferences_Entry<FullRank>[BackpackTiers.Length];
         _tierSlotCountEntries = new MelonPreferences_Entry<int>[BackpackTiers.Length];
+        _tierEnabledEntries = new MelonPreferences_Entry<bool>[BackpackTiers.Length];
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
             _tierUnlockRankEntries[i] = _category.CreateEntry(
@@ -58,15 +60,26 @@ public class Configuration
                 BackpackTiers[i].DefaultSlotCount,
                 $"Number of storage slots for tier {i} ({BackpackTiers[i].Name})"
             );
+            _tierEnabledEntries[i] = _category.CreateEntry(
+                $"Tier{i}_Enabled",
+                true,
+                $"Enable tier {i} ({BackpackTiers[i].Name}) - when disabled, this tier is not available"
+            );
         }
 
         TierUnlockRanks = new FullRank[BackpackTiers.Length];
         TierSlotCounts = new int[BackpackTiers.Length];
+        TierEnabled = new bool[BackpackTiers.Length];
     }
 
     public KeyCode ToggleKey { get; set; }
     public FullRank[] TierUnlockRanks { get; internal set; }
     public int[] TierSlotCounts { get; internal set; }
+
+    /// <summary>
+    /// Per-tier enable flags. When false, that tier is not available (not shown as unlockable, not used for current tier).
+    /// </summary>
+    public bool[] TierEnabled { get; internal set; }
 
     /// <summary>
     /// Loads preferences from disk and resets cached values.
@@ -88,6 +101,7 @@ public class Configuration
             var rank = _tierUnlockRankEntries[i].Value;
             TierUnlockRanks[i] = new FullRank(rank.Rank, Math.Clamp(rank.Tier, 1, 5));
             TierSlotCounts[i] = Math.Clamp(_tierSlotCountEntries[i].Value, 1, PlayerBackpack.MaxStorageSlots);
+            TierEnabled[i] = _tierEnabledEntries[i].Value;
         }
     }
 
@@ -101,6 +115,7 @@ public class Configuration
         {
             _tierUnlockRankEntries[i].Value = new FullRank(TierUnlockRanks[i].Rank, Math.Clamp(TierUnlockRanks[i].Tier, 1, 5));
             _tierSlotCountEntries[i].Value = Math.Clamp(TierSlotCounts[i], 1, PlayerBackpack.MaxStorageSlots);
+            _tierEnabledEntries[i].Value = TierEnabled[i];
         }
         MelonPreferences.Save();
     }

@@ -65,11 +65,14 @@ public class PlayerBackpack : MonoBehaviour
     {
         get
         {
+            var cfg = Configuration.Instance;
             var currentRank = NetworkSingleton<LevelManager>.Instance.GetFullRank();
             var result = -1;
             for (var i = 0; i < Configuration.BackpackTiers.Length; i++)
             {
-                if (currentRank >= Configuration.Instance.TierUnlockRanks[i])
+                if (!cfg.TierEnabled[i])
+                    continue;
+                if (currentRank >= cfg.TierUnlockRanks[i])
                     result = i;
             }
             return result;
@@ -192,6 +195,12 @@ public class PlayerBackpack : MonoBehaviour
         if (!_backpackEnabled || !IsUnlocked || Singleton<ManagementClipboard>.Instance.IsEquipped
             || Singleton<StorageMenu>.Instance.IsOpen || Phone.Instance.IsOpen)
             return;
+
+        if (CameraLockedStateHelper.IsCameraLockedByUI())
+        {
+            ModLogger.Debug("Backpack blocked: player is in camera-locked UI (TV, ATM, dialogue, vehicle, etc.).");
+            return;
+        }
 
         _openTitle = CurrentTier?.Name ?? StorageName;
         var storageMenu = Singleton<StorageMenu>.Instance;
@@ -376,6 +385,9 @@ public class PlayerBackpack : MonoBehaviour
         }
 
         Instance = this;
+
+        // Pre-resolve reflection types so the first backpack keypress doesn't stall
+        CameraLockedStateHelper.PrewarmCache();
     }
 
     private void OnDestroy()
