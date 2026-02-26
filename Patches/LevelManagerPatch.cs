@@ -17,7 +17,8 @@ namespace PackRat.Patches;
 
 /// <summary>
 /// Harmony patches for <see cref="LevelManager"/>.
-/// Registers all backpack tiers as unlockables at their configured ranks.
+/// Registers backpack tiers as level-up unlockables so the player sees when each tier becomes
+/// available to purchase at the hardware store (rank requirement is informational).
 /// </summary>
 [HarmonyPatch(typeof(LevelManager))]
 public static class LevelManagerPatch
@@ -25,15 +26,21 @@ public static class LevelManagerPatch
     private const string FallbackIconResourceName = "PackRat.assets.icon.png";
 
     /// <summary>
+    /// Display suffix for level-up screen so the player knows where to buy.
+    /// </summary>
+    private const string HardwareStoreSuffix = " (Hardware Store)";
+
+    /// <summary>
     /// Embedded resource names for each backpack tier icon (same order as <see cref="Configuration.BackpackTiers"/>).
+    /// Used by shop integration and level-up unlockables.
     /// </summary>
     private static readonly string[] TierIconResourceNames =
     [
-        "PackRat.assets.Backpack Icons.rucksack.png",
-        "PackRat.assets.Backpack Icons.smallpack.png",
-        "PackRat.assets.Backpack Icons.duffelbag.png",
-        "PackRat.assets.Backpack Icons.tacticalpack.png",
-        "PackRat.assets.Backpack Icons.hikingbackpack.png",
+        "PackRat.assets.rucksack.png",
+        "PackRat.assets.smallpack.png",
+        "PackRat.assets.duffelbag.png",
+        "PackRat.assets.tacticalpack.png",
+        "PackRat.assets.hikingbackpack.png",
     ];
 
     private static LevelManager _pendingLevelManager;
@@ -79,7 +86,7 @@ public static class LevelManagerPatch
     }
 
     /// <summary>
-    /// If sync never arrives, register after timeout using local config so the client at least sees backpack unlockables.
+    /// If sync never arrives, register after timeout using local config.
     /// </summary>
     private static IEnumerator ClientRegisterTimeout()
     {
@@ -94,10 +101,10 @@ public static class LevelManagerPatch
     }
 
     /// <summary>
-    /// Registers all enabled backpack tiers as unlockables with the current <see cref="Configuration"/>.
-    /// Call after config is ready (on host/single-player from Awake; on client after sync or timeout).
+    /// Registers enabled backpack tiers as unlockables so the player sees at which level each tier
+    /// becomes available to purchase at the hardware store.
     /// </summary>
-    public static void RegisterBackpackUnlockables(LevelManager levelManager)
+    private static void RegisterBackpackUnlockables(LevelManager levelManager)
     {
         if (levelManager == null)
             return;
@@ -120,15 +127,29 @@ public static class LevelManagerPatch
                 continue;
             var tier = Configuration.BackpackTiers[i];
             var sprite = GetTierSprite(i, fallbackSprite, fallbackTexture);
-            var unlockable = new Unlockable(cfg.TierUnlockRanks[i], tier.Name, sprite);
+            var displayName = tier.Name + HardwareStoreSuffix;
+            var unlockable = new Unlockable(cfg.TierUnlockRanks[i], displayName, sprite);
             levelManager.AddUnlockable(unlockable);
         }
     }
 
     /// <summary>
-    /// Gets the sprite for a backpack tier (per-tier icon, or fallback if load fails).
+    /// Tries to load the fallback backpack icon. Used by shop integration when creating tier listings.
     /// </summary>
-    private static Sprite GetTierSprite(int tierIndex, Sprite fallbackSprite, Texture2D fallbackTexture)
+    public static bool TryGetFallbackIcon(out Texture2D texture, out Sprite sprite)
+    {
+        sprite = null;
+        if (!TryLoadTexture(FallbackIconResourceName, out texture) || texture == null)
+            return false;
+        sprite = Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), new Vector2(0.5f, 0.5f));
+        return true;
+    }
+
+    /// <summary>
+    /// Gets the sprite for a backpack tier (per-tier icon, or fallback if load fails).
+    /// Used by shop integration.
+    /// </summary>
+    public static Sprite GetTierSprite(int tierIndex, Sprite fallbackSprite, Texture2D fallbackTexture)
     {
         if (tierIndex < 0 || tierIndex >= TierIconResourceNames.Length)
             return fallbackSprite;

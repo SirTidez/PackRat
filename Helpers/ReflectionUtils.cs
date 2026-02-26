@@ -250,4 +250,106 @@ internal static class ReflectionUtils
 
         return null;
     }
+
+    /// <summary>
+    /// Gets the count of a list-like object (List, IList, or IL2CPP list).
+    /// </summary>
+    internal static int TryGetListCount(object list)
+    {
+        if (list == null) return 0;
+        var type = list.GetType();
+        var countProp = type.GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
+        if (countProp != null && countProp.PropertyType == typeof(int))
+        {
+            try { return (int)countProp.GetValue(list); }
+            catch { }
+        }
+        if (list is System.Collections.ICollection col)
+        {
+            try { return col.Count; }
+            catch { }
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Gets the element at index from a list-like object.
+    /// </summary>
+    internal static object TryGetListItem(object list, int index)
+    {
+        if (list == null) return null;
+        if (list is System.Collections.IList ilist)
+        {
+            try { return ilist[index]; }
+            catch { return null; }
+        }
+        var type = list.GetType();
+        var indexer = type.GetMethod("get_Item", new[] { typeof(int) })
+            ?? type.GetMethod("Get", new[] { typeof(int) });
+        if (indexer != null)
+        {
+            try { return indexer.Invoke(list, new object[] { index }); }
+            catch { }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Gets all field/property values on the target that look like lists (have Count and indexer).
+    /// Used to scan every slot list on PlayerInventory (hotbarSlots, inventorySlots, etc.).
+    /// </summary>
+    internal static System.Collections.Generic.List<object> TryGetAllListLikeMembers(object target)
+    {
+        var result = new System.Collections.Generic.List<object>();
+        if (target == null) return result;
+        var type = target.GetType();
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        foreach (var member in type.GetFields(flags))
+        {
+            try
+            {
+                var val = member.GetValue(target);
+                if (val != null && TryGetListCount(val) >= 0)
+                    result.Add(val);
+            }
+            catch { }
+        }
+        foreach (var member in type.GetProperties(flags))
+        {
+            if (!member.CanRead) continue;
+            try
+            {
+                var val = member.GetValue(target);
+                if (val != null && TryGetListCount(val) >= 0)
+                    result.Add(val);
+            }
+            catch { }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Invokes a parameterless callback on the target (e.g. slot's onItemDataChanged) to refresh UI.
+    /// </summary>
+    internal static void TryInvokeParameterlessCallback(object target, params string[] possibleNames)
+    {
+        if (target == null) return;
+        foreach (var name in possibleNames)
+        {
+            var val = TryGetFieldOrProperty(target, name);
+            if (val == null) continue;
+            var del = val as Delegate;
+            if (del != null)
+            {
+                try { del.DynamicInvoke(null); return; }
+                catch { }
+            }
+            var method = val.GetType().GetMethod("Invoke", BindingFlags.Public | BindingFlags.Instance);
+            if (method != null && method.GetParameters().Length == 0)
+            {
+                try { method.Invoke(val, null); return; }
+                catch { }
+            }
+        }
+    }
 }

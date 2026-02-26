@@ -25,6 +25,10 @@ public class Configuration
     private readonly MelonPreferences_Entry<FullRank>[] _tierUnlockRankEntries;
     private readonly MelonPreferences_Entry<int>[] _tierSlotCountEntries;
     private readonly MelonPreferences_Entry<bool>[] _tierEnabledEntries;
+    private readonly MelonPreferences_Entry<float>[] _tierPriceEntries;
+
+    /// <summary>Default prices per tier (rucksack cheapest, hiking most expensive).</summary>
+    private static readonly float[] DefaultTierPrices = [25f, 75f, 150f, 300f, 500f];
 
     /// <summary>
     /// Default tier definitions. Slot count and unlock rank are configurable by the host;
@@ -48,6 +52,7 @@ public class Configuration
         _tierUnlockRankEntries = new MelonPreferences_Entry<FullRank>[BackpackTiers.Length];
         _tierSlotCountEntries = new MelonPreferences_Entry<int>[BackpackTiers.Length];
         _tierEnabledEntries = new MelonPreferences_Entry<bool>[BackpackTiers.Length];
+        _tierPriceEntries = new MelonPreferences_Entry<float>[BackpackTiers.Length];
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
             _tierUnlockRankEntries[i] = _category.CreateEntry(
@@ -65,11 +70,17 @@ public class Configuration
                 true,
                 $"Enable tier {i} ({BackpackTiers[i].Name}) - when disabled, this tier is not available"
             );
+            _tierPriceEntries[i] = _category.CreateEntry(
+                $"Tier{i}_Price",
+                DefaultTierPrices[i],
+                $"Price at hardware store for tier {i} ({BackpackTiers[i].Name})"
+            );
         }
 
         TierUnlockRanks = new FullRank[BackpackTiers.Length];
         TierSlotCounts = new int[BackpackTiers.Length];
         TierEnabled = new bool[BackpackTiers.Length];
+        TierPrices = new float[BackpackTiers.Length];
     }
 
     public KeyCode ToggleKey { get; set; }
@@ -80,6 +91,11 @@ public class Configuration
     /// Per-tier enable flags. When false, that tier is not available (not shown as unlockable, not used for current tier).
     /// </summary>
     public bool[] TierEnabled { get; internal set; }
+
+    /// <summary>
+    /// Per-tier price at the hardware store (rucksack cheapest, hiking most expensive). Synced from host.
+    /// </summary>
+    public float[] TierPrices { get; internal set; }
 
     /// <summary>
     /// Loads preferences from disk and resets cached values.
@@ -102,6 +118,7 @@ public class Configuration
             TierUnlockRanks[i] = new FullRank(rank.Rank, Math.Clamp(rank.Tier, 1, 5));
             TierSlotCounts[i] = Math.Clamp(_tierSlotCountEntries[i].Value, 1, PlayerBackpack.MaxStorageSlots);
             TierEnabled[i] = _tierEnabledEntries[i].Value;
+            TierPrices[i] = Math.Max(0f, _tierPriceEntries[i].Value);
         }
     }
 
@@ -116,6 +133,7 @@ public class Configuration
             _tierUnlockRankEntries[i].Value = new FullRank(TierUnlockRanks[i].Rank, Math.Clamp(TierUnlockRanks[i].Tier, 1, 5));
             _tierSlotCountEntries[i].Value = Math.Clamp(TierSlotCounts[i], 1, PlayerBackpack.MaxStorageSlots);
             _tierEnabledEntries[i].Value = TierEnabled[i];
+            _tierPriceEntries[i].Value = Math.Max(0f, TierPrices[i]);
         }
         MelonPreferences.Save();
     }

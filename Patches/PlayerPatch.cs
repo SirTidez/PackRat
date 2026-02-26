@@ -1,6 +1,7 @@
 using HarmonyLib;
 using PackRat.Extensions;
 using PackRat.Helpers;
+using PackRat.Storage;
 
 #if MONO
 using ScheduleOne.Persistence;
@@ -39,12 +40,40 @@ public static class PlayerPatch
         var backpackStorage = __instance.GetBackpackStorage();
         var contents = new ItemSet(backpackStorage.ItemSlots).GetJSON();
 
+        var tierIndex = -1;
+        if (__instance.IsOwner && PlayerBackpack.Instance != null)
+            tierIndex = PlayerBackpack.Instance.HighestPurchasedTierIndex;
+        else
+            TryReadExistingTier(parentFolderPath, out tierIndex);
+
+        var data = new BackpackSaveData { Contents = contents, HighestPurchasedTierIndex = tierIndex };
+        var json = JsonHelper.SerializeObject(data);
+
 #if !MONO
-        __instance.Cast<ISaveable>().WriteSubfile(parentFolderPath, "Backpack", contents);
+        __instance.Cast<ISaveable>().WriteSubfile(parentFolderPath, "Backpack", json);
 #else
         ISaveable instance = __instance;
-        instance.WriteSubfile(parentFolderPath, "Backpack", contents);
+        instance.WriteSubfile(parentFolderPath, "Backpack", json);
 #endif
+    }
+
+    private static void TryReadExistingTier(string parentFolderPath, out int tierIndex)
+    {
+        tierIndex = -1;
+        try
+        {
+            var path = System.IO.Path.Combine(parentFolderPath, "Backpack");
+            if (!System.IO.File.Exists(path))
+                return;
+            var json = System.IO.File.ReadAllText(path);
+            var data = JsonHelper.DeserializeObject<BackpackSaveData>(json);
+            if (data != null)
+                tierIndex = data.HighestPurchasedTierIndex;
+        }
+        catch
+        {
+            // ignore; keep -1
+        }
     }
 
     [HarmonyPatch("Load", typeof(PlayerData), typeof(string))]
@@ -58,13 +87,26 @@ public static class PlayerPatch
         try
         {
             var backpackStorage = __instance.GetBackpackStorage();
-            if (!ItemSet.TryDeserialize(backpackData, out var itemSet))
+            var contents = backpackData;
+            var tierIndex = -1;
+
+            var saveData = JsonHelper.DeserializeObject<BackpackSaveData>(backpackData);
+            if (saveData != null && saveData.Contents != null)
+            {
+                contents = saveData.Contents;
+                tierIndex = saveData.HighestPurchasedTierIndex;
+            }
+
+            if (!ItemSet.TryDeserialize(contents, out var itemSet))
             {
                 ModLogger.Error("Failed to deserialize backpack data.");
                 return;
             }
 
             itemSet.LoadTo(backpackStorage.ItemSlots);
+
+            if (__instance.IsOwner && PlayerBackpack.Instance != null)
+                PlayerBackpack.Instance.SetHighestPurchasedTierIndex(tierIndex);
         }
         catch (Exception e)
         {
@@ -95,13 +137,26 @@ public static class PlayerPatch
         try
         {
             var backpackStorage = __instance.GetBackpackStorage();
-            if (!ItemSet.TryDeserialize(backpackData, out var itemSet))
+            var contents = backpackData;
+            var tierIndex = -1;
+
+            var saveData = JsonHelper.DeserializeObject<BackpackSaveData>(backpackData);
+            if (saveData != null && saveData.Contents != null)
+            {
+                contents = saveData.Contents;
+                tierIndex = saveData.HighestPurchasedTierIndex;
+            }
+
+            if (!ItemSet.TryDeserialize(contents, out var itemSet))
             {
                 ModLogger.Error("Failed to deserialize network backpack data.");
                 return;
             }
 
             itemSet.LoadTo(backpackStorage.ItemSlots);
+
+            if (PlayerBackpack.Instance != null)
+                PlayerBackpack.Instance.SetHighestPurchasedTierIndex(tierIndex);
         }
         catch (Exception e)
         {

@@ -56,7 +56,8 @@ public static class ConfigSyncManager
             var rank = Configuration.Instance.TierUnlockRanks[i];
             var slots = Configuration.Instance.TierSlotCounts[i];
             var enabled = Configuration.Instance.TierEnabled[i] ? 1 : 0;
-            payload.Append($"{rank.Rank}:{rank.Tier}/{slots}/{enabled},");
+            var price = Configuration.Instance.TierPrices[i];
+            payload.Append($"{rank.Rank}:{rank.Tier}/{slots}/{enabled}/{price},");
         }
         payload.Append(']');
 
@@ -109,6 +110,13 @@ public static class ConfigSyncManager
         var newUnlockRanks = new FullRank[Configuration.BackpackTiers.Length];
         var newSlotCounts = new int[Configuration.BackpackTiers.Length];
         var newTierEnabled = new bool[Configuration.BackpackTiers.Length];
+        var newTierPrices = new float[Configuration.BackpackTiers.Length];
+        for (var i = 0; i < Configuration.BackpackTiers.Length; i++)
+        {
+            newTierPrices[i] = Configuration.Instance.TierPrices != null && i < Configuration.Instance.TierPrices.Length
+                ? Configuration.Instance.TierPrices[i]
+                : 25f + i * 50f;
+        }
 
         for (var i = 0; i < Configuration.BackpackTiers.Length; i++)
         {
@@ -122,10 +130,12 @@ public static class ConfigSyncManager
             }
 
             var slash2Idx = entry.IndexOf('/', slash1Idx + 1);
+            var slash3Idx = slash2Idx >= 0 ? entry.IndexOf('/', slash2Idx + 1) : -1;
             var rankStr = entry[..colonIdx];
             var tierStr = entry[(colonIdx + 1)..slash1Idx];
             var slotsStr = slash2Idx >= 0 ? entry[(slash1Idx + 1)..slash2Idx] : entry[(slash1Idx + 1)..];
-            var enabledStr = slash2Idx >= 0 ? entry[(slash2Idx + 1)..] : "1";
+            var enabledStr = slash2Idx >= 0 ? (slash3Idx >= 0 ? entry[(slash2Idx + 1)..slash3Idx] : entry[(slash2Idx + 1)..]) : "1";
+            var priceStr = slash3Idx >= 0 ? entry[(slash3Idx + 1)..] : null;
 
             if (!Enum.TryParse(rankStr, out ERank rank) || !int.TryParse(tierStr, out var tier) || !int.TryParse(slotsStr, out var slots))
             {
@@ -136,11 +146,14 @@ public static class ConfigSyncManager
             newUnlockRanks[i] = new FullRank(rank, tier);
             newSlotCounts[i] = slots;
             newTierEnabled[i] = enabledStr == "1";
+            if (float.TryParse(priceStr, out var price))
+                newTierPrices[i] = Math.Max(0f, price);
         }
 
         Configuration.Instance.TierUnlockRanks = newUnlockRanks;
         Configuration.Instance.TierSlotCounts = newSlotCounts;
         Configuration.Instance.TierEnabled = newTierEnabled;
+        Configuration.Instance.TierPrices = newTierPrices;
         ModLogger.Info("Config synced from host successfully.");
         OnConfigSynced?.Invoke();
     }

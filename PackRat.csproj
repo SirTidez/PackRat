@@ -56,11 +56,11 @@
     <!-- Embedded Resources -->
     <ItemGroup>
         <EmbeddedResource Include="assets\icon.png"/>
-        <EmbeddedResource Include="assets\Backpack Icons\rucksack.png"/>
-        <EmbeddedResource Include="assets\Backpack Icons\smallpack.png"/>
-        <EmbeddedResource Include="assets\Backpack Icons\duffelbag.png"/>
-        <EmbeddedResource Include="assets\Backpack Icons\tacticalpack.png"/>
-        <EmbeddedResource Include="assets\Backpack Icons\hikingbackpack.png"/>
+        <EmbeddedResource Include="assets\rucksack.png"/>
+        <EmbeddedResource Include="assets\smallpack.png"/>
+        <EmbeddedResource Include="assets\duffelbag.png"/>
+        <EmbeddedResource Include="assets\tacticalpack.png"/>
+        <EmbeddedResource Include="assets\hikingbackpack.png"/>
     </ItemGroup>
 
     <!-- Events -->

@@ -1,6 +1,7 @@
 using MelonLoader;
 using PackRat.Config;
 using PackRat.Helpers;
+using PackRat.Shops;
 
 [assembly: MelonInfo(
     typeof(PackRat.PackRat),
@@ -37,5 +38,6 @@ public class PackRat : MelonMod
             return;
 
         ConfigSyncManager.StartSync();
+        BackpackShopIntegration.RunWhenReady();
     }
 }

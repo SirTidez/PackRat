@@ -1,4 +1,5 @@
 using HarmonyLib;
+using PackRat.Shops;
 
 #if MONO
 using ScheduleOne.DevUtilities;
@@ -17,10 +18,18 @@ namespace PackRat.Patches;
 /// <summary>
 /// Harmony patches for <see cref="ShopInterface"/>.
 /// Injects backpack item slots into the available slots list so items can be sold from the backpack.
+/// When any shop awakens, injects backpack tier listings into the hardware store so they appear in the UI.
 /// </summary>
 [HarmonyPatch(typeof(ShopInterface))]
 public static class ShopInterfacePatch
 {
+    [HarmonyPatch("Awake")]
+    [HarmonyPostfix]
+    public static void Awake(ShopInterface __instance)
+    {
+        BackpackShopIntegration.TryAddBackpackListingsToShop(__instance);
+    }
+
     [HarmonyPatch("GetAvailableSlots")]
     [HarmonyPostfix]
 #if !MONO
