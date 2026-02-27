@@ -30,24 +30,34 @@ namespace PackRat.Patches;
 [HarmonyPatch(typeof(HandoverScreen))]
 public static class HandoverScreenPatch
 {
-    private const float VehicleOffsetWhenBackpackVisible = 60f;
     private const float VehicleMaxDistance = 20f;
+    private const string VehicleHeaderTitle = "Vehicle";
+    private const string VehicleHeaderSubtitle = "This is the vehicle you last drove.\nMust be within 20 meters.";
 
     private sealed class PanelState
     {
         public RectTransform BackpackContainer;
+        public RectTransform BackpackSlotContainer;
+        public RectTransform BackpackHeaderRoot;
+        public RectTransform PagingRoot;
         public RectTransform VehicleContainer;
         public Component TitleLabel;
         public Component SubtitleLabel;
+        public Text BackpackTitleText;
+        public Text BackpackSubtitleText;
         public ItemSlotUI[] SlotUIs;
         public Button PrevButton;
         public Button NextButton;
+        public Button ToggleButton;
         public Text PageLabel;
         public Action PrevAction;
         public Action NextAction;
+        public Action ToggleAction;
         public Vector2 VehicleOriginalAnchoredPos;
         public int CurrentPage;
         public int SlotsPerPage;
+        public bool ShowingVehicle;
+        public int LastPageInputFrame;
         public bool Initialized;
     }
 
@@ -85,34 +95,32 @@ public static class HandoverScreenPatch
 
             panel.CurrentPage = 0;
             panel.SlotsPerPage = panel.SlotUIs != null ? panel.SlotUIs.Length : 0;
+            panel.ShowingVehicle = false;
             panel.BackpackContainer.gameObject.SetActive(true);
+            if (panel.PagingRoot != null)
+                panel.PagingRoot.gameObject.SetActive(true);
 
-            if (panel.TitleLabel != null)
-                SetLabelText(panel.TitleLabel, PlayerBackpack.Instance.CurrentTier?.Name ?? PlayerBackpack.StorageName);
-
-            if (panel.SubtitleLabel != null)
-                SetLabelText(panel.SubtitleLabel, "Items from your backpack.");
+            UpdateBackpackHeaderTexts(panel);
 
             var hasVehicle = HasNearbyVehicleStorage();
             if (__instance.NoVehicle != null)
                 __instance.NoVehicle.SetActive(!hasVehicle && !panel.BackpackContainer.gameObject.activeSelf);
 
-            if (hasVehicle)
-            {
-                panel.BackpackContainer.anchoredPosition = panel.VehicleOriginalAnchoredPos;
-                panel.VehicleContainer.anchoredPosition = panel.VehicleOriginalAnchoredPos + new Vector2(0f, -VehicleOffsetWhenBackpackVisible);
-                panel.VehicleContainer.gameObject.SetActive(true);
-            }
-            else
-            {
-                panel.BackpackContainer.anchoredPosition = panel.VehicleOriginalAnchoredPos;
-                panel.VehicleContainer.anchoredPosition = panel.VehicleOriginalAnchoredPos;
-                panel.VehicleContainer.gameObject.SetActive(false);
-                if (__instance.NoVehicle != null)
-                    __instance.NoVehicle.SetActive(false);
-            }
+            ApplyVisibleStorageMode(panel, hasVehicle);
+            if (__instance.NoVehicle != null)
+                __instance.NoVehicle.SetActive(false);
+
+            ApplyScreenHeaderTextForMode(__instance, panel.ShowingVehicle);
 
             ApplyBackpackPage(panel);
+
+            if (panel.PagingRoot != null)
+            {
+                var slotCount = GetBackpackSlots().Count;
+                var slotsPerPage = panel.SlotUIs != null ? panel.SlotUIs.Length : 0;
+                ModLogger.Debug($"Handover pager root='{panel.PagingRoot.name}' active={panel.PagingRoot.gameObject.activeInHierarchy} anchored={panel.PagingRoot.anchoredPosition} slots={slotCount} perPage={slotsPerPage}");
+            }
+
             RebuildQuickMove(__instance, hasVehicle);
         }
         catch (Exception ex)
@@ -133,6 +141,8 @@ public static class HandoverScreenPatch
             ClearSlotAssignments(panel);
             if (panel.BackpackContainer != null)
                 panel.BackpackContainer.gameObject.SetActive(false);
+            if (panel.PagingRoot != null)
+                panel.PagingRoot.gameObject.SetActive(false);
             if (panel.VehicleContainer != null)
                 panel.VehicleContainer.anchoredPosition = panel.VehicleOriginalAnchoredPos;
         }
@@ -148,8 +158,19 @@ public static class HandoverScreenPatch
             return null;
 
         var id = screen.GetInstanceID();
-        if (States.TryGetValue(id, out var existing) && existing.Initialized)
+        if (States.TryGetValue(id, out var existing)
+            && existing.Initialized
+            && IsComponentAlive(existing.BackpackContainer)
+            && IsComponentAlive(existing.VehicleContainer)
+            && IsComponentAlive(existing.BackpackHeaderRoot)
+            && IsComponentAlive(existing.PagingRoot)
+            && IsComponentAlive(existing.PrevButton)
+            && IsComponentAlive(existing.NextButton)
+            && IsComponentAlive(existing.ToggleButton)
+            && IsComponentAlive(existing.PageLabel))
+        {
             return existing;
+        }
 
         var state = existing ?? new PanelState();
         state.VehicleContainer = screen.VehicleContainer;
@@ -157,6 +178,9 @@ public static class HandoverScreenPatch
             return null;
 
         state.VehicleOriginalAnchoredPos = state.VehicleContainer.anchoredPosition;
+
+        if (!IsComponentAlive(state.BackpackContainer))
+            state.BackpackContainer = null;
 
         if (state.BackpackContainer == null)
         {
@@ -168,8 +192,13 @@ public static class HandoverScreenPatch
             state.BackpackContainer = clone;
         }
 
-        state.SlotUIs = state.BackpackContainer.GetComponentsInChildren<ItemSlotUI>(includeInactive: true);
+        state.BackpackSlotContainer = FindMatchingRectTransform(state.BackpackContainer, screen.VehicleSlotContainer);
+        var slotSearchRoot = state.BackpackSlotContainer != null ? state.BackpackSlotContainer : state.BackpackContainer;
+        state.SlotUIs = slotSearchRoot.GetComponentsInChildren<ItemSlotUI>(includeInactive: false);
+        if (state.SlotUIs == null || state.SlotUIs.Length == 0)
+            state.SlotUIs = slotSearchRoot.GetComponentsInChildren<ItemSlotUI>(includeInactive: true);
         ResolveLabels(state);
+        EnsureBackpackHeader(state);
         EnsurePagingControls(state);
         state.Initialized = true;
         States[id] = state;
@@ -209,6 +238,110 @@ public static class HandoverScreenPatch
             state.SubtitleLabel = labels[1];
     }
 
+    private static void EnsureBackpackHeader(PanelState state)
+    {
+        if (state?.BackpackContainer == null)
+            return;
+
+        var headerRoot = state.BackpackContainer.Find("PackRat_BackpackHeader") as RectTransform;
+        if (headerRoot == null)
+        {
+            var rootGo = new GameObject("PackRat_BackpackHeader");
+            headerRoot = rootGo.AddComponent<RectTransform>();
+            headerRoot.SetParent(state.BackpackContainer, worldPositionStays: false);
+            headerRoot.anchorMin = new Vector2(0.5f, 1f);
+            headerRoot.anchorMax = new Vector2(0.5f, 1f);
+            headerRoot.pivot = new Vector2(0.5f, 1f);
+            headerRoot.anchoredPosition = new Vector2(0f, -8f);
+            headerRoot.sizeDelta = new Vector2(380f, 92f);
+        }
+
+        state.BackpackHeaderRoot = headerRoot;
+        state.BackpackTitleText = EnsureHeaderText(headerRoot, "PackRat_BackpackTitle", new Vector2(0f, -18f), new Vector2(360f, 40f), 39, FontStyle.Bold, Color.white);
+        state.BackpackSubtitleText = EnsureHeaderText(headerRoot, "PackRat_BackpackSubtitle", new Vector2(0f, -56f), new Vector2(360f, 30f), 30, FontStyle.Normal, new Color32(218, 218, 218, 255));
+
+        if (TryGetGameObject(headerRoot, out var headerObject)
+            && TryGetGameObject(state.BackpackContainer, out var containerObject))
+        {
+            SetLayerRecursively(headerObject, containerObject.layer);
+            headerRoot.SetAsLastSibling();
+
+            var parentCanvas = state.BackpackContainer.GetComponentInParent<Canvas>();
+            var headerCanvas = headerObject.GetComponent<Canvas>();
+            if (headerCanvas == null)
+                headerCanvas = headerObject.AddComponent<Canvas>();
+
+            headerCanvas.overrideSorting = true;
+            if (parentCanvas != null)
+            {
+                headerCanvas.sortingLayerID = parentCanvas.sortingLayerID;
+                headerCanvas.sortingOrder = parentCanvas.sortingOrder + 210;
+            }
+            else
+            {
+                headerCanvas.sortingOrder = 5010;
+            }
+        }
+
+        UpdateBackpackHeaderTexts(state);
+    }
+
+    private static Text EnsureHeaderText(RectTransform parent, string name, Vector2 anchoredPosition, Vector2 size, int fontSize, FontStyle fontStyle, Color color)
+    {
+        if (parent == null)
+            return null;
+
+        var textTransform = parent.Find(name);
+        Text text = null;
+        if (textTransform != null)
+            text = textTransform.GetComponent<Text>();
+
+        if (text == null)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, worldPositionStays: false);
+            var rt = go.AddComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0.5f, 1f);
+            rt.anchorMax = new Vector2(0.5f, 1f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.anchoredPosition = anchoredPosition;
+            rt.sizeDelta = size;
+
+            text = go.AddComponent<Text>();
+        }
+
+        var textRt = text.transform as RectTransform;
+        if (textRt != null)
+        {
+            textRt.anchorMin = new Vector2(0.5f, 1f);
+            textRt.anchorMax = new Vector2(0.5f, 1f);
+            textRt.pivot = new Vector2(0.5f, 0.5f);
+            textRt.anchoredPosition = anchoredPosition;
+            textRt.sizeDelta = size;
+        }
+
+        text.font = ResolveUiFont(parent);
+        text.fontSize = fontSize;
+        text.fontStyle = fontStyle;
+        text.color = color;
+        text.alignment = TextAnchor.MiddleCenter;
+        text.resizeTextForBestFit = false;
+        text.raycastTarget = false;
+        return text;
+    }
+
+    private static void UpdateBackpackHeaderTexts(PanelState state)
+    {
+        if (state == null)
+            return;
+
+        if (state.BackpackTitleText != null)
+            state.BackpackTitleText.text = PlayerBackpack.Instance?.CurrentTier?.Name ?? PlayerBackpack.StorageName;
+
+        if (state.BackpackSubtitleText != null)
+            state.BackpackSubtitleText.text = "Items from your backpack.";
+    }
+
     private static void EnsurePagingControls(PanelState state)
     {
         if (state.BackpackContainer == null)
@@ -217,47 +350,184 @@ public static class HandoverScreenPatch
         var pagingRoot = state.BackpackContainer.Find("PackRat_Paging");
         if (pagingRoot == null)
         {
+            var parent = state.BackpackContainer.parent;
+            if (parent != null)
+                pagingRoot = parent.Find("PackRat_Paging");
+        }
+
+        if (pagingRoot != null && pagingRoot.parent != state.BackpackContainer)
+            pagingRoot.SetParent(state.BackpackContainer, worldPositionStays: false);
+
+        if (pagingRoot == null)
+        {
             var rootGo = new GameObject("PackRat_Paging");
             pagingRoot = rootGo.transform;
             pagingRoot.SetParent(state.BackpackContainer, worldPositionStays: false);
 
             var rootRt = rootGo.AddComponent<RectTransform>();
-            rootRt.anchorMin = new Vector2(1f, 1f);
-            rootRt.anchorMax = new Vector2(1f, 1f);
-            rootRt.pivot = new Vector2(1f, 1f);
-            rootRt.anchoredPosition = new Vector2(-8f, -8f);
-            rootRt.sizeDelta = new Vector2(112f, 24f);
+            rootRt.pivot = new Vector2(0.5f, 1f);
+            rootRt.sizeDelta = new Vector2(176f, 58f);
+            rootRt.localScale = Vector3.one;
 
-            var prev = CreatePagerButton("<", pagingRoot, new Vector2(-76f, 0f));
-            var next = CreatePagerButton(">", pagingRoot, new Vector2(-2f, 0f));
-            var label = CreatePagerLabel(pagingRoot, new Vector2(-39f, 0f));
+            var layout = rootGo.AddComponent<LayoutElement>();
+            layout.ignoreLayout = true;
 
-            state.PrevButton = prev;
-            state.NextButton = next;
-            state.PageLabel = label;
+            var bg = rootGo.AddComponent<Image>();
+            bg.color = new Color32(16, 16, 16, 185);
+            bg.raycastTarget = false;
         }
-        else
+
+        EnsurePagingBackground(pagingRoot);
+
+        LayoutElement existingLayout = null;
+        try
         {
-            var buttons = pagingRoot.GetComponentsInChildren<Button>(includeInactive: true);
-            foreach (var button in buttons)
+            existingLayout = pagingRoot.GetComponent<LayoutElement>();
+        }
+        catch
+        {
+        }
+
+        if (existingLayout == null)
+        {
+            try
             {
-                if (button == null)
-                    continue;
-                if (button.name.IndexOf("Prev", StringComparison.OrdinalIgnoreCase) >= 0)
-                    state.PrevButton = button;
-                else if (button.name.IndexOf("Next", StringComparison.OrdinalIgnoreCase) >= 0)
-                    state.NextButton = button;
+                existingLayout = pagingRoot.gameObject.AddComponent<LayoutElement>();
+            }
+            catch
+            {
+            }
+        }
+
+        if (existingLayout != null)
+            existingLayout.ignoreLayout = true;
+
+        state.PrevButton = FindPagerButton(pagingRoot, "PackRat_PrevButton");
+        state.NextButton = FindPagerButton(pagingRoot, "PackRat_NextButton");
+        state.ToggleButton = FindPagerButton(pagingRoot, "PackRat_ViewToggleButton");
+        state.PageLabel = FindPagerLabel(pagingRoot);
+
+        if (state.PrevButton == null)
+            state.PrevButton = CreatePagerButton("<", pagingRoot, new Vector2(-70f, -1f));
+        if (state.NextButton == null)
+            state.NextButton = CreatePagerButton(">", pagingRoot, new Vector2(70f, -1f));
+        if (state.ToggleButton == null)
+            state.ToggleButton = CreateToggleButton("Show Vehicle", pagingRoot, new Vector2(0f, -30f));
+        if (state.PageLabel == null)
+            state.PageLabel = CreatePagerLabel(pagingRoot, new Vector2(0f, -1f));
+
+        if (state.PageLabel != null && state.PageLabel.name != "PackRat_PageLabel")
+            state.PageLabel = null;
+        if (state.PageLabel == null)
+            state.PageLabel = CreatePagerLabel(pagingRoot, new Vector2(0f, -1f));
+
+        ConfigurePagerButton(state.PrevButton, "<", new Vector2(-70f, -10f));
+        ConfigurePagerButton(state.NextButton, ">", new Vector2(70f, -10f));
+        ConfigureToggleButton(state.ToggleButton, state.ShowingVehicle ? "Show Backpack" : "Show Vehicle", new Vector2(0f, -34f));
+        ConfigurePagerLabel(state.PageLabel, new Vector2(0f, -10f));
+
+        RectTransform pagingRt = null;
+        try
+        {
+            pagingRt = pagingRoot.GetComponent<RectTransform>();
+        }
+        catch
+        {
+        }
+
+        if (pagingRt == null)
+        {
+            try
+            {
+                pagingRt = pagingRoot.gameObject.AddComponent<RectTransform>();
+            }
+            catch
+            {
+            }
+        }
+
+        state.PagingRoot = pagingRt;
+        UpdatePagingLayout(state);
+
+        if (TryGetGameObject(pagingRoot, out var pagingObject)
+            && TryGetGameObject(state.BackpackContainer, out var containerObject))
+        {
+            SetLayerRecursively(pagingObject, containerObject.layer);
+            pagingRoot.SetAsLastSibling();
+
+            Canvas parentCanvas = null;
+            try
+            {
+                parentCanvas = state.BackpackContainer.GetComponentInParent<Canvas>();
+            }
+            catch
+            {
             }
 
-            if (state.PageLabel == null)
-                state.PageLabel = pagingRoot.GetComponentInChildren<Text>(true);
+            Canvas pagingCanvas = null;
+            try
+            {
+                pagingCanvas = pagingObject.GetComponent<Canvas>();
+            }
+            catch
+            {
+            }
+
+            if (pagingCanvas == null)
+            {
+                try
+                {
+                    pagingCanvas = pagingObject.AddComponent<Canvas>();
+                }
+                catch
+                {
+                }
+            }
+
+            if (pagingCanvas == null)
+                return;
+
+            pagingCanvas.overrideSorting = true;
+            if (parentCanvas != null)
+            {
+                pagingCanvas.sortingLayerID = parentCanvas.sortingLayerID;
+                pagingCanvas.sortingOrder = parentCanvas.sortingOrder + 200;
+            }
+            else
+            {
+                pagingCanvas.sortingOrder = 5000;
+            }
+
+            GraphicRaycaster raycaster = null;
+            try
+            {
+                raycaster = pagingObject.GetComponent<GraphicRaycaster>();
+            }
+            catch
+            {
+            }
+
+            if (raycaster == null)
+            {
+                try
+                {
+                    pagingObject.AddComponent<GraphicRaycaster>();
+                }
+                catch
+                {
+                }
+            }
         }
 
         if (state.PrevAction == null)
             state.PrevAction = () =>
             {
+                if (state.LastPageInputFrame == Time.frameCount)
+                    return;
                 if (state.CurrentPage <= 0)
                     return;
+
+                state.LastPageInputFrame = Time.frameCount;
                 state.CurrentPage--;
                 ApplyBackpackPage(state);
             };
@@ -265,17 +535,51 @@ public static class HandoverScreenPatch
         if (state.NextAction == null)
             state.NextAction = () =>
             {
+                if (state.LastPageInputFrame == Time.frameCount)
+                    return;
                 var totalPages = GetTotalPages(state);
                 if (state.CurrentPage >= totalPages - 1)
                     return;
+
+                state.LastPageInputFrame = Time.frameCount;
                 state.CurrentPage++;
                 ApplyBackpackPage(state);
             };
 
+        if (state.ToggleAction == null)
+            state.ToggleAction = () =>
+            {
+                var hasVehicle = HasNearbyVehicleStorage();
+                if (!hasVehicle)
+                    state.ShowingVehicle = false;
+                else
+                    state.ShowingVehicle = !state.ShowingVehicle;
+
+                ApplyVisibleStorageMode(state, hasVehicle);
+                ApplyScreenHeaderTextForMode(FindOwningScreen(state), state.ShowingVehicle);
+
+                if (!state.ShowingVehicle)
+                    ApplyBackpackPage(state);
+                else
+                    UpdatePagerControls(state, GetTotalPages(state), hasVehicle);
+            };
+
         if (state.PrevButton != null)
+        {
+            EventHelper.RemoveListener(state.PrevAction, state.PrevButton.onClick);
             EventHelper.AddListener(state.PrevAction, state.PrevButton.onClick);
+        }
         if (state.NextButton != null)
+        {
+            EventHelper.RemoveListener(state.NextAction, state.NextButton.onClick);
             EventHelper.AddListener(state.NextAction, state.NextButton.onClick);
+        }
+
+        if (state.ToggleButton != null)
+        {
+            EventHelper.RemoveListener(state.ToggleAction, state.ToggleButton.onClick);
+            EventHelper.AddListener(state.ToggleAction, state.ToggleButton.onClick);
+        }
     }
 
     private static Button CreatePagerButton(string text, Transform parent, Vector2 anchoredPos)
@@ -284,14 +588,14 @@ public static class HandoverScreenPatch
         buttonGo.transform.SetParent(parent, worldPositionStays: false);
 
         var rt = buttonGo.AddComponent<RectTransform>();
-        rt.anchorMin = new Vector2(1f, 1f);
-        rt.anchorMax = new Vector2(1f, 1f);
-        rt.pivot = new Vector2(1f, 1f);
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
         rt.anchoredPosition = anchoredPos;
-        rt.sizeDelta = new Vector2(20f, 20f);
+        rt.sizeDelta = new Vector2(24f, 24f);
 
         var image = buttonGo.AddComponent<Image>();
-        image.color = new Color32(85, 85, 85, 190);
+        image.color = new Color32(60, 60, 60, 210);
 
         var button = buttonGo.AddComponent<Button>();
         button.targetGraphic = image;
@@ -306,11 +610,12 @@ public static class HandoverScreenPatch
 
         var label = labelGo.AddComponent<Text>();
         label.text = text;
-        label.fontSize = 16;
+        label.fontSize = 17;
         label.alignment = TextAnchor.MiddleCenter;
         label.color = Color.white;
         label.resizeTextForBestFit = false;
-        label.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        label.font = ResolveUiFont(parent);
+        label.raycastTarget = false;
 
         return button;
     }
@@ -321,20 +626,272 @@ public static class HandoverScreenPatch
         labelGo.transform.SetParent(parent, worldPositionStays: false);
 
         var rt = labelGo.AddComponent<RectTransform>();
-        rt.anchorMin = new Vector2(1f, 1f);
-        rt.anchorMax = new Vector2(1f, 1f);
-        rt.pivot = new Vector2(1f, 1f);
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
         rt.anchoredPosition = anchoredPos;
-        rt.sizeDelta = new Vector2(50f, 20f);
+        rt.sizeDelta = new Vector2(104f, 22f);
 
         var label = labelGo.AddComponent<Text>();
         label.text = "1/1";
-        label.fontSize = 12;
+        label.fontSize = 13;
         label.alignment = TextAnchor.MiddleCenter;
         label.color = new Color32(220, 220, 220, 255);
         label.resizeTextForBestFit = false;
-        label.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        label.font = ResolveUiFont(parent);
+        label.raycastTarget = false;
         return label;
+    }
+
+    private static void EnsurePagingBackground(Transform pagingRoot)
+    {
+        if (pagingRoot == null)
+            return;
+
+        Image rootImage = null;
+        try
+        {
+            rootImage = pagingRoot.GetComponent<Image>();
+        }
+        catch
+        {
+        }
+
+        if (rootImage != null)
+        {
+            rootImage.enabled = false;
+            rootImage.raycastTarget = false;
+        }
+
+        var bgTransform = pagingRoot.Find("PackRat_PagingBackground");
+        if (bgTransform == null)
+        {
+            var bgGo = new GameObject("PackRat_PagingBackground");
+            bgTransform = bgGo.transform;
+            bgTransform.SetParent(pagingRoot, worldPositionStays: false);
+        }
+
+        var bgRt = bgTransform as RectTransform;
+        if (bgRt == null)
+            return;
+
+        bgRt.anchorMin = new Vector2(0.5f, 0.5f);
+        bgRt.anchorMax = new Vector2(0.5f, 0.5f);
+        bgRt.pivot = new Vector2(0.5f, 0.5f);
+        bgRt.anchoredPosition = new Vector2(0f, -50f);
+        bgRt.sizeDelta = new Vector2(176f, 58f);
+
+        Image bgImage = null;
+        try
+        {
+            bgImage = bgRt.GetComponent<Image>();
+        }
+        catch
+        {
+        }
+
+        if (bgImage == null)
+        {
+            try
+            {
+                bgImage = bgRt.gameObject.AddComponent<Image>();
+            }
+            catch
+            {
+            }
+        }
+
+        if (bgImage != null)
+        {
+            bgImage.color = new Color32(16, 16, 16, 185);
+            bgImage.raycastTarget = false;
+        }
+
+        bgRt.SetAsFirstSibling();
+    }
+
+    private static Button CreateToggleButton(string text, Transform parent, Vector2 anchoredPos)
+    {
+        var buttonGo = new GameObject("PackRat_ViewToggleButton");
+        buttonGo.transform.SetParent(parent, worldPositionStays: false);
+
+        var rt = buttonGo.AddComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = anchoredPos;
+        rt.sizeDelta = new Vector2(138f, 22f);
+
+        var image = buttonGo.AddComponent<Image>();
+        image.color = new Color32(64, 84, 112, 240);
+
+        var button = buttonGo.AddComponent<Button>();
+        button.targetGraphic = image;
+
+        var labelGo = new GameObject("Label");
+        labelGo.transform.SetParent(buttonGo.transform, worldPositionStays: false);
+        var labelRt = labelGo.AddComponent<RectTransform>();
+        labelRt.anchorMin = Vector2.zero;
+        labelRt.anchorMax = Vector2.one;
+        labelRt.offsetMin = Vector2.zero;
+        labelRt.offsetMax = Vector2.zero;
+
+        var label = labelGo.AddComponent<Text>();
+        label.text = text;
+        label.fontSize = 12;
+        label.alignment = TextAnchor.MiddleCenter;
+        label.color = Color.white;
+        label.resizeTextForBestFit = false;
+        label.font = ResolveUiFont(parent);
+        label.raycastTarget = false;
+
+        return button;
+    }
+
+    private static Button FindPagerButton(Transform pagingRoot, string name)
+    {
+        if (pagingRoot == null)
+            return null;
+
+        var buttonTransform = pagingRoot.Find(name);
+        if (buttonTransform == null)
+            return null;
+
+        return buttonTransform.GetComponent<Button>();
+    }
+
+    private static Text FindPagerLabel(Transform pagingRoot)
+    {
+        if (pagingRoot == null)
+            return null;
+
+        var labelTransform = pagingRoot.Find("PackRat_PageLabel");
+        if (labelTransform != null)
+        {
+            var namedLabel = labelTransform.GetComponent<Text>();
+            if (namedLabel != null)
+                return namedLabel;
+        }
+
+        return null;
+    }
+
+    private static void ConfigurePagerButton(Button button, string text, Vector2 anchoredPos)
+    {
+        if (button == null)
+            return;
+
+        var rt = button.transform as RectTransform;
+        if (rt != null)
+        {
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.anchoredPosition = anchoredPos;
+            rt.sizeDelta = new Vector2(32f, 24f);
+        }
+
+        var image = button.GetComponent<Image>();
+        if (image != null)
+        {
+            image.color = new Color32(70, 95, 130, 240);
+            image.raycastTarget = true;
+        }
+
+        var label = button.GetComponentInChildren<Text>(includeInactive: true);
+        if (label == null)
+        {
+            var labelGo = new GameObject("Label");
+            labelGo.transform.SetParent(button.transform, worldPositionStays: false);
+            var labelRt = labelGo.AddComponent<RectTransform>();
+            labelRt.anchorMin = Vector2.zero;
+            labelRt.anchorMax = Vector2.one;
+            labelRt.offsetMin = Vector2.zero;
+            labelRt.offsetMax = Vector2.zero;
+            label = labelGo.AddComponent<Text>();
+        }
+
+        label.text = text;
+        label.font = ResolveUiFont(button.transform);
+        label.fontSize = 18;
+        label.fontStyle = FontStyle.Bold;
+        label.alignment = TextAnchor.MiddleCenter;
+        label.color = Color.white;
+        label.raycastTarget = false;
+        label.resizeTextForBestFit = false;
+
+        button.gameObject.SetActive(true);
+    }
+
+    private static void ConfigurePagerLabel(Text label, Vector2 anchoredPos)
+    {
+        if (label == null)
+            return;
+
+        var rt = label.transform as RectTransform;
+        if (rt != null)
+        {
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.anchoredPosition = anchoredPos;
+            rt.sizeDelta = new Vector2(104f, 22f);
+        }
+
+        label.font = ResolveUiFont(label.transform);
+        label.fontSize = 13;
+        label.alignment = TextAnchor.MiddleCenter;
+        label.color = new Color32(235, 235, 235, 255);
+        label.raycastTarget = false;
+        label.resizeTextForBestFit = false;
+        label.gameObject.SetActive(true);
+    }
+
+    private static void ConfigureToggleButton(Button button, string text, Vector2 anchoredPos)
+    {
+        if (button == null)
+            return;
+
+        var rt = button.transform as RectTransform;
+        if (rt != null)
+        {
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.anchoredPosition = anchoredPos;
+            rt.sizeDelta = new Vector2(138f, 22f);
+        }
+
+        var image = button.GetComponent<Image>();
+        if (image != null)
+        {
+            image.color = new Color32(64, 84, 112, 240);
+            image.raycastTarget = true;
+        }
+
+        var label = button.GetComponentInChildren<Text>(includeInactive: true);
+        if (label == null)
+        {
+            var labelGo = new GameObject("Label");
+            labelGo.transform.SetParent(button.transform, worldPositionStays: false);
+            var labelRt = labelGo.AddComponent<RectTransform>();
+            labelRt.anchorMin = Vector2.zero;
+            labelRt.anchorMax = Vector2.one;
+            labelRt.offsetMin = Vector2.zero;
+            labelRt.offsetMax = Vector2.zero;
+            label = labelGo.AddComponent<Text>();
+        }
+
+        label.text = text;
+        label.font = ResolveUiFont(button.transform);
+        label.fontSize = 12;
+        label.fontStyle = FontStyle.Bold;
+        label.alignment = TextAnchor.MiddleCenter;
+        label.color = Color.white;
+        label.raycastTarget = false;
+        label.resizeTextForBestFit = false;
+
+        button.gameObject.SetActive(true);
     }
 
     private static void ApplyBackpackPage(PanelState state)
@@ -375,19 +932,42 @@ public static class HandoverScreenPatch
         if (state.PageLabel != null)
             state.PageLabel.text = $"{state.CurrentPage + 1}/{totalPages}";
 
-        var pagingVisible = totalPages > 1;
+        Canvas.ForceUpdateCanvases();
+        UpdatePagingLayout(state);
+
+        UpdatePagerControls(state, totalPages, HasNearbyVehicleStorage());
+    }
+
+    private static void UpdatePagerControls(PanelState state, int totalPages, bool hasVehicle)
+    {
+        var showPaging = !state.ShowingVehicle;
+
         if (state.PageLabel != null)
-            state.PageLabel.gameObject.SetActive(pagingVisible);
+        {
+            state.PageLabel.gameObject.SetActive(showPaging);
+            state.PageLabel.text = $"Page {state.CurrentPage + 1}/{Mathf.Max(1, totalPages)}";
+        }
+
         if (state.PrevButton != null)
         {
-            state.PrevButton.gameObject.SetActive(pagingVisible);
-            state.PrevButton.interactable = state.CurrentPage > 0;
+            state.PrevButton.gameObject.SetActive(showPaging);
+            state.PrevButton.interactable = showPaging && totalPages > 1 && state.CurrentPage > 0;
         }
 
         if (state.NextButton != null)
         {
-            state.NextButton.gameObject.SetActive(pagingVisible);
-            state.NextButton.interactable = state.CurrentPage < totalPages - 1;
+            state.NextButton.gameObject.SetActive(showPaging);
+            state.NextButton.interactable = showPaging && totalPages > 1 && state.CurrentPage < totalPages - 1;
+        }
+
+        if (state.ToggleButton != null)
+        {
+            state.ToggleButton.gameObject.SetActive(hasVehicle);
+            state.ToggleButton.interactable = hasVehicle;
+
+            var label = state.ToggleButton.GetComponentInChildren<Text>(includeInactive: true);
+            if (label != null)
+                label.text = state.ShowingVehicle ? "Show Backpack" : "Show Vehicle";
         }
     }
 
@@ -499,7 +1079,27 @@ public static class HandoverScreenPatch
     {
         if (component == null)
             return string.Empty;
+
+        if (component is Text uiText)
+            return uiText.text ?? string.Empty;
+
         var value = ReflectionUtils.TryGetFieldOrProperty(component, "text");
+        if (value != null)
+            return value.ToString() ?? string.Empty;
+
+        var getter = component.GetType().GetMethod("get_text", Type.EmptyTypes);
+        if (getter != null)
+        {
+            try
+            {
+                var result = getter.Invoke(component, null);
+                return result?.ToString() ?? string.Empty;
+            }
+            catch
+            {
+            }
+        }
+
         return value as string ?? value?.ToString() ?? string.Empty;
     }
 
@@ -507,12 +1107,360 @@ public static class HandoverScreenPatch
     {
         if (component == null)
             return;
-        ReflectionUtils.TrySetFieldOrProperty(component, "text", text ?? string.Empty);
+
+        var safeText = text ?? string.Empty;
+
+        if (component is Text uiText)
+        {
+            uiText.text = safeText;
+            return;
+        }
+
+        if (ReflectionUtils.TrySetFieldOrProperty(component, "text", safeText))
+            return;
+
+        if (TryInvokeTextSetter(component, "SetText", safeText))
+            return;
+
+        if (TryInvokeTextSetter(component, "set_text", safeText))
+            return;
+
+        ReflectionUtils.TrySetFieldOrProperty(component, "m_text", safeText);
+    }
+
+    private static bool TryInvokeTextSetter(Component component, string methodName, string text)
+    {
+        if (component == null)
+            return false;
+
+        var methods = component.GetType().GetMethods();
+        for (var i = 0; i < methods.Length; i++)
+        {
+            var method = methods[i];
+            if (!string.Equals(method.Name, methodName, StringComparison.Ordinal))
+                continue;
+
+            var parameters = method.GetParameters();
+            try
+            {
+                if (parameters.Length == 1)
+                {
+                    method.Invoke(component, new object[] { text });
+                    return true;
+                }
+
+                if (parameters.Length == 2)
+                {
+                    method.Invoke(component, new object[] { text, true });
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return false;
     }
 
     private static bool HasBackpack()
     {
         return PlayerBackpack.Instance != null && PlayerBackpack.Instance.IsUnlocked;
+    }
+
+    private static HandoverScreen FindOwningScreen(PanelState state)
+    {
+        if (state?.BackpackContainer == null)
+            return null;
+
+        try
+        {
+            return state.BackpackContainer.GetComponentInParent<HandoverScreen>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void ApplyScreenHeaderTextForMode(HandoverScreen screen, bool showingVehicle)
+    {
+        if (screen == null)
+            return;
+
+        var backpackTitle = PlayerBackpack.Instance?.CurrentTier?.Name ?? PlayerBackpack.StorageName;
+        var backpackSubtitle = "Items from your backpack.";
+        var targetTitle = showingVehicle ? VehicleHeaderTitle : backpackTitle;
+        var targetSubtitle = showingVehicle ? VehicleHeaderSubtitle : backpackSubtitle;
+
+        var labels = screen.GetComponentsInChildren<Component>(true)
+            .Where(IsTextLikeComponent)
+            .ToArray();
+
+        for (var i = 0; i < labels.Length; i++)
+        {
+            var label = labels[i];
+            if (label == null)
+                continue;
+            if (label.name.StartsWith("PackRat_", StringComparison.Ordinal))
+                continue;
+
+            var text = (GetLabelText(label) ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(text))
+                continue;
+
+            if (text.Equals(VehicleHeaderTitle, StringComparison.OrdinalIgnoreCase)
+                || text.Equals(backpackTitle, StringComparison.OrdinalIgnoreCase))
+            {
+                SetLabelText(label, targetTitle);
+                continue;
+            }
+
+            if (text.Contains("vehicle you last drove", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("within 20 meters", StringComparison.OrdinalIgnoreCase)
+                || text.Equals(backpackSubtitle, StringComparison.OrdinalIgnoreCase))
+            {
+                SetLabelText(label, targetSubtitle);
+            }
+        }
+    }
+
+    private static void ApplyVisibleStorageMode(PanelState state, bool hasVehicle)
+    {
+        if (state == null)
+            return;
+
+        if (!hasVehicle)
+            state.ShowingVehicle = false;
+
+        var showVehicle = hasVehicle && state.ShowingVehicle;
+
+        if (state.BackpackContainer != null)
+        {
+            state.BackpackContainer.anchoredPosition = state.VehicleOriginalAnchoredPos;
+            state.BackpackContainer.gameObject.SetActive(true);
+        }
+
+        if (state.BackpackSlotContainer != null)
+            state.BackpackSlotContainer.gameObject.SetActive(!showVehicle);
+
+        SetClonedHeaderVisibility(state, showVehicle);
+
+        if (state.BackpackHeaderRoot != null)
+            state.BackpackHeaderRoot.gameObject.SetActive(!showVehicle);
+
+        if (state.VehicleContainer != null)
+        {
+            state.VehicleContainer.anchoredPosition = state.VehicleOriginalAnchoredPos;
+            state.VehicleContainer.gameObject.SetActive(showVehicle);
+        }
+
+        if (state.PagingRoot != null)
+            state.PagingRoot.gameObject.SetActive(true);
+    }
+
+    private static void UpdatePagingLayout(PanelState state)
+    {
+        if (state?.PagingRoot == null || state.BackpackContainer == null)
+            return;
+
+        if (state.PagingRoot.parent != state.BackpackContainer)
+            state.PagingRoot.SetParent(state.BackpackContainer, worldPositionStays: false);
+
+        var rootRt = state.PagingRoot;
+        rootRt.anchorMin = new Vector2(0.5f, 0.5f);
+        rootRt.anchorMax = new Vector2(0.5f, 0.5f);
+        rootRt.pivot = new Vector2(0.5f, 1f);
+        rootRt.localScale = Vector3.one;
+        const float marginBelowContainer = 150f;
+        var bottomOfContainer = -(state.BackpackContainer.rect.height * state.BackpackContainer.pivot.y);
+        rootRt.anchoredPosition = new Vector2(0f, bottomOfContainer - marginBelowContainer);
+    }
+
+    private static bool TryGetBottomSlotYInContainer(PanelState state, out float y)
+    {
+        y = 0f;
+        if (state?.SlotUIs == null || state.BackpackContainer == null)
+            return false;
+
+        var found = false;
+        var minY = float.MaxValue;
+        for (var i = 0; i < state.SlotUIs.Length; i++)
+        {
+            var slotUi = state.SlotUIs[i];
+            if (slotUi == null)
+                continue;
+
+            var slotRt = slotUi.transform as RectTransform;
+            if (slotRt == null)
+                continue;
+
+            var worldBottom = slotRt.TransformPoint(new Vector3(0f, slotRt.rect.yMin, 0f));
+            var localBottom = state.BackpackContainer.InverseTransformPoint(worldBottom);
+            if (localBottom.y < minY)
+            {
+                minY = localBottom.y;
+                found = true;
+            }
+        }
+
+        if (!found)
+            return false;
+
+        y = minY;
+        return true;
+    }
+
+    private static bool IsComponentAlive(Component component)
+    {
+        if (component == null)
+            return false;
+
+        try
+        {
+            return component.gameObject != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryGetGameObject(Component component, out GameObject gameObject)
+    {
+        gameObject = null;
+        if (component == null)
+            return false;
+
+        try
+        {
+            gameObject = component.gameObject;
+            return gameObject != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryGetRectTransform(Component component, out RectTransform rectTransform)
+    {
+        rectTransform = null;
+        if (component == null)
+            return false;
+
+        try
+        {
+            rectTransform = component.transform as RectTransform;
+            return rectTransform != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void SetComponentActive(Component component, bool active)
+    {
+        if (component == null)
+            return;
+
+        try
+        {
+            if (component.gameObject != null)
+                component.gameObject.SetActive(active);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void SetClonedHeaderVisibility(PanelState state, bool visible)
+    {
+        if (state?.BackpackContainer == null)
+            return;
+
+        var textLike = state.BackpackContainer.GetComponentsInChildren<Component>(true)
+            .Where(IsTextLikeComponent)
+            .ToArray();
+
+        for (var i = 0; i < textLike.Length; i++)
+        {
+            var label = textLike[i];
+            if (label == null)
+                continue;
+
+            if (IsUnderTransform(label, state.BackpackSlotContainer))
+                continue;
+            if (IsUnderTransform(label, state.PagingRoot))
+                continue;
+            if (IsUnderTransform(label, state.BackpackHeaderRoot))
+                continue;
+
+            SetComponentActive(label, visible);
+        }
+    }
+
+    private static bool IsUnderTransform(Component component, Transform parent)
+    {
+        if (component == null || parent == null)
+            return false;
+
+        try
+        {
+            return component.transform != null && component.transform.IsChildOf(parent);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static Font ResolveUiFont(Transform context)
+    {
+        if (context != null)
+        {
+            var text = context.GetComponentsInParent<Text>(true).FirstOrDefault(t => t != null && t.font != null);
+            if (text != null)
+                return text.font;
+        }
+
+        var arial = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        if (arial != null)
+            return arial;
+
+        return Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+    }
+
+    private static void SetLayerRecursively(GameObject gameObject, int layer)
+    {
+        if (gameObject == null)
+            return;
+
+        gameObject.layer = layer;
+        for (var i = 0; i < gameObject.transform.childCount; i++)
+        {
+            var child = gameObject.transform.GetChild(i);
+            if (child != null)
+                SetLayerRecursively(child.gameObject, layer);
+        }
+    }
+
+    private static RectTransform FindMatchingRectTransform(RectTransform clonedRoot, RectTransform source)
+    {
+        if (clonedRoot == null || source == null)
+            return null;
+
+        var candidates = clonedRoot.GetComponentsInChildren<RectTransform>(includeInactive: true);
+        for (var i = 0; i < candidates.Length; i++)
+        {
+            if (candidates[i] == null)
+                continue;
+            if (string.Equals(candidates[i].name, source.name, StringComparison.Ordinal))
+                return candidates[i];
+        }
+
+        return null;
     }
 
     private static bool HasNearbyVehicleStorage()
@@ -545,6 +1493,8 @@ public static class HandoverScreenPatch
 
         if (state.BackpackContainer != null)
             state.BackpackContainer.gameObject.SetActive(false);
+        if (state.PagingRoot != null)
+            state.PagingRoot.gameObject.SetActive(false);
         if (state.VehicleContainer != null)
             state.VehicleContainer.anchoredPosition = state.VehicleOriginalAnchoredPos;
     }

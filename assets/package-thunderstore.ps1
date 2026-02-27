@@ -8,13 +8,18 @@
     Path to the project root directory.
 .PARAMETER Version
     Version string (e.g. 1.0.0). If not provided, extracted from MainMod.cs.
+.PARAMETER Description
+    Description string for manifest.json. If not provided, extracted from MainMod.cs.
 #>
 param(
     [Parameter(Mandatory = $false)]
     [string]$ProjectRoot = (Resolve-Path "$PSScriptRoot\..").Path,
 
     [Parameter(Mandatory = $false)]
-    [string]$Version = ""
+    [string]$Version = "",
+
+    [Parameter(Mandatory = $false)]
+    [string]$Description = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,7 +39,7 @@ if (-not (Test-Path -LiteralPath $MonoAssembly)) {
     $MonoAssembly = Join-Path $ProjectRoot "bin\Debug\netstandard2.1\$ModName-Mono.dll"
 }
 
-# Get version from MainMod.cs if not provided
+# Get build info from MainMod.cs if not provided
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $mainModPath = Join-Path $ProjectRoot "MainMod.cs"
     $mainModContent = Get-Content -LiteralPath $mainModPath -Raw
@@ -45,15 +50,27 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
         throw "Could not extract Version from MainMod.cs"
     }
 }
+if ([string]::IsNullOrWhiteSpace($Description)) {
+    $mainModPath = Join-Path $ProjectRoot "MainMod.cs"
+    $mainModContent = Get-Content -LiteralPath $mainModPath -Raw
+    if ($mainModContent -match 'Description\s*=\s*"([^"]+)"') {
+        $Description = $Matches[1]
+    }
+    else {
+        throw "Could not extract Description from MainMod.cs"
+    }
+}
 
 # Update manifest.json with version
 $manifestPath = Join-Path $AssetDir "manifest.json"
 if (Test-Path -LiteralPath $manifestPath) {
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     $manifest.version_number = $Version
+    $manifest.description = $Description
     $json = $manifest | ConvertTo-Json -Depth 10 -Compress
     [System.IO.File]::WriteAllText($manifestPath, $json, [System.Text.UTF8Encoding]::new($false))
     Write-Host "Updated manifest.json version_number to: $Version"
+    Write-Host "Updated manifest.json description to: $Description"
 }
 
 if (-not (Test-Path -LiteralPath $IL2CPPAssembly)) {
