@@ -110,7 +110,16 @@ public static class HandoverScreenPatch
             if (__instance.NoVehicle != null)
                 __instance.NoVehicle.SetActive(false);
 
-            ApplyScreenHeaderTextForMode(__instance, panel.ShowingVehicle);
+            if (panel.BackpackContainer != null)
+                panel.BackpackContainer.gameObject.SetActive(true);
+            if (panel.BackpackSlotContainer != null)
+                panel.BackpackSlotContainer.gameObject.SetActive(true);
+            if (panel.BackpackHeaderRoot != null)
+                panel.BackpackHeaderRoot.gameObject.SetActive(false);
+            if (panel.VehicleContainer != null)
+                panel.VehicleContainer.gameObject.SetActive(false);
+
+            ApplyPrimaryHeaderForMode(__instance, panel, panel.ShowingVehicle);
 
             ApplyBackpackPage(panel);
 
@@ -197,7 +206,7 @@ public static class HandoverScreenPatch
         state.SlotUIs = slotSearchRoot.GetComponentsInChildren<ItemSlotUI>(includeInactive: false);
         if (state.SlotUIs == null || state.SlotUIs.Length == 0)
             state.SlotUIs = slotSearchRoot.GetComponentsInChildren<ItemSlotUI>(includeInactive: true);
-        ResolveLabels(state);
+        ResolveLabels(state, screen);
         EnsureBackpackHeader(state);
         EnsurePagingControls(state);
         state.Initialized = true;
@@ -205,13 +214,44 @@ public static class HandoverScreenPatch
         return state;
     }
 
-    private static void ResolveLabels(PanelState state)
+    private static void ResolveLabels(PanelState state, HandoverScreen screen)
     {
+        state.TitleLabel = null;
+        state.SubtitleLabel = null;
+
+        if (screen != null && screen.VehicleContainer != null)
+        {
+            var sourceLabels = screen.VehicleContainer.GetComponentsInChildren<Component>(true)
+                .Where(IsTextLikeComponent)
+                .ToArray();
+
+            Component sourceTitle = null;
+            Component sourceSubtitle = null;
+
+            for (var i = 0; i < sourceLabels.Length; i++)
+            {
+                var label = sourceLabels[i];
+                if (label == null)
+                    continue;
+
+                var text = (GetLabelText(label) ?? string.Empty).Trim();
+                if (sourceTitle == null && text.Equals(VehicleHeaderTitle, StringComparison.OrdinalIgnoreCase))
+                {
+                    sourceTitle = label;
+                    continue;
+                }
+
+                if (sourceSubtitle == null && text.Contains("vehicle you last drove", StringComparison.OrdinalIgnoreCase))
+                    sourceSubtitle = label;
+            }
+
+            state.TitleLabel = FindMatchingLabelComponent(state.BackpackContainer, screen.VehicleContainer, sourceTitle);
+            state.SubtitleLabel = FindMatchingLabelComponent(state.BackpackContainer, screen.VehicleContainer, sourceSubtitle);
+        }
+
         var labels = state.BackpackContainer.GetComponentsInChildren<Component>(true)
             .Where(IsTextLikeComponent)
             .ToArray();
-        state.TitleLabel = null;
-        state.SubtitleLabel = null;
 
         for (var i = 0; i < labels.Length; i++)
         {
@@ -238,6 +278,89 @@ public static class HandoverScreenPatch
             state.SubtitleLabel = labels[1];
     }
 
+    private static Component FindMatchingLabelComponent(RectTransform clonedRoot, RectTransform sourceRoot, Component sourceLabel)
+    {
+        if (clonedRoot == null || sourceRoot == null || sourceLabel == null)
+            return null;
+
+        RectTransform sourceRt = null;
+        try
+        {
+            sourceRt = sourceLabel.transform as RectTransform;
+        }
+        catch
+        {
+        }
+
+        if (sourceRt == null)
+            return null;
+
+        var matchingRt = default(RectTransform);
+
+        var relativePath = BuildRelativePath(sourceRoot, sourceRt);
+        if (!string.IsNullOrEmpty(relativePath))
+        {
+            var matchedByPath = clonedRoot.Find(relativePath);
+            matchingRt = matchedByPath as RectTransform;
+        }
+
+        if (matchingRt == null)
+            matchingRt = FindMatchingRectTransform(clonedRoot, sourceRt);
+
+        if (matchingRt == null)
+            return null;
+
+        var sourceType = sourceLabel.GetType();
+        var components = matchingRt.GetComponents<Component>();
+        for (var i = 0; i < components.Length; i++)
+        {
+            var component = components[i];
+            if (component == null)
+                continue;
+            if (component.GetType() == sourceType)
+                return component;
+        }
+
+        for (var i = 0; i < components.Length; i++)
+        {
+            var component = components[i];
+            if (component != null && IsTextLikeComponent(component))
+                return component;
+        }
+
+        return null;
+    }
+
+    private static string BuildRelativePath(Transform root, Transform target)
+    {
+        if (root == null || target == null)
+            return null;
+
+        try
+        {
+            if (!target.IsChildOf(root))
+                return null;
+        }
+        catch
+        {
+            return null;
+        }
+
+        var segments = new List<string>();
+        var current = target;
+        while (current != null && current != root)
+        {
+            segments.Add(current.name);
+            current = current.parent;
+        }
+
+        if (segments.Count == 0)
+            return string.Empty;
+
+        segments.Reverse();
+        return string.Join("/", segments);
+    }
+
     private static void EnsureBackpackHeader(PanelState state)
     {
         if (state?.BackpackContainer == null)
@@ -257,8 +380,9 @@ public static class HandoverScreenPatch
         }
 
         state.BackpackHeaderRoot = headerRoot;
-        state.BackpackTitleText = EnsureHeaderText(headerRoot, "PackRat_BackpackTitle", new Vector2(0f, -18f), new Vector2(360f, 40f), 39, FontStyle.Bold, Color.white);
-        state.BackpackSubtitleText = EnsureHeaderText(headerRoot, "PackRat_BackpackSubtitle", new Vector2(0f, -56f), new Vector2(360f, 30f), 30, FontStyle.Normal, new Color32(218, 218, 218, 255));
+        state.BackpackTitleText = EnsureHeaderText(headerRoot, "PackRat_BackpackTitle", new Vector2(0f, -18f), new Vector2(360f, 40f), 16, FontStyle.Bold, Color.white);
+        state.BackpackSubtitleText = EnsureHeaderText(headerRoot, "PackRat_BackpackSubtitle", new Vector2(0f, -50f), new Vector2(360f, 24f), 8, FontStyle.Normal, new Color32(218, 218, 218, 255));
+        UpdateBackpackHeaderLayout(state);
 
         if (TryGetGameObject(headerRoot, out var headerObject)
             && TryGetGameObject(state.BackpackContainer, out var containerObject))
@@ -284,6 +408,21 @@ public static class HandoverScreenPatch
         }
 
         UpdateBackpackHeaderTexts(state);
+    }
+
+    private static void UpdateBackpackHeaderLayout(PanelState state)
+    {
+        if (state?.BackpackHeaderRoot == null || state.BackpackContainer == null)
+            return;
+
+        var headerRoot = state.BackpackHeaderRoot;
+        headerRoot.anchorMin = new Vector2(0.5f, 0.5f);
+        headerRoot.anchorMax = new Vector2(0.5f, 0.5f);
+        headerRoot.pivot = new Vector2(0.5f, 1f);
+        headerRoot.localScale = Vector3.one;
+
+        var topOfContainer = state.BackpackContainer.rect.height * (1f - state.BackpackContainer.pivot.y);
+        headerRoot.anchoredPosition = new Vector2(0f, topOfContainer - 8f);
     }
 
     private static Text EnsureHeaderText(RectTransform parent, string name, Vector2 anchoredPosition, Vector2 size, int fontSize, FontStyle fontStyle, Color color)
@@ -556,7 +695,7 @@ public static class HandoverScreenPatch
                     state.ShowingVehicle = !state.ShowingVehicle;
 
                 ApplyVisibleStorageMode(state, hasVehicle);
-                ApplyScreenHeaderTextForMode(FindOwningScreen(state), state.ShowingVehicle);
+                ApplyPrimaryHeaderForMode(FindOwningScreen(state), state, state.ShowingVehicle);
 
                 if (!state.ShowingVehicle)
                     ApplyBackpackPage(state);
@@ -1168,6 +1307,33 @@ public static class HandoverScreenPatch
         return PlayerBackpack.Instance != null && PlayerBackpack.Instance.IsUnlocked;
     }
 
+    private static void ApplyPrimaryHeaderForMode(HandoverScreen screen, PanelState panel, bool showingVehicle)
+    {
+        if (panel == null)
+            return;
+
+        var backpackTitle = PlayerBackpack.Instance?.CurrentTier?.Name ?? PlayerBackpack.StorageName;
+        var backpackSubtitle = "Items from your backpack.";
+
+        var targetTitle = showingVehicle ? VehicleHeaderTitle : backpackTitle;
+        var targetSubtitle = showingVehicle ? VehicleHeaderSubtitle : backpackSubtitle;
+
+        if (panel.BackpackHeaderRoot != null)
+            panel.BackpackHeaderRoot.gameObject.SetActive(false);
+
+        if (panel.TitleLabel != null)
+        {
+            SetLabelText(panel.TitleLabel, targetTitle);
+            SetComponentActive(panel.TitleLabel, true);
+        }
+
+        if (panel.SubtitleLabel != null)
+        {
+            SetLabelText(panel.SubtitleLabel, targetSubtitle);
+            SetComponentActive(panel.SubtitleLabel, true);
+        }
+    }
+
     private static HandoverScreen FindOwningScreen(PanelState state)
     {
         if (state?.BackpackContainer == null)
@@ -1180,48 +1346,6 @@ public static class HandoverScreenPatch
         catch
         {
             return null;
-        }
-    }
-
-    private static void ApplyScreenHeaderTextForMode(HandoverScreen screen, bool showingVehicle)
-    {
-        if (screen == null)
-            return;
-
-        var backpackTitle = PlayerBackpack.Instance?.CurrentTier?.Name ?? PlayerBackpack.StorageName;
-        var backpackSubtitle = "Items from your backpack.";
-        var targetTitle = showingVehicle ? VehicleHeaderTitle : backpackTitle;
-        var targetSubtitle = showingVehicle ? VehicleHeaderSubtitle : backpackSubtitle;
-
-        var labels = screen.GetComponentsInChildren<Component>(true)
-            .Where(IsTextLikeComponent)
-            .ToArray();
-
-        for (var i = 0; i < labels.Length; i++)
-        {
-            var label = labels[i];
-            if (label == null)
-                continue;
-            if (label.name.StartsWith("PackRat_", StringComparison.Ordinal))
-                continue;
-
-            var text = (GetLabelText(label) ?? string.Empty).Trim();
-            if (string.IsNullOrEmpty(text))
-                continue;
-
-            if (text.Equals(VehicleHeaderTitle, StringComparison.OrdinalIgnoreCase)
-                || text.Equals(backpackTitle, StringComparison.OrdinalIgnoreCase))
-            {
-                SetLabelText(label, targetTitle);
-                continue;
-            }
-
-            if (text.Contains("vehicle you last drove", StringComparison.OrdinalIgnoreCase)
-                || text.Contains("within 20 meters", StringComparison.OrdinalIgnoreCase)
-                || text.Equals(backpackSubtitle, StringComparison.OrdinalIgnoreCase))
-            {
-                SetLabelText(label, targetSubtitle);
-            }
         }
     }
 
@@ -1247,7 +1371,8 @@ public static class HandoverScreenPatch
         SetClonedHeaderVisibility(state, showVehicle);
 
         if (state.BackpackHeaderRoot != null)
-            state.BackpackHeaderRoot.gameObject.SetActive(!showVehicle);
+            state.BackpackHeaderRoot.gameObject.SetActive(false);
+        UpdateBackpackHeaderLayout(state);
 
         if (state.VehicleContainer != null)
         {

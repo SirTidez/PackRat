@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.0.3
+
+### Deal handover backpack panel
+- Added backpack storage integration to the deal handover UI with paged slot rendering for larger backpack tiers.
+- Added pager controls (`<`, page indicator, `>`) and ensured page switching updates slot bindings correctly.
+- Added a vehicle/backpack view toggle under the pager; backpack view is default and toggle is only shown when vehicle storage is available within 20 meters.
+
+### Handover UI behavior and stability
+- Fixed item duplication regression introduced during early slot-initialization experiments.
+- Hardened handover panel lifecycle checks against stale/destroyed components to prevent open-time exceptions in IL2CPP.
+- Improved pager setup robustness for IL2CPP by recreating/repairing missing controls and guarding fragile component access paths.
+
+### Handover UI placement and visuals
+- Reworked pager layout anchoring so controls are placed beneath the backpack storage area.
+- Added a dedicated pager background element and aligned it with the pager controls.
+
+### Header label targeting
+- Reworked handover header label targeting to avoid mutating unrelated text fields (customer panel, deal section, and preference labels).
+- Switched header mapping to use source-to-clone transform matching so only the cloned vehicle header labels are updated for backpack/vehicle mode text.
+
+---
+
 ## 1.0.1
 
 ### IL2CPP Hardware Store fixes

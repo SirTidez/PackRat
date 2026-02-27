@@ -6,7 +6,21 @@ A [Schedule One](https://store.steampowered.com/app/3164500) mod that gives ever
 
 ## Screenshots
 
-*Screenshots coming soon.*
+### Backpack Inventory
+
+![PackRat backpack inventory view](assets/images/inventory.png)
+
+### Hardware Store / Shop Integration
+
+![PackRat shop interface integration](assets/images/shop_interface.png)
+
+### Tactical Pack Tier Example
+
+![PackRat tactical pack example](assets/images/tac_pack.png)
+
+### Deal Handover UI (Backpack Integration)
+
+![PackRat backpack in deal handover UI](assets/images/handover.png)
 
 ---
 
@@ -44,6 +58,9 @@ Everything in your backpack is saved to disk when you save your game. Load back 
 ### Shop Integration
 When visiting a shop to sell, your backpack slots appear alongside your hotbar items. You can sell directly out of the backpack without shuffling things into your inventory first.
 
+### Deal Handover Integration
+During deal handovers, your backpack storage is injected into the handover UI so you can move required items directly from your bag. Larger tiers are paged, with `<` and `>` controls plus a page indicator under the backpack panel. If your last driven vehicle is within 20 meters (the same condition the base game uses for vehicle storage access), a `Show Vehicle` toggle appears so you can switch between backpack and vehicle storage views.
+
 ### Cart-Aware Purchasing
 When buying from a shop, the purchase warning accounts for your backpack space. If your hotbar is full but the backpack has room, the game will let you know items will spill into it rather than falsely warning you that everything won't fit.
 
@@ -63,6 +80,8 @@ In a multiplayer session, the host's configuration is automatically pushed to al
 |--------|:-----------:|-------|
 | Open / close backpack | `B` | When the backpack is already unlocked. |
 | **Use** backpack item (apply tier) | `B` | When a backpack tier item is in your hotbar, select it and press **B** to consume it, apply that tier to your backpack, and open the backpack. |
+
+Handover paging and storage view switching use on-screen UI buttons.
 
 The toggle key is fully configurable. See [Configuration](#configuration) below.
 
