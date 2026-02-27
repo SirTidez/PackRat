@@ -1,4 +1,6 @@
 using System.Collections;
+using System.IO;
+using System.Reflection;
 using HarmonyLib;
 using MelonLoader;
 using PackRat.Config;
@@ -46,6 +48,7 @@ public static class LevelManagerPatch
     private static LevelManager _pendingLevelManager;
     private static bool _clientRegistrationDone;
     private static bool _clientSubscribed;
+    private static bool _resourceDiagnosticsLogged;
 
     [HarmonyPatch("Awake")]
     [HarmonyPostfix]
@@ -168,18 +171,114 @@ public static class LevelManagerPatch
     private static bool TryLoadTexture(string resourceName, out Texture2D texture)
     {
         texture = null;
-        using var resourceStream = typeof(PackRat).Assembly.GetManifestResourceStream(resourceName);
-        if (resourceStream == null)
+        if (!TryGetResourceStream(resourceName, out var resourceStream))
         {
+            if (!_resourceDiagnosticsLogged)
+            {
+                _resourceDiagnosticsLogged = true;
+                LogResourceDiagnostics();
+            }
+
             ModLogger.Error($"Failed to find embedded resource: {resourceName}");
             return false;
         }
 
-        var buffer = new byte[resourceStream.Length];
-        resourceStream.Read(buffer, 0, buffer.Length);
-        texture = new Texture2D(0, 0);
-        texture.filterMode = FilterMode.Point;
-        texture.LoadImage(buffer);
-        return true;
+        using (resourceStream)
+        {
+            var buffer = new byte[resourceStream.Length];
+            resourceStream.Read(buffer, 0, buffer.Length);
+            texture = new Texture2D(0, 0);
+            texture.filterMode = FilterMode.Point;
+            texture.LoadImage(buffer);
+            return true;
+        }
+    }
+
+    private static bool TryGetResourceStream(string resourceName, out Stream stream)
+    {
+        stream = null;
+        if (string.IsNullOrEmpty(resourceName))
+            return false;
+
+        var modAsm = typeof(PackRat).Assembly;
+        stream = modAsm.GetManifestResourceStream(resourceName);
+        if (stream != null)
+            return true;
+
+        var loaded = AppDomain.CurrentDomain.GetAssemblies();
+        for (var i = 0; i < loaded.Length; i++)
+        {
+            var asm = loaded[i];
+            if (asm == null)
+                continue;
+
+            try
+            {
+                var names = asm.GetManifestResourceNames();
+                for (var n = 0; n < names.Length; n++)
+                {
+                    var name = names[n];
+                    if (!string.Equals(name, resourceName, StringComparison.Ordinal))
+                        continue;
+
+                    stream = asm.GetManifestResourceStream(name);
+                    if (stream != null)
+                    {
+                        ModLogger.Warn($"Resolved resource '{resourceName}' from assembly '{asm.GetName().Name}'.");
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return false;
+    }
+
+    private static void LogResourceDiagnostics()
+    {
+        try
+        {
+            var modAsm = typeof(PackRat).Assembly;
+            var modNames = modAsm.GetManifestResourceNames();
+            ModLogger.Warn($"PackRat assembly '{modAsm.FullName}' resource count: {modNames.Length}");
+            for (var i = 0; i < modNames.Length; i++)
+                ModLogger.Warn($"PackRat resource: {modNames[i]}");
+
+            var loaded = AppDomain.CurrentDomain.GetAssemblies();
+            for (var i = 0; i < loaded.Length; i++)
+            {
+                var asm = loaded[i];
+                if (asm == null)
+                    continue;
+
+                string[] names;
+                try
+                {
+                    names = asm.GetManifestResourceNames();
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (names == null || names.Length == 0)
+                    continue;
+
+                for (var n = 0; n < names.Length; n++)
+                {
+                    if (names[n].IndexOf("PackRat.assets", StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
+
+                    ModLogger.Warn($"Found candidate resource '{names[n]}' in assembly '{asm.GetName().Name}'.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("LevelManagerPatch: resource diagnostics failed", ex);
+        }
     }
 }

@@ -13,6 +13,7 @@ using ScheduleOne;
 using ScheduleOne.ItemFramework;
 using ScheduleOne.UI.Shop;
 #else
+using Il2CppInterop.Runtime;
 using Il2CppScheduleOne;
 using Il2CppScheduleOne.ItemFramework;
 using Il2CppScheduleOne.UI.Shop;
@@ -70,7 +71,7 @@ public static class BackpackShopIntegration
             ModLogger.Info($"BackpackShopIntegration: Added backpack tier listings to Hardware Store (instance {id}).");
             return true;
         }
-        ModLogger.Warn("BackpackShopIntegration: Hardware Store found but adding listings failed (check icons/config).");
+        ModLogger.Warn("BackpackShopIntegration: Hardware Store found but adding listings failed (see tier warnings above).");
         return false;
     }
 
@@ -247,37 +248,80 @@ public static class BackpackShopIntegration
     {
         if (shop == null)
             return false;
-        var cfg = Configuration.Instance;
-        if (!LevelManagerPatch.TryGetFallbackIcon(out var fallbackTexture, out var fallbackSprite))
+        if (shop.Listings == null)
         {
-            ModLogger.Error("BackpackShopIntegration: Could not load fallback icon.");
+            ModLogger.Warn("BackpackShopIntegration: Shop.Listings is null; cannot add backpack listings.");
             return false;
+        }
+
+        var cfg = Configuration.Instance;
+        var hasFallback = LevelManagerPatch.TryGetFallbackIcon(out var fallbackTexture, out var fallbackSprite);
+        if (!hasFallback)
+        {
+            fallbackTexture = new Texture2D(2, 2);
+            fallbackTexture.SetPixel(0, 0, Color.white);
+            fallbackTexture.SetPixel(1, 0, Color.white);
+            fallbackTexture.SetPixel(0, 1, Color.white);
+            fallbackTexture.SetPixel(1, 1, Color.white);
+            fallbackTexture.Apply();
+            fallbackSprite = Sprite.Create(fallbackTexture, new Rect(0, 0, 2, 2), new Vector2(0.5f, 0.5f));
+            ModLogger.Warn("BackpackShopIntegration: Fallback icon resource missing; using generated placeholder icon.");
         }
         // Only show tiers the player has not already purchased (avoid showing tier 0 if they already have it, etc.)
         var currentHighest = PlayerBackpack.Instance != null ? PlayerBackpack.Instance.HighestPurchasedTierIndex : -1;
+        var anyAdded = false;
+        var anyEligible = false;
+        var anyAlreadyPresent = false;
+        var missingDefCount = 0;
+        var registerFailedCount = 0;
+        var listingFailedCount = 0;
         for (var i = 0; i < Configuration.BackpackTiers.Length; i++)
         {
             if (i <= currentHighest)
                 continue;
             if (!cfg.TierEnabled[i])
                 continue;
+
+            anyEligible = true;
+
             var itemId = BackpackItemIdPrefix + i;
             if (ShopHasItem(shop, itemId))
+            {
+                anyAlreadyPresent = true;
                 continue;
+            }
             var tierSprite = LevelManagerPatch.GetTierSprite(i, fallbackSprite, fallbackTexture);
-            var def = CreateBackpackTierDefinition(i, itemId, cfg, tierSprite);
+            var def = CreateBackpackTierDefinition(shop, i, itemId, cfg, tierSprite);
             if (def == null)
+            {
+                missingDefCount++;
+                ModLogger.Warn($"BackpackShopIntegration: Tier {i} definition creation returned null.");
                 continue;
+            }
             if (!RegisterDefinition(def))
             {
+                registerFailedCount++;
                 ModLogger.Warn($"BackpackShopIntegration: Could not register definition for tier {i}.");
                 continue;
             }
             if (!AddListingToShop(shop, def, fallbackSprite, fallbackTexture))
+            {
+                listingFailedCount++;
                 ModLogger.Warn($"BackpackShopIntegration: Could not add listing for tier {i}.");
+            }
+            else
+                anyAdded = true;
         }
-        ModLogger.Info("BackpackShopIntegration: Added backpack tier listings to Hardware Store.");
-        return true;
+
+        if (anyAdded)
+            ModLogger.Info("BackpackShopIntegration: Added backpack tier listings to Hardware Store.");
+
+        if (!anyEligible || anyAlreadyPresent || anyAdded)
+            return true;
+
+        ModLogger.Warn($"BackpackShopIntegration: Eligible tiers found but none added. missingDef={missingDefCount}, registerFailed={registerFailedCount}, listingFailed={listingFailedCount}");
+
+        return false;
     }
 
     private static bool ShopHasItem(ShopInterface shop, string itemId)
@@ -296,14 +340,24 @@ public static class BackpackShopIntegration
         return false;
     }
 
-    private static StorableItemDefinition CreateBackpackTierDefinition(int tierIndex, string itemId, Configuration cfg, Sprite iconSprite)
+    private static StorableItemDefinition CreateBackpackTierDefinition(ShopInterface shop, int tierIndex, string itemId, Configuration cfg, Sprite iconSprite)
     {
         try
         {
 #if MONO
             var def = (StorableItemDefinition)ScriptableObject.CreateInstance(typeof(StorableItemDefinition));
 #else
-            var def = (StorableItemDefinition)ScriptableObject.CreateInstance("Il2CppScheduleOne.ItemFramework.StorableItemDefinition");
+            var created = ScriptableObject.CreateInstance("ScheduleOne.ItemFramework.StorableItemDefinition")
+                ?? ScriptableObject.CreateInstance("Il2CppScheduleOne.ItemFramework.StorableItemDefinition")
+                ?? ScriptableObject.CreateInstance("StorableItemDefinition");
+
+            var def = created?.TryCast<StorableItemDefinition>();
+
+            if (def == null)
+                def = CloneTemplateStorableItemDefinition(shop);
+
+            if (def == null)
+                ModLogger.Warn("BackpackShopIntegration: Could not create StorableItemDefinition instance in IL2CPP.");
 #endif
             if (def == null)
                 return null;
@@ -341,6 +395,37 @@ public static class BackpackShopIntegration
             ModLogger.Error($"BackpackShopIntegration: CreateBackpackTierDefinition tier {tierIndex}", ex);
             return null;
         }
+    }
+
+    private static StorableItemDefinition CloneTemplateStorableItemDefinition(ShopInterface shop)
+    {
+        if (shop?.Listings == null)
+            return null;
+
+        try
+        {
+            foreach (var listing in shop.Listings)
+            {
+                if (listing?.Item == null)
+                    continue;
+
+                if (!Utils.Is<StorableItemDefinition>(listing.Item, out var template) || template == null)
+                    continue;
+
+                var clone = UnityEngine.Object.Instantiate(template);
+#if !MONO
+                return clone?.TryCast<StorableItemDefinition>();
+#else
+                return clone as StorableItemDefinition;
+#endif
+            }
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("BackpackShopIntegration: CloneTemplateStorableItemDefinition", ex);
+        }
+
+        return null;
     }
 
     private static bool RegisterDefinition(StorableItemDefinition def)
@@ -382,8 +467,17 @@ public static class BackpackShopIntegration
             };
             shop.Listings.Add(listing);
             listing.Initialize(shop);
-            var sprite = LevelManagerPatch.GetTierSprite(ParseTierFromItemId(def.ID), fallbackSprite, fallbackTexture);
-            CreateListingUI(shop, listing, sprite);
+
+            // Use the game's own listing UI creation path so IL2CPP and Mono behave identically.
+            if (!TryInvokeShopMethod(shop, "CreateListingUI", listing))
+            {
+                var sprite = LevelManagerPatch.GetTierSprite(ParseTierFromItemId(def.ID), fallbackSprite, fallbackTexture);
+                CreateListingUI(shop, listing, sprite);
+            }
+
+            // Ensure visibility/filter state updates immediately when the shop is open.
+            TryInvokeShopMethod(shop, "RefreshUnlockStatus");
+            TryInvokeShopMethod(shop, "RefreshShownItems");
             return true;
         }
         catch (Exception ex)
@@ -391,6 +485,37 @@ public static class BackpackShopIntegration
             ModLogger.Error("BackpackShopIntegration: AddListingToShop", ex);
             return false;
         }
+    }
+
+    private static bool TryInvokeShopMethod(ShopInterface shop, string methodName, params object[] args)
+    {
+        try
+        {
+            if (shop == null || string.IsNullOrEmpty(methodName))
+                return false;
+
+            var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            var methods = shop.GetType().GetMethods(flags);
+            for (var i = 0; i < methods.Length; i++)
+            {
+                var m = methods[i];
+                if (m == null || !string.Equals(m.Name, methodName, StringComparison.Ordinal))
+                    continue;
+
+                var p = m.GetParameters();
+                if ((args == null ? 0 : args.Length) != p.Length)
+                    continue;
+
+                m.Invoke(shop, args);
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Debug($"BackpackShopIntegration: {methodName} invoke failed: {ex.Message}");
+        }
+
+        return false;
     }
 
     private static int ParseTierFromItemId(string itemId)

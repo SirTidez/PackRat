@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.0.1
+
+### IL2CPP Hardware Store fixes
+- Fixed IL2CPP backpack tier listing creation by using IL2CPP-safe `TryCast` and a template-clone fallback when creating `StorableItemDefinition` instances.
+- Improved Hardware Store integration flow to use game-native listing UI refresh methods and to avoid false "added" success logs.
+- Added targeted diagnostics for resource lookup and tier-listing pipeline failures to make IL2CPP troubleshooting actionable.
 
 ### Backpack tier purchase and use (Hardware Store)
 - Backpack tiers are now **purchased at the Hardware Store** (both locations) with **account funds**; they no longer unlock automatically by rank.

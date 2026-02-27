@@ -22,7 +22,7 @@ namespace PackRat.Config;
 public static class ConfigSyncManager
 {
     private const string Prefix = "PackRat_Config";
-    private static readonly string ModVersion = typeof(PackRat).Assembly.GetName().Version?.ToString() ?? "1.0.0";
+    private static readonly string ModVersion = typeof(PackRat).Assembly.GetName().Version?.ToString() ?? "1.0.1";
 
     /// <summary>
     /// Raised after a client successfully applies synced config from the host.
