@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 
+
 namespace PackRat.Helpers;
 
 /// <summary>
@@ -171,8 +172,25 @@ internal static class ReflectionUtils
     }
 
     /// <summary>
+    /// Returns true when <paramref name="value"/> is a string and <paramref name="memberType"/> is
+    /// System.String or Il2CppSystem.String, so that we allow assignment in IL2CPP where the
+    /// member type may be Il2CppSystem.String.
+    /// </summary>
+    private static bool IsStringAssignableTo(Type memberType, object value)
+    {
+        if (memberType == null || value == null)
+            return false;
+        if (!(value is string))
+            return false;
+        if (memberType == typeof(string))
+            return true;
+        return memberType.FullName == "Il2CppSystem.String";
+    }
+
+    /// <summary>
     /// Attempts to set a field or property on an object using reflection.
     /// Tries field first, then property. Handles both public and non-public members.
+    /// In IL2CPP, allows C# string assignment to Il2CppSystem.String members and converts when needed.
     /// </summary>
     /// <param name="target">The target object to set the member on.</param>
     /// <param name="memberName">The name of the field or property.</param>
@@ -189,7 +207,7 @@ internal static class ReflectionUtils
         {
             try
             {
-                if (value == null || fi.FieldType.IsInstanceOfType(value))
+                if (value == null || fi.FieldType.IsInstanceOfType(value) || IsStringAssignableTo(fi.FieldType, value))
                 {
                     fi.SetValue(target, value);
                     return true;
@@ -203,7 +221,7 @@ internal static class ReflectionUtils
         {
             try
             {
-                if (value == null || pi.PropertyType.IsInstanceOfType(value))
+                if (value == null || pi.PropertyType.IsInstanceOfType(value) || IsStringAssignableTo(pi.PropertyType, value))
                 {
                     pi.SetValue(target, value);
                     return true;

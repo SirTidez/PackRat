@@ -1,3 +1,4 @@
+using System.Collections;
 using PackRat.Config;
 using PackRat.Helpers;
 using PackRat.Shops;
@@ -48,6 +49,7 @@ public class PlayerBackpack : MonoBehaviour
     private int _lastTierIndex = -2; // sentinel: distinct from -1 (not unlocked) to force initial apply
     private string _openTitle;
     private int _highestPurchasedTierIndex = -1;
+    private const int TierCheckIntervalFrames = 60; // throttle tier lookup to reduce per-frame work
 
 #if !MONO
     public PlayerBackpack(IntPtr ptr) : base(ptr)
@@ -141,20 +143,35 @@ public class PlayerBackpack : MonoBehaviour
         var slotCount = tierIdx >= 0
             ? Configuration.Instance.TierSlotCounts[tierIdx]
             : Configuration.BackpackTiers[0].DefaultSlotCount;
-        UpdateSize(slotCount);
-        OnStartClient(true);
+        // Defer configuration to next frame to avoid triggering MonoMod/Harmony detour compilation
+        // during initial JIT (fatal CLR error 0x80131506 in DetourRuntimeNETCore30Platform.CompileMethodHook).
+        MelonLoader.MelonCoroutines.Start(DeferredConfigureStorage(this, slotCount));
+    }
+
+    private static IEnumerator DeferredConfigureStorage(PlayerBackpack instance, int slotCount)
+    {
+        yield return null;
+        if (instance == null || instance._storage == null)
+            yield break;
+        instance.UpdateSize(slotCount);
+        instance.OnStartClient(true);
     }
 
     private void Update()
     {
-        var tierIdx = CurrentTierIndex;
-        if (tierIdx != _lastTierIndex)
+        // Throttle tier check to every N frames to avoid per-frame config/array access (reduces hitches).
+        var keyDown = Input.GetKeyDown(Configuration.Instance.ToggleKey);
+        if (keyDown || (Time.frameCount % TierCheckIntervalFrames == 0))
         {
-            _lastTierIndex = tierIdx;
-            ApplyCurrentTier(tierIdx);
+            var tierIdx = CurrentTierIndex;
+            if (tierIdx != _lastTierIndex)
+            {
+                _lastTierIndex = tierIdx;
+                ApplyCurrentTier(tierIdx);
+            }
         }
 
-        if (!_backpackEnabled || !Input.GetKeyDown(Configuration.Instance.ToggleKey))
+        if (!_backpackEnabled || !keyDown)
             return;
 
         try

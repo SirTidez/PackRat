@@ -1,57 +1,127 @@
+using System.Reflection;
 using HarmonyLib;
 using PackRat.Helpers;
 using PackRatUtils = PackRat.Helpers.Utils;
+using UnityEngine;
 
 #if MONO
-using FishNet.Component.Spawning;
 using ScheduleOne.PlayerScripts;
 using ScheduleOne.Storage;
 #else
-using Il2CppFishNet.Component.Spawning;
 using Il2CppScheduleOne.PlayerScripts;
 using Il2CppScheduleOne.Storage;
-using Il2CppVLB;
 #endif
 
 namespace PackRat.Patches;
 
 /// <summary>
-/// Harmony patches for <see cref="PlayerSpawner"/>.
-/// Attaches <see cref="StorageEntity"/> and <see cref="PlayerBackpack"/> to the player prefab on initialization.
+/// Harmony patch for player spawner initialization.
+/// Attaches StorageEntity and PlayerBackpack to the player prefab.
 /// </summary>
-[HarmonyPatch(typeof(PlayerSpawner))]
+[HarmonyPatch]
 public static class PlayerSpawnerPatch
 {
-    [HarmonyPatch("InitializeOnce")]
-    [HarmonyPostfix]
-    public static void InitializeOnce(PlayerSpawner __instance)
+    private static readonly string[] CandidateSpawnerTypeNames =
     {
-        var playerPrefab = __instance._playerPrefab;
-        if (!playerPrefab)
+        "FishNet.Component.Spawning.PlayerSpawner",
+        "Il2CppFishNet.Component.Spawning.PlayerSpawner",
+        "ScheduleOne.PlayerScripts.PlayerSpawner",
+        "Il2CppScheduleOne.PlayerScripts.PlayerSpawner"
+    };
+
+    [HarmonyTargetMethod]
+    public static MethodBase TargetMethod()
+    {
+        for (var i = 0; i < CandidateSpawnerTypeNames.Length; i++)
         {
-            ModLogger.Error("Player prefab is null!");
-            return;
+            var type = AccessTools.TypeByName(CandidateSpawnerTypeNames[i]);
+            if (type == null)
+                continue;
+
+            var method = AccessTools.Method(type, "InitializeOnce");
+            if (method != null)
+                return method;
         }
+
+        ModLogger.Warn("Failed to resolve PlayerSpawner.InitializeOnce for backpack prefab setup patch.");
+        return null;
+    }
+
+    [HarmonyPostfix]
+    public static void InitializeOnce(object __instance)
+    {
+        if (__instance == null)
+            return;
+
+        if (!TryResolvePlayerPrefab(__instance, out var playerPrefab))
+            return;
 
         var player = playerPrefab.GetComponent<Player>();
         if (player == null)
-        {
-            ModLogger.Error("Player prefab does not have a Player component!");
             return;
-        }
 
-        ModLogger.Info("Adding backpack storage to player prefab...");
+        EnsurePlayerBackpackSetup(player, addLocalBackpackComponent: true);
+    }
+
+    public static void EnsurePlayerBackpackSetup(Player player, bool addLocalBackpackComponent)
+    {
+        if (player == null)
+            return;
+
         var storage = PackRatUtils.GetOrAddComponentSafe<StorageEntity>(player.gameObject);
         if (storage == null)
-        {
-            ModLogger.Error("Failed to get or add StorageEntity to player prefab!");
             return;
-        }
 
         storage.SlotCount = PlayerBackpack.MaxStorageSlots;
         storage.DisplayRowCount = 8;
         storage.StorageEntityName = PlayerBackpack.StorageName;
         storage.MaxAccessDistance = float.PositiveInfinity;
-        PackRatUtils.GetOrAddComponentSafe<PlayerBackpack>(player.LocalGameObject);
+
+        if (!addLocalBackpackComponent)
+            return;
+
+        var localGameObject = player.LocalGameObject != null ? player.LocalGameObject : player.gameObject;
+        PackRatUtils.GetOrAddComponentSafe<PlayerBackpack>(localGameObject);
+    }
+
+    private static bool TryResolvePlayerPrefab(object spawnerInstance, out GameObject playerPrefab)
+    {
+        playerPrefab = null;
+        if (spawnerInstance == null)
+            return false;
+
+        var candidateMemberNames = new[]
+        {
+            "_playerPrefab",
+            "playerPrefab",
+            "PlayerPrefab"
+        };
+
+        for (var i = 0; i < candidateMemberNames.Length; i++)
+        {
+            var prefabObj = ReflectionUtils.TryGetFieldOrProperty(spawnerInstance, candidateMemberNames[i]);
+            if (prefabObj == null)
+                continue;
+
+            if (prefabObj is GameObject gameObject)
+            {
+                playerPrefab = gameObject;
+                return true;
+            }
+
+            if (prefabObj is Component component)
+            {
+                playerPrefab = component.gameObject;
+                return playerPrefab != null;
+            }
+
+            if (prefabObj is Transform transform)
+            {
+                playerPrefab = transform.gameObject;
+                return playerPrefab != null;
+            }
+        }
+
+        return false;
     }
 }

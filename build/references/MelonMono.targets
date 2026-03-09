@@ -362,7 +362,8 @@
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\FishNet.Demos.dll</HintPath>
         </Reference>
         <Reference Include="FishNet.Runtime">
-            <HintPath>$(S1Dir)\Schedule I_Data\Managed\FishNet.Runtime.Publicized.dll</HintPath>
+            <HintPath Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\FishNet.Runtime.Publicized.dll')">$(S1Dir)\Schedule I_Data\Managed\FishNet.Runtime.Publicized.dll</HintPath>
+            <HintPath Condition="!Exists('$(S1Dir)\Schedule I_Data\Managed\FishNet.Runtime.Publicized.dll') and Exists('$(S1Dir)\Schedule I_Data\Managed\FishNet.Runtime.dll')">$(S1Dir)\Schedule I_Data\Managed\FishNet.Runtime.dll</HintPath>
         </Reference>
         <Reference Include="I2.Loc">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\I2.Loc.dll</HintPath>

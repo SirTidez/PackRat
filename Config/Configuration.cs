@@ -22,6 +22,7 @@ public class Configuration
 
     private readonly MelonPreferences_Category _category;
     private readonly MelonPreferences_Entry<KeyCode> _toggleKeyEntry;
+    private readonly MelonPreferences_Entry<bool> _backpackSyncDebugLoggingEntry;
     private readonly MelonPreferences_Entry<FullRank>[] _tierUnlockRankEntries;
     private readonly MelonPreferences_Entry<int>[] _tierSlotCountEntries;
     private readonly MelonPreferences_Entry<bool>[] _tierEnabledEntries;
@@ -48,6 +49,11 @@ public class Configuration
         _category = MelonPreferences.CreateCategory("PackRat");
         _category.SetFilePath(_configFile, false);
         _toggleKeyEntry = _category.CreateEntry("ToggleKey", KeyCode.B, "Key to toggle backpack");
+        _backpackSyncDebugLoggingEntry = _category.CreateEntry(
+            "BackpackSyncDebugLogging",
+            false,
+            "Enable verbose backpack sync debug logging (host/client save sync diagnostics)"
+        );
 
         _tierUnlockRankEntries = new MelonPreferences_Entry<FullRank>[BackpackTiers.Length];
         _tierSlotCountEntries = new MelonPreferences_Entry<int>[BackpackTiers.Length];
@@ -84,6 +90,7 @@ public class Configuration
     }
 
     public KeyCode ToggleKey { get; set; }
+    public bool BackpackSyncDebugLogging { get; set; }
     public FullRank[] TierUnlockRanks { get; internal set; }
     public int[] TierSlotCounts { get; internal set; }
 
@@ -112,6 +119,7 @@ public class Configuration
     public void Reset()
     {
         ToggleKey = _toggleKeyEntry.Value;
+        BackpackSyncDebugLogging = _backpackSyncDebugLoggingEntry.Value;
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
             var rank = _tierUnlockRankEntries[i].Value;
@@ -128,6 +136,7 @@ public class Configuration
     public void Save()
     {
         _toggleKeyEntry.Value = ToggleKey;
+        _backpackSyncDebugLoggingEntry.Value = BackpackSyncDebugLogging;
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
             _tierUnlockRankEntries[i].Value = new FullRank(TierUnlockRanks[i].Rank, Math.Clamp(TierUnlockRanks[i].Tier, 1, 5));

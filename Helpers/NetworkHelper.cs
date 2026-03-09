@@ -2,10 +2,8 @@ using UnityEngine;
 
 #if !MONO
 using Il2CppScheduleOne.PlayerScripts;
-using Il2CppFishNet.Object;
 #else
 using ScheduleOne.PlayerScripts;
-using FishNet.Object;
 #endif
 
 namespace PackRat.Helpers;
