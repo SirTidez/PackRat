@@ -8,19 +8,19 @@ A [Schedule One](https://store.steampowered.com/app/3164500) mod that gives ever
 
 ### Backpack Inventory
 
-![PackRat backpack inventory view](assets/images/inventory.png)
+![PackRat backpack inventory view](https://raw.githubusercontent.com/SirTidez/PackRat/master/assets/images/inventory.png)
 
 ### Hardware Store / Shop Integration
 
-![PackRat shop interface integration](assets/images/shop_interface.png)
+![PackRat shop interface integration](https://raw.githubusercontent.com/SirTidez/PackRat/master/assets/images/shop_interface.png)
 
 ### Tactical Pack Tier Example
 
-![PackRat tactical pack example](assets/images/tac_pack.png)
+![PackRat tactical pack example](https://raw.githubusercontent.com/SirTidez/PackRat/master/assets/images/tac_pack.png)
 
 ### Deal Handover UI (Backpack Integration)
 
-![PackRat backpack in deal handover UI](assets/images/handover.png)
+![PackRat backpack in deal handover UI](https://raw.githubusercontent.com/SirTidez/PackRat/master/assets/images/handover.png)
 
 ---
 
