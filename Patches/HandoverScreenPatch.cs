@@ -62,17 +62,10 @@ public static class HandoverScreenPatch
         public bool ShowingVehicle;
         public int LastPageInputFrame;
         public bool Initialized;
-#if !MONO
-        /// <summary>GameObjects we hid in IL2CPP so the game's "Vehicle" header doesn't show in backpack mode. Restored when switching to vehicle.</summary>
-        public List<GameObject> HiddenVehicleHeaderObjects;
-#endif
     }
 
     private static readonly Dictionary<int, PanelState> States = new Dictionary<int, PanelState>();
-
-#if !MONO
-    private static bool _loggedNoVehicleFound;
-#endif
+    private const int HeaderReapplyFrameCount = 3;
 
     [HarmonyPatch("Start")]
     [HarmonyPostfix]
@@ -147,7 +140,7 @@ public static class HandoverScreenPatch
     {
         if (screen == null || panel == null)
             yield break;
-        for (var i = 0; i < 25; i++)
+        for (var i = 0; i < HeaderReapplyFrameCount; i++)
         {
             yield return null;
             if (screen == null || panel == null || panel.BackpackContainer == null || !panel.BackpackContainer.gameObject.activeSelf)
@@ -157,7 +150,6 @@ public static class HandoverScreenPatch
             if (panel.VehicleContainer != null && panel.VehicleContainer.gameObject.activeSelf)
                 panel.VehicleContainer.gameObject.SetActive(false);
             ApplyPrimaryHeaderForMode(screen, panel, false);
-            ReplaceVehicleTextEverywhere(panel, GetBackpackDisplayName());
         }
     }
 
@@ -177,10 +169,9 @@ public static class HandoverScreenPatch
         {
             panel.BackpackHeaderRoot.SetAsLastSibling();
             var headerCanvas = panel.BackpackHeaderRoot.GetComponent<Canvas>();
-            if (headerCanvas != null && headerCanvas.overrideSorting)
+            if (headerCanvas != null && headerCanvas.overrideSorting && headerCanvas.sortingOrder != 9999)
                 headerCanvas.sortingOrder = 9999;
         }
-        ReplaceVehicleTextEverywhere(panel, GetBackpackDisplayName());
     }
 
     [HarmonyPatch("Close")]
@@ -461,13 +452,11 @@ public static class HandoverScreenPatch
             return;
 
         var headerRoot = state.BackpackHeaderRoot;
-        headerRoot.anchorMin = new Vector2(0.5f, 0.5f);
-        headerRoot.anchorMax = new Vector2(0.5f, 0.5f);
+        headerRoot.anchorMin = new Vector2(0.5f, 1f);
+        headerRoot.anchorMax = new Vector2(0.5f, 1f);
         headerRoot.pivot = new Vector2(0.5f, 1f);
         headerRoot.localScale = Vector3.one;
-
-        var topOfContainer = state.BackpackContainer.rect.height * (1f - state.BackpackContainer.pivot.y);
-        headerRoot.anchoredPosition = new Vector2(0f, topOfContainer - 8f);
+        headerRoot.anchoredPosition = new Vector2(0f, -8f);
     }
 
     private static Text EnsureHeaderText(RectTransform parent, string name, Vector2 anchoredPosition, Vector2 size, int fontSize, FontStyle fontStyle, Color color)
@@ -547,94 +536,17 @@ public static class HandoverScreenPatch
     }
 
     /// <summary>
-    /// Replaces every "Vehicle" label under the handover screen with the backpack title.
-    /// IL2CPP: Also hides the GameObjects that show "Vehicle" / vehicle subtitle so the game header is fully disabled; we restore them when switching to vehicle view.
+    /// Replaces "Vehicle" labels in known local containers only.
+    /// Avoids full-root scans, which are expensive in handover scenes.
     /// </summary>
     private static void ReplaceVehicleTextEverywhere(PanelState panel, string backpackTitle)
     {
         if (panel == null || string.IsNullOrEmpty(backpackTitle))
             return;
-        Transform rootTransform = null;
         if (panel.BackpackContainer != null)
-        {
-            var screen = panel.BackpackContainer.GetComponentInParent<HandoverScreen>();
-            if (screen != null && screen is Component screenComp)
-            {
-                rootTransform = screenComp.transform.parent != null ? screenComp.transform.parent : screenComp.transform;
-            }
-            if (rootTransform == null)
-            {
-                var rt = panel.VehicleContainer != null ? panel.VehicleContainer : panel.BackpackContainer;
-                if (rt != null)
-                    rootTransform = rt.root;
-            }
-        }
-        if (rootTransform == null)
-            return;
-        var components = rootTransform.GetComponentsInChildren<Component>(true);
-#if !MONO
-        if (panel.HiddenVehicleHeaderObjects == null)
-            panel.HiddenVehicleHeaderObjects = new List<GameObject>();
-#endif
-        var hitCount = 0;
-        for (var i = 0; i < components.Length; i++)
-        {
-            var c = components[i];
-            if (c == null)
-                continue;
-            var current = (GetLabelText(c) ?? string.Empty).Trim();
-            if (string.IsNullOrEmpty(current))
-                continue;
-            var isVehicleTitle = current.Equals("Vehicle", StringComparison.OrdinalIgnoreCase);
-            var isVehicleSubtitle = current.Contains("vehicle you last drove", StringComparison.OrdinalIgnoreCase);
-            if (!isVehicleTitle && !isVehicleSubtitle)
-                continue;
-#if !MONO
-            if (panel.BackpackHeaderRoot != null && IsUnderTransform(c, panel.BackpackHeaderRoot.transform))
-                continue;
-            if (c.gameObject != null && panel.HiddenVehicleHeaderObjects != null && !panel.HiddenVehicleHeaderObjects.Contains(c.gameObject))
-            {
-                panel.HiddenVehicleHeaderObjects.Add(c.gameObject);
-                c.gameObject.SetActive(false);
-                hitCount++;
-            }
-#endif
-            if (isVehicleTitle)
-                SetLabelText(c, backpackTitle);
-        }
-#if !MONO
-        if (hitCount > 0)
-            ModLogger.Info($"[Handover] ReplaceVehicleTextEverywhere: hid {hitCount} Vehicle header GameObject(s), root={rootTransform?.name}");
-        else if (!_loggedNoVehicleFound && components.Length > 0)
-        {
-            _loggedNoVehicleFound = true;
-            var withText = 0;
-            for (var j = 0; j < Math.Min(components.Length, 200); j++)
-            {
-                if (components[j] != null && !string.IsNullOrWhiteSpace(GetLabelText(components[j])))
-                    withText++;
-            }
-            ModLogger.Warn($"[Handover] IL2CPP: No 'Vehicle' label found under handover root (scanned {components.Length} components, ~{withText} with text). Title may be on another hierarchy or use a different type.");
-        }
-#endif
-    }
-
-    /// <summary>
-    /// Restores GameObjects that were hidden in IL2CPP for the vehicle header so they show again when switching to vehicle view.
-    /// </summary>
-    private static void RestoreVehicleHeaderGameObjects(PanelState panel)
-    {
-#if !MONO
-        if (panel?.HiddenVehicleHeaderObjects == null)
-            return;
-        for (var i = 0; i < panel.HiddenVehicleHeaderObjects.Count; i++)
-        {
-            var go = panel.HiddenVehicleHeaderObjects[i];
-            if (go != null)
-                go.SetActive(true);
-        }
-        panel.HiddenVehicleHeaderObjects.Clear();
-#endif
+            ReplaceVehicleTextInContainer(panel.BackpackContainer, backpackTitle);
+        if (panel.VehicleContainer != null)
+            ReplaceVehicleTextInContainer(panel.VehicleContainer, backpackTitle);
     }
 
     private static void UpdateBackpackHeaderTexts(PanelState state)
@@ -1534,16 +1446,12 @@ public static class HandoverScreenPatch
                 SetComponentActive(panel.TitleLabel, false);
             if (panel.SubtitleLabel != null)
                 SetComponentActive(panel.SubtitleLabel, false);
-            ReplaceVehicleTextInContainer(panel.BackpackContainer, displayName);
             ReplaceVehicleTextEverywhere(panel, displayName);
             return;
         }
 
         if (panel.BackpackHeaderRoot != null)
             panel.BackpackHeaderRoot.gameObject.SetActive(false);
-
-        if (showingVehicle)
-            RestoreVehicleHeaderGameObjects(panel);
 
         if (panel.TitleLabel != null)
         {
