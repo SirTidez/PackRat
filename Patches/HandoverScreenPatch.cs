@@ -416,6 +416,7 @@ public static class HandoverScreenPatch
         }
 
         state.BackpackHeaderRoot = headerRoot;
+        EnsureIgnoredByLayout(headerRoot);
         state.BackpackTitleText = EnsureHeaderText(headerRoot, "PackRat_BackpackTitle", new Vector2(0f, -18f), new Vector2(360f, 40f), 16, FontStyle.Bold, Color.white);
         state.BackpackSubtitleText = EnsureHeaderText(headerRoot, "PackRat_BackpackSubtitle", new Vector2(0f, -50f), new Vector2(360f, 24f), 8, FontStyle.Normal, new Color32(218, 218, 218, 255));
         UpdateBackpackHeaderLayout(state);
@@ -452,6 +453,7 @@ public static class HandoverScreenPatch
             return;
 
         var headerRoot = state.BackpackHeaderRoot;
+        EnsureIgnoredByLayout(headerRoot);
         headerRoot.anchorMin = new Vector2(0.5f, 1f);
         headerRoot.anchorMax = new Vector2(0.5f, 1f);
         headerRoot.pivot = new Vector2(0.5f, 1f);
@@ -503,6 +505,24 @@ public static class HandoverScreenPatch
         return text;
     }
 
+    private static void EnsureIgnoredByLayout(RectTransform rectTransform)
+    {
+        if (rectTransform == null)
+            return;
+
+        LayoutElement layoutElement;
+#if !MONO
+        layoutElement = Utils.GetOrAddComponentSafe<LayoutElement>(rectTransform.gameObject);
+#else
+        layoutElement = rectTransform.GetComponent<LayoutElement>();
+        if (layoutElement == null)
+            layoutElement = rectTransform.gameObject.AddComponent<LayoutElement>();
+#endif
+
+        if (layoutElement != null)
+            layoutElement.ignoreLayout = true;
+    }
+
     private static string GetBackpackDisplayName()
     {
         var instance = PlayerBackpack.Instance;
@@ -545,8 +565,6 @@ public static class HandoverScreenPatch
             return;
         if (panel.BackpackContainer != null)
             ReplaceVehicleTextInContainer(panel.BackpackContainer, backpackTitle);
-        if (panel.VehicleContainer != null)
-            ReplaceVehicleTextInContainer(panel.VehicleContainer, backpackTitle);
     }
 
     private static void UpdateBackpackHeaderTexts(PanelState state)
@@ -1433,6 +1451,20 @@ public static class HandoverScreenPatch
 
         var targetTitle = showingVehicle ? VehicleHeaderTitle : backpackTitle;
         var targetSubtitle = showingVehicle ? VehicleHeaderSubtitle : backpackSubtitle;
+
+#if MONO
+        if (!showingVehicle && panel.TitleLabel != null && panel.SubtitleLabel != null)
+        {
+            if (panel.BackpackHeaderRoot != null)
+                panel.BackpackHeaderRoot.gameObject.SetActive(false);
+
+            SetLabelText(panel.TitleLabel, backpackTitle);
+            SetLabelText(panel.SubtitleLabel, backpackSubtitle);
+            SetComponentActive(panel.TitleLabel, true);
+            SetComponentActive(panel.SubtitleLabel, true);
+            return;
+        }
+#endif
 
         // Always use our BackpackHeaderRoot for backpack mode so the game cannot overwrite the title with "Vehicle".
         if (!showingVehicle && panel.BackpackHeaderRoot != null)
