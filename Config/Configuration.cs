@@ -1,5 +1,6 @@
 using MelonLoader;
 using UnityEngine;
+using System.Text;
 
 #if MONO
 using ScheduleOne.Levelling;
@@ -22,6 +23,7 @@ public class Configuration
 
     private readonly MelonPreferences_Category _category;
     private readonly MelonPreferences_Entry<KeyCode> _toggleKeyEntry;
+    private readonly MelonPreferences_Entry<bool> _enableSearchEntry;
     private readonly MelonPreferences_Entry<bool> _backpackSyncDebugLoggingEntry;
     private readonly MelonPreferences_Entry<FullRank>[] _tierUnlockRankEntries;
     private readonly MelonPreferences_Entry<int>[] _tierSlotCountEntries;
@@ -49,6 +51,11 @@ public class Configuration
         _category = MelonPreferences.CreateCategory("PackRat");
         _category.SetFilePath(_configFile, false);
         _toggleKeyEntry = _category.CreateEntry("ToggleKey", KeyCode.B, "Key to toggle backpack");
+        _enableSearchEntry = _category.CreateEntry(
+            "EnableSearch",
+            true,
+            "Allow police body searches to include searchable backpack tiers"
+        );
         _backpackSyncDebugLoggingEntry = _category.CreateEntry(
             "BackpackSyncDebugLogging",
             false,
@@ -90,6 +97,7 @@ public class Configuration
     }
 
     public KeyCode ToggleKey { get; set; }
+    public bool EnableSearch { get; set; }
     public bool BackpackSyncDebugLogging { get; set; }
     public FullRank[] TierUnlockRanks { get; internal set; }
     public int[] TierSlotCounts { get; internal set; }
@@ -111,6 +119,7 @@ public class Configuration
     {
         MelonPreferences.Load();
         Reset();
+        EnsureConfigFileExists();
     }
 
     /// <summary>
@@ -119,6 +128,7 @@ public class Configuration
     public void Reset()
     {
         ToggleKey = _toggleKeyEntry.Value;
+        EnableSearch = _enableSearchEntry.Value;
         BackpackSyncDebugLogging = _backpackSyncDebugLoggingEntry.Value;
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
@@ -136,6 +146,7 @@ public class Configuration
     public void Save()
     {
         _toggleKeyEntry.Value = ToggleKey;
+        _enableSearchEntry.Value = EnableSearch;
         _backpackSyncDebugLoggingEntry.Value = BackpackSyncDebugLogging;
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
@@ -145,5 +156,48 @@ public class Configuration
             _tierPriceEntries[i].Value = Math.Max(0f, TierPrices[i]);
         }
         MelonPreferences.Save();
+    }
+
+    private void EnsureConfigFileExists()
+    {
+        try
+        {
+            if (File.Exists(_configFile))
+                return;
+
+            var directory = Path.GetDirectoryName(_configFile);
+            if (!string.IsNullOrEmpty(directory))
+                Directory.CreateDirectory(directory);
+
+            File.WriteAllText(_configFile, BuildConfigFileContents());
+        }
+        catch
+        {
+            // Ignore bootstrap file creation failures; the mod can still run with in-memory defaults.
+        }
+    }
+
+    private string BuildConfigFileContents()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("[PackRat]");
+        sb.AppendLine($"ToggleKey = \"{ToggleKey}\"");
+        sb.AppendLine($"EnableSearch = {EnableSearch.ToString().ToLowerInvariant()}");
+
+        for (var i = 0; i < BackpackTiers.Length; i++)
+        {
+            var rank = TierUnlockRanks[i];
+            sb.AppendLine($"Tier{i}_UnlockRank = {{ Rank = \"{rank.Rank}\", Tier = {Math.Clamp(rank.Tier, 1, 5)} }}");
+            sb.AppendLine($"Tier{i}_SlotCount = {Math.Clamp(TierSlotCounts[i], 1, PlayerBackpack.MaxStorageSlots)}");
+        }
+
+        for (var i = 0; i < BackpackTiers.Length; i++)
+            sb.AppendLine($"Tier{i}_Enabled = {TierEnabled[i].ToString().ToLowerInvariant()}");
+
+        for (var i = 0; i < BackpackTiers.Length; i++)
+            sb.AppendLine($"Tier{i}_Price = {Math.Max(0f, TierPrices[i]).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
+
+        sb.AppendLine($"BackpackSyncDebugLogging = {BackpackSyncDebugLogging.ToString().ToLowerInvariant()}");
+        return sb.ToString();
     }
 }

@@ -136,6 +136,9 @@ public static class PlayerPatch
                 tierIndex = saveData.HighestPurchasedTierIndex;
             }
 
+            if (__instance.IsOwner)
+                ApplyTierToLocalBackpack(__instance, tierIndex);
+
             if (!ItemSet.TryDeserialize(contents, out var itemSet))
             {
                 ModLogger.Error("Failed to deserialize backpack data.");
@@ -143,9 +146,6 @@ public static class PlayerPatch
             }
 
             itemSet.LoadTo(backpackStorage.ItemSlots);
-
-            if (__instance.IsOwner)
-                ApplyTierToLocalBackpack(__instance, tierIndex);
         }
         catch (Exception e)
         {
@@ -204,6 +204,8 @@ public static class PlayerPatch
                 }
             }
 
+            ApplyTierToLocalBackpack(__instance, tierIndex);
+
             if (!ItemSet.TryDeserialize(contents, out var itemSet))
             {
                 ModLogger.Error("Failed to deserialize network backpack data.");
@@ -211,8 +213,6 @@ public static class PlayerPatch
             }
 
             itemSet.LoadTo(backpackStorage.ItemSlots);
-
-            ApplyTierToLocalBackpack(__instance, tierIndex);
 
             if (hostSnapshot != null)
                 BackpackStateSyncManager.ClearPendingHostSnapshotForLocalPlayer();
@@ -231,44 +231,12 @@ public static class PlayerPatch
             BackpackStateSyncManager.RequestHostSnapshotForLocalPlayer(__instance);
     }
 
-    [HarmonyPatch("Activate")]
-    [HarmonyPrefix]
-    public static void Activate(Player __instance)
-    {
-        PlayerSpawnerPatch.EnsurePlayerBackpackSetup(__instance, __instance.IsOwner);
-
-        if (ShouldSkipLocalBackpackPersistence(__instance))
-        {
-            BackpackStateSyncManager.RequestHostSnapshotForLocalPlayer(__instance);
-            BackpackStateSyncManager.TryApplyPendingHostSnapshotToLocalPlayer("activate fallback");
-        }
-
-        ModLogger.Info("Activating backpack.");
-        PlayerBackpack.Instance?.SetBackpackEnabled(true);
-    }
-
     [HarmonyPatch("Update")]
     [HarmonyPrefix]
     public static void Update(Player __instance)
     {
         if (ShouldSkipLocalBackpackPersistence(__instance))
             BackpackStateSyncManager.TryApplyPendingHostSnapshotToLocalPlayer("update fallback");
-    }
-
-    [HarmonyPatch("Deactivate")]
-    [HarmonyPrefix]
-    public static void Deactivate()
-    {
-        ModLogger.Info("Deactivating backpack.");
-        PlayerBackpack.Instance?.SetBackpackEnabled(false);
-    }
-
-    [HarmonyPatch("ExitAll")]
-    [HarmonyPrefix]
-    public static void ExitAll()
-    {
-        ModLogger.Info("ExitAll: disabling backpack.");
-        PlayerBackpack.Instance?.SetBackpackEnabled(false);
     }
 
     [HarmonyPatch("OnDied")]
@@ -304,5 +272,6 @@ public static class PlayerPatch
             return;
 
         backpack.SetHighestPurchasedTierIndex(tierIndex);
+        backpack.EnsureCorrectTierApplied();
     }
 }

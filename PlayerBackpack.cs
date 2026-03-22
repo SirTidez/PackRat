@@ -6,6 +6,7 @@ using UnityEngine;
 
 #if MONO
 using ScheduleOne.DevUtilities;
+using ScheduleOne.Core.Items.Framework;
 using ScheduleOne.ItemFramework;
 using ScheduleOne.Levelling;
 using ScheduleOne.PlayerScripts;
@@ -18,6 +19,7 @@ using ScheduleOne.UI.Phone;
 #else
 using MelonLoader;
 using Il2CppScheduleOne.DevUtilities;
+using Il2CppScheduleOne.Core.Items.Framework;
 using Il2CppScheduleOne.ItemFramework;
 using Il2CppScheduleOne.Levelling;
 using Il2CppScheduleOne.PlayerScripts;
@@ -74,6 +76,15 @@ public class PlayerBackpack : MonoBehaviour
     public void SetHighestPurchasedTierIndex(int tierIndex)
     {
         _highestPurchasedTierIndex = tierIndex < 0 ? -1 : Math.Min(tierIndex, Configuration.BackpackTiers.Length - 1);
+    }
+
+    /// <summary>
+    /// Applies a restored purchased tier immediately so storage size matches before item data is loaded.
+    /// </summary>
+    public void RestorePurchasedTier(int tierIndex)
+    {
+        SetHighestPurchasedTierIndex(tierIndex);
+        EnsureCorrectTierApplied();
     }
 
     /// <summary>
@@ -363,6 +374,19 @@ public class PlayerBackpack : MonoBehaviour
     }
 
     /// <summary>
+    /// Ensures the storage is correctly sized for the current tier. Called after loading a saved tier index.
+    /// </summary>
+    public void EnsureCorrectTierApplied()
+    {
+        _lastTierIndex = CurrentTierIndex;
+
+        if (_storage == null || _lastTierIndex < 0)
+            return;
+
+        ApplyCurrentTier(_lastTierIndex);
+    }
+
+    /// <summary>
     /// Enables or disables the backpack. Closes if currently open when disabled.
     /// </summary>
     /// <param name="state">True to enable; false to disable.</param>
@@ -445,14 +469,13 @@ public class PlayerBackpack : MonoBehaviour
             if (itemSlot?.ItemInstance == null)
                 continue;
 
-#if !MONO
-            var productInstance = itemSlot.ItemInstance.TryCast<ProductItemInstance>();
-#else
             var productInstance = itemSlot.ItemInstance as ProductItemInstance;
-#endif
             if (productInstance == null)
             {
-                if (itemSlot.ItemInstance.Definition.legalStatus != ELegalStatus.Legal)
+                var legalStatus = ReflectionUtils.TryGetFieldOrProperty(itemSlot.ItemInstance.Definition, "legalStatus")
+                    ?? ReflectionUtils.TryGetFieldOrProperty(itemSlot.ItemInstance.Definition, "LegalStatus");
+                var legalStatusName = legalStatus?.ToString();
+                if (!string.Equals(legalStatusName, "Legal", StringComparison.Ordinal))
                     return true;
 
                 continue;
@@ -567,6 +590,7 @@ public class PlayerBackpack : MonoBehaviour
             itemSlot.onItemDataChanged += _storage.ContentsChanged;
             itemSlot.SetSlotOwner(_storage);
 #endif
+            _storage.ItemSlots.Add(itemSlot);
         }
     }
 

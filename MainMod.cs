@@ -19,7 +19,7 @@ public static class BuildInfo
     public const string Name = "PackRat";
     public const string Description = "Portable backpack storage for Schedule One";
     public const string Author = "SirTidez";
-    public const string Version = "1.0.4";
+    public const string Version = "1.0.7";
 }
 
 public class PackRat : MelonMod
@@ -27,7 +27,7 @@ public class PackRat : MelonMod
     public override void OnInitializeMelon()
     {
         Configuration.Instance.Load();
-        Configuration.Instance.Save(); // Forces config file creation with defaults
+        BackpackShopIntegration.CreateSafeBackpackTemplate();
         ModLogger.Info("PackRat initialized.");
     }
 

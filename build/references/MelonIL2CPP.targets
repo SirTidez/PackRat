@@ -22,7 +22,7 @@
         <Reference Include="Unity.InputSystem.ForUI">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Unity.InputSystem.ForUI.dll</HintPath>
         </Reference>
-        <Reference Include="Unity.InputSystem.RebindingUI">
+        <Reference Include="Unity.InputSystem.RebindingUI" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Unity.InputSystem.RebindingUI.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Unity.InputSystem.RebindingUI.dll</HintPath>
         </Reference>
         <Reference Include="Unity.Mathematics">
@@ -300,7 +300,7 @@
         <Reference Include="Il2CppAstarPathfindingProject">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppAstarPathfindingProject.dll</HintPath>
         </Reference>
-        <Reference Include="Il2CppBoxophobic.AtmosphericHeightFog.Runtime">
+        <Reference Include="Il2CppBoxophobic.AtmosphericHeightFog.Runtime" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppBoxophobic.AtmosphericHeightFog.Runtime.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppBoxophobic.AtmosphericHeightFog.Runtime.dll</HintPath>
         </Reference>
         <Reference Include="Il2CppBoxophobic.Utils.Scripts">
@@ -434,6 +434,9 @@
         </Reference>
         <Reference Include="Il2CppVisualDesignCafe.ShaderX">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppVisualDesignCafe.ShaderX.dll</HintPath>
+        </Reference>
+        <Reference Include="Il2CppScheduleOne.Core">
+            <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppScheduleOne.Core.dll</HintPath>
         </Reference>
         <Reference Include="Il2Cpp__Generated">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2Cpp__Generated.dll</HintPath>

@@ -18,12 +18,11 @@
           "Cinemachine": "0.0.0.0",
           "com.rlabrecque.steamworks.net": "0.0.0.0",
           "CorgiGodRays": "0.0.0.0",
-          "EasyButtons": "0.0.0.0",
           "FishNet.CodeAnalysis": "1.0.0.0",
-          "FishNet.Demos": "0.0.0.0",
           "FishNet.Runtime.Publicized": "0.0.0.0",
-          "MelonLoader": "0.7.0.0",
+          "MelonLoader": "0.7.2.0",
           "Newtonsoft.Json": "13.0.0.0",
+          "ScheduleOne.Core": "0.0.0.0",
           "Unity.AI.Navigation": "0.0.0.0",
           "Unity.Burst": "0.0.0.0",
           "Unity.Burst.Unsafe": "4.0.5.0",
@@ -226,27 +225,11 @@
           }
         }
       },
-      "EasyButtons/0.0.0.0": {
-        "runtime": {
-          "EasyButtons.dll": {
-            "assemblyVersion": "0.0.0.0",
-            "fileVersion": "0.0.0.0"
-          }
-        }
-      },
       "FishNet.CodeAnalysis/1.0.0.0": {
         "runtime": {
           "FishNet.CodeAnalysis.dll": {
             "assemblyVersion": "1.0.0.0",
             "fileVersion": "1.0.0.0"
-          }
-        }
-      },
-      "FishNet.Demos/0.0.0.0": {
-        "runtime": {
-          "FishNet.Demos.dll": {
-            "assemblyVersion": "0.0.0.0",
-            "fileVersion": "0.0.0.0"
           }
         }
       },
@@ -258,11 +241,11 @@
           }
         }
       },
-      "MelonLoader/0.7.0.0": {
+      "MelonLoader/0.7.2.0": {
         "runtime": {
           "MelonLoader.dll": {
-            "assemblyVersion": "0.7.0.0",
-            "fileVersion": "0.7.0.0"
+            "assemblyVersion": "0.7.2.0",
+            "fileVersion": "0.7.2.0"
           }
         }
       },
@@ -271,6 +254,14 @@
           "Newtonsoft.Json.dll": {
             "assemblyVersion": "13.0.0.0",
             "fileVersion": "13.0.2.0"
+          }
+        }
+      },
+      "ScheduleOne.Core/0.0.0.0": {
+        "runtime": {
+          "ScheduleOne.Core.dll": {
+            "assemblyVersion": "0.0.0.0",
+            "fileVersion": "0.0.0.0"
           }
         }
       },
@@ -1130,6 +1121,14 @@
           }
         }
       },
+      "MonoMod.Backports/1.1.2.0": {
+        "runtime": {
+          "MonoMod.Backports.dll": {
+            "assemblyVersion": "1.1.2.0",
+            "fileVersion": "1.1.2.0"
+          }
+        }
+      },
       "MonoMod.RuntimeDetour/22.7.31.1": {
         "runtime": {
           "MonoMod.RuntimeDetour.dll": {
@@ -1146,19 +1145,19 @@
           }
         }
       },
-      "AssetRipper.VersionUtilities/1.5.0.0": {
+      "AssetRipper.Primitives/3.2.0.0": {
         "runtime": {
-          "AssetRipper.VersionUtilities.dll": {
-            "assemblyVersion": "1.5.0.0",
-            "fileVersion": "1.5.0.0"
+          "AssetRipper.Primitives.dll": {
+            "assemblyVersion": "3.2.0.0",
+            "fileVersion": "3.2.0.0"
           }
         }
       },
-      "Tomlet/5.4.0.0": {
+      "Tomlet/6.2.0.0": {
         "runtime": {
           "Tomlet.dll": {
-            "assemblyVersion": "5.4.0.0",
-            "fileVersion": "5.4.0.0"
+            "assemblyVersion": "6.2.0.0",
+            "fileVersion": "6.2.0.0"
           }
         }
       },
@@ -1167,14 +1166,6 @@
           "AssetsTools.NET.dll": {
             "assemblyVersion": "3.0.0.0",
             "fileVersion": "3.0.0.0"
-          }
-        }
-      },
-      "ValueTupleBridge/1.0.0.0": {
-        "runtime": {
-          "ValueTupleBridge.dll": {
-            "assemblyVersion": "1.0.0.0",
-            "fileVersion": "1.0.0.0"
           }
         }
       },
@@ -1199,6 +1190,14 @@
           "Mono.Cecil.Rocks.dll": {
             "assemblyVersion": "0.10.4.0",
             "fileVersion": "0.10.4.0"
+          }
+        }
+      },
+      "MonoMod.ILHelpers/1.1.0.0": {
+        "runtime": {
+          "MonoMod.ILHelpers.dll": {
+            "assemblyVersion": "1.1.0.0",
+            "fileVersion": "0.0.0.0"
           }
         }
       },
@@ -1265,17 +1264,7 @@
       "serviceable": false,
       "sha512": ""
     },
-    "EasyButtons/0.0.0.0": {
-      "type": "reference",
-      "serviceable": false,
-      "sha512": ""
-    },
     "FishNet.CodeAnalysis/1.0.0.0": {
-      "type": "reference",
-      "serviceable": false,
-      "sha512": ""
-    },
-    "FishNet.Demos/0.0.0.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
@@ -1285,12 +1274,17 @@
       "serviceable": false,
       "sha512": ""
     },
-    "MelonLoader/0.7.0.0": {
+    "MelonLoader/0.7.2.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
     },
     "Newtonsoft.Json/13.0.0.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "ScheduleOne.Core/0.0.0.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
@@ -1830,6 +1824,11 @@
       "serviceable": false,
       "sha512": ""
     },
+    "MonoMod.Backports/1.1.2.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    },
     "MonoMod.RuntimeDetour/22.7.31.1": {
       "type": "reference",
       "serviceable": false,
@@ -1840,22 +1839,17 @@
       "serviceable": false,
       "sha512": ""
     },
-    "AssetRipper.VersionUtilities/1.5.0.0": {
+    "AssetRipper.Primitives/3.2.0.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
     },
-    "Tomlet/5.4.0.0": {
+    "Tomlet/6.2.0.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
     },
     "AssetsTools.NET/3.0.0.0": {
-      "type": "reference",
-      "serviceable": false,
-      "sha512": ""
-    },
-    "ValueTupleBridge/1.0.0.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
@@ -1871,6 +1865,11 @@
       "sha512": ""
     },
     "Mono.Cecil.Rocks/0.10.4.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "MonoMod.ILHelpers/1.1.0.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""

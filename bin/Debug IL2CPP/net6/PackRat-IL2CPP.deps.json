@@ -31,8 +31,8 @@
           "Il2CppHBAO.Runtime": "0.0.0.0",
           "Il2CppHBAO.Universal.Runtime": "0.0.0.0",
           "Il2CppHSVPicker": "0.0.0.0",
-          "Il2CppInterop.Common": "1.4.6.0",
-          "Il2CppInterop.Runtime": "1.4.6.0",
+          "Il2CppInterop.Common": "1.5.1.0",
+          "Il2CppInterop.Runtime": "1.5.1.0",
           "Il2CppLokoSolo.PinchableScrollRect": "0.0.0.0",
           "Il2CppMono.Security": "4.0.0.0",
           "Il2Cppmscorlib": "4.0.0.0",
@@ -45,6 +45,7 @@
           "Il2CppRuntimePreviewGenerator.Runtime": "0.0.0.0",
           "Il2Cppsc.stylizedgrass.runtime": "0.0.0.0",
           "Il2Cppsc.stylizedwater2.runtime": "0.0.0.0",
+          "Il2CppScheduleOne.Core": "0.0.0.0",
           "Il2CppStylizedWaterForURP": "0.0.0.0",
           "Il2CppSystem.Configuration": "4.0.0.0",
           "Il2CppSystem.Core": "4.0.0.0",
@@ -62,7 +63,7 @@
           "Il2CppVisualDesignCafe.Packages": "1.5.0.40",
           "Il2CppVisualDesignCafe.ShaderX": "2022.0.1.6",
           "Il2Cpp__Generated": "0.0.0.0",
-          "MelonLoader": "0.7.0.0",
+          "MelonLoader": "0.7.2.0",
           "Unity.AI.Navigation": "0.0.0.0",
           "Unity.Burst": "0.0.0.0",
           "Unity.Burst.Unsafe": "4.0.5.0",
@@ -341,19 +342,19 @@
           }
         }
       },
-      "Il2CppInterop.Common/1.4.6.0": {
+      "Il2CppInterop.Common/1.5.1.0": {
         "runtime": {
           "Il2CppInterop.Common.dll": {
-            "assemblyVersion": "1.4.6.0",
-            "fileVersion": "1.4.6.0"
+            "assemblyVersion": "1.5.1.0",
+            "fileVersion": "1.5.1.0"
           }
         }
       },
-      "Il2CppInterop.Runtime/1.4.6.0": {
+      "Il2CppInterop.Runtime/1.5.1.0": {
         "runtime": {
           "Il2CppInterop.Runtime.dll": {
-            "assemblyVersion": "1.4.6.0",
-            "fileVersion": "1.4.6.0"
+            "assemblyVersion": "1.5.1.0",
+            "fileVersion": "1.5.1.0"
           }
         }
       },
@@ -448,6 +449,14 @@
       "Il2Cppsc.stylizedwater2.runtime/0.0.0.0": {
         "runtime": {
           "Il2Cppsc.stylizedwater2.runtime.dll": {
+            "assemblyVersion": "0.0.0.0",
+            "fileVersion": "0.0.0.0"
+          }
+        }
+      },
+      "Il2CppScheduleOne.Core/0.0.0.0": {
+        "runtime": {
+          "Il2CppScheduleOne.Core.dll": {
             "assemblyVersion": "0.0.0.0",
             "fileVersion": "0.0.0.0"
           }
@@ -589,11 +598,11 @@
           }
         }
       },
-      "MelonLoader/0.7.0.0": {
+      "MelonLoader/0.7.2.0": {
         "runtime": {
           "MelonLoader.dll": {
-            "assemblyVersion": "0.7.0.0",
-            "fileVersion": "0.7.0.0"
+            "assemblyVersion": "0.7.2.0",
+            "fileVersion": "0.7.2.0"
           }
         }
       },
@@ -1333,19 +1342,19 @@
           }
         }
       },
-      "AssetRipper.VersionUtilities/1.5.0.0": {
+      "AssetRipper.Primitives/3.2.0.0": {
         "runtime": {
-          "AssetRipper.VersionUtilities.dll": {
-            "assemblyVersion": "1.5.0.0",
-            "fileVersion": "1.5.0.0"
+          "AssetRipper.Primitives.dll": {
+            "assemblyVersion": "3.2.0.0",
+            "fileVersion": "3.2.0.0"
           }
         }
       },
-      "Tomlet/5.4.0.0": {
+      "Tomlet/6.2.0.0": {
         "runtime": {
           "Tomlet.dll": {
-            "assemblyVersion": "5.4.0.0",
-            "fileVersion": "5.4.0.0"
+            "assemblyVersion": "6.2.0.0",
+            "fileVersion": "6.2.0.0"
           }
         }
       },
@@ -1389,11 +1398,19 @@
           }
         }
       },
-      "Il2CppInterop.Generator/1.4.6.0": {
+      "Il2CppInterop.Generator/1.5.1.0": {
         "runtime": {
           "Il2CppInterop.Generator.dll": {
-            "assemblyVersion": "1.4.6.0",
-            "fileVersion": "1.4.6.0"
+            "assemblyVersion": "1.5.1.0",
+            "fileVersion": "1.5.1.0"
+          }
+        }
+      },
+      "Iced/1.21.0.0": {
+        "runtime": {
+          "Iced.dll": {
+            "assemblyVersion": "1.21.0.0",
+            "fileVersion": "1.21.0.0"
           }
         }
       },
@@ -1437,19 +1454,11 @@
           }
         }
       },
-      "Il2CppInterop.HarmonySupport/1.4.6.0": {
+      "Il2CppInterop.HarmonySupport/1.5.1.0": {
         "runtime": {
           "Il2CppInterop.HarmonySupport.dll": {
-            "assemblyVersion": "1.4.6.0",
-            "fileVersion": "1.4.6.0"
-          }
-        }
-      },
-      "Microsoft.Extensions.Logging.Abstractions/6.0.0.0": {
-        "runtime": {
-          "Microsoft.Extensions.Logging.Abstractions.dll": {
-            "assemblyVersion": "6.0.0.0",
-            "fileVersion": "6.0.322.12309"
+            "assemblyVersion": "1.5.1.0",
+            "fileVersion": "1.5.1.0"
           }
         }
       },
@@ -1466,14 +1475,6 @@
           "MonoMod.Backports.dll": {
             "assemblyVersion": "1.1.2.0",
             "fileVersion": "1.1.2.0"
-          }
-        }
-      },
-      "Microsoft.Diagnostics.NETCore.Client/0.2.8.10101": {
-        "runtime": {
-          "Microsoft.Diagnostics.NETCore.Client.dll": {
-            "assemblyVersion": "0.2.8.10101",
-            "fileVersion": "0.2.8.10101"
           }
         }
       },
@@ -1608,12 +1609,12 @@
       "serviceable": false,
       "sha512": ""
     },
-    "Il2CppInterop.Common/1.4.6.0": {
+    "Il2CppInterop.Common/1.5.1.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
     },
-    "Il2CppInterop.Runtime/1.4.6.0": {
+    "Il2CppInterop.Runtime/1.5.1.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
@@ -1674,6 +1675,11 @@
       "sha512": ""
     },
     "Il2Cppsc.stylizedwater2.runtime/0.0.0.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "Il2CppScheduleOne.Core/0.0.0.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
@@ -1763,7 +1769,7 @@
       "serviceable": false,
       "sha512": ""
     },
-    "MelonLoader/0.7.0.0": {
+    "MelonLoader/0.7.2.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
@@ -2228,12 +2234,12 @@
       "serviceable": false,
       "sha512": ""
     },
-    "AssetRipper.VersionUtilities/1.5.0.0": {
+    "AssetRipper.Primitives/3.2.0.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
     },
-    "Tomlet/5.4.0.0": {
+    "Tomlet/6.2.0.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
@@ -2263,7 +2269,12 @@
       "serviceable": false,
       "sha512": ""
     },
-    "Il2CppInterop.Generator/1.4.6.0": {
+    "Il2CppInterop.Generator/1.5.1.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "Iced/1.21.0.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
@@ -2293,12 +2304,7 @@
       "serviceable": false,
       "sha512": ""
     },
-    "Il2CppInterop.HarmonySupport/1.4.6.0": {
-      "type": "reference",
-      "serviceable": false,
-      "sha512": ""
-    },
-    "Microsoft.Extensions.Logging.Abstractions/6.0.0.0": {
+    "Il2CppInterop.HarmonySupport/1.5.1.0": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""
@@ -2309,11 +2315,6 @@
       "sha512": ""
     },
     "MonoMod.Backports/1.1.2.0": {
-      "type": "reference",
-      "serviceable": false,
-      "sha512": ""
-    },
-    "Microsoft.Diagnostics.NETCore.Client/0.2.8.10101": {
       "type": "reference",
       "serviceable": false,
       "sha512": ""

@@ -317,31 +317,13 @@ public static class Utils
     /// </code>
     /// </example>
     public static bool Is<T>(object obj, out T result)
-#if !MONO
-        where T : Object
-#else
         where T : class
-#endif
     {
-#if !MONO
-        if (obj is Object il2CppObj)
-        {
-            var targetType = Il2CppType.Of<T>();
-            var objType = il2CppObj.GetIl2CppType();
-
-            if (targetType.IsAssignableFrom(objType))
-            {
-                result = il2CppObj.TryCast<T>()!;
-                return result != null;
-            }
-        }
-#else
         if (obj is T t)
         {
             result = t;
             return true;
         }
-#endif
 
         result = null!;
         return false;
@@ -362,7 +344,8 @@ public static class Utils
 
         foreach (var item in itemRegistry)
         {
-            if (Utils.Is<StorableItemDefinition>(item.Definition, out var definition))
+            var definition = item.Definition as StorableItemDefinition;
+            if (definition != null)
             {
                 itemDefinitions.Add(definition);
             }

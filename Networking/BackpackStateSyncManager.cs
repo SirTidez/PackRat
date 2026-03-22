@@ -691,14 +691,6 @@ public static class BackpackStateSyncManager
             if (backpackStorage == null)
                 return false;
 
-            var contents = snapshot.Contents ?? string.Empty;
-            if (!ItemSet.TryDeserialize(contents, out var itemSet))
-            {
-                ModLogger.Warn($"Backpack pull: failed to deserialize snapshot contents from {source}.");
-                return false;
-            }
-
-            itemSet.LoadTo(backpackStorage.ItemSlots);
             var backpack = PlayerBackpack.Instance;
             if (backpack == null)
             {
@@ -707,7 +699,16 @@ public static class BackpackStateSyncManager
             }
 
             if (backpack != null)
-                backpack.SetHighestPurchasedTierIndex(snapshot.HighestPurchasedTierIndex);
+                backpack.RestorePurchasedTier(snapshot.HighestPurchasedTierIndex);
+
+            var contents = snapshot.Contents ?? string.Empty;
+            if (!ItemSet.TryDeserialize(contents, out var itemSet))
+            {
+                ModLogger.Warn($"Backpack pull: failed to deserialize snapshot contents from {source}.");
+                return false;
+            }
+
+            itemSet.LoadTo(backpackStorage.ItemSlots);
 
             DebugLog($"Backpack pull: applied snapshot from {source}.");
             return true;

@@ -1,5 +1,65 @@
 # Changelog
 
+## 1.0.7
+
+### Backpack definition and storage fixes
+- Added a safe backpack item template for IL2CPP fallback definition creation so backpack tier purchases no longer clone arbitrary hardware-store items.
+- Fixed backpack storage lookup to target PackRat's own `StorageEntity` instead of blindly taking the first storage component on the player.
+- Hardened legality checks to read legal status by reflection so both Mono and IL2CPP continue working across game API changes.
+
+### Save/load and sizing fixes
+- Ensured the saved purchased backpack tier is applied before restoring saved contents.
+- Fixed slot growth so newly created backpack slots are actually appended to the underlying storage slot list.
+
+### Compatibility
+- Added the new core assembly references required by the latest Schedule One update for both Mono and IL2CPP builds.
+
+---
+
+## 1.0.6
+
+### Game update compatibility
+- Updated Mono and IL2CPP references for the latest Schedule One game version, including the new `ScheduleOne.Core` / `Il2CppScheduleOne.Core` assembly split.
+- Removed hard dependency on game assemblies that are no longer present in newer installs so both runtimes compile cleanly against the current game files.
+- Adjusted cross-runtime item/core type handling to match the updated game API surface.
+
+### Backpack save/load fixes
+- Fixed backpack restore order so the purchased backpack tier and slot count are applied before backpack contents are deserialized.
+- Fixed larger backpacks only restoring the first 8 slots by ensuring restored item data loads into the correctly resized storage.
+- Applied the same pre-resize restore flow to host-synced multiplayer backpack snapshots.
+
+### Arrest and respawn stability
+- Removed backpack enable/disable lifecycle hooks tied to player arrest/exit flows to avoid respawn activation issues after arrest.
+- Fixed the post-arrest local player lockup where the game could leave the player unable to move after respawn.
+
+---
+
+## 1.0.5
+
+### Handover UI performance
+- Fixed severe handover UI lag when moving items from the backpack panel or player inventory by removing broad hierarchy-wide label scans.
+- Reduced repeated header reapply passes and limited backpack label updates to local storage-panel operations so handover paging and item movement remain responsive on both Mono and IL2CPP.
+
+---
+
+## 1.0.4
+
+### Multiplayer backpack sync
+- Added host-driven backpack state sync so clients request and receive the host-authoritative backpack snapshot in multiplayer sessions.
+- Added chunked backpack snapshot transfer and host-to-client backpack pull/response handling to keep larger backpack inventories synchronized reliably.
+- Non-host clients now skip local backpack persistence and instead load/apply the synchronized host state.
+- Added `BackpackSyncDebugLogging` configuration to enable verbose multiplayer backpack sync diagnostics when needed.
+
+### Runtime and UI robustness
+- Improved IL2CPP string assignment handling in reflection utilities so managed strings can be written safely to `Il2CppSystem.String` members.
+- Added supporting save/load and variable-database hooks required for multiplayer backpack synchronization.
+- Hardened backpack/player initialization paths so backpack components and synced state are attached/applied more reliably across runtime variants.
+
+### Documentation
+- Updated hosted README screenshots and project links for the 1.0.4 release.
+
+---
+
 ## 1.0.3
 
 ### Deal handover backpack panel
@@ -15,10 +75,6 @@
 ### Handover UI placement and visuals
 - Reworked pager layout anchoring so controls are placed beneath the backpack storage area.
 - Added a dedicated pager background element and aligned it with the pager controls.
-
-### Header label targeting
-- Reworked handover header label targeting to avoid mutating unrelated text fields (customer panel, deal section, and preference labels).
-- Switched header mapping to use source-to-clone transform matching so only the cloned vehicle header labels are updated for backpack/vehicle mode text.
 
 ---
 

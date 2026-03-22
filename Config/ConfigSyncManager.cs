@@ -50,7 +50,7 @@ public static class ConfigSyncManager
     private static void SyncToClients()
     {
         var payload = new StringBuilder();
-        payload.Append($"{ModVersion}[");
+        payload.Append($"{ModVersion}[{(Configuration.Instance.EnableSearch ? 1 : 0)}|");
         for (var i = 0; i < Configuration.BackpackTiers.Length; i++)
         {
             var rank = Configuration.Instance.TierUnlockRanks[i];
@@ -107,6 +107,20 @@ public static class ConfigSyncManager
             return;
         }
 
+        var firstConfigIndex = 1;
+        var newEnableSearch = Configuration.Instance.EnableSearch;
+        if (parts.Length >= 2 + Configuration.BackpackTiers.Length && (parts[1] == "0" || parts[1] == "1"))
+        {
+            newEnableSearch = parts[1] == "1";
+            firstConfigIndex = 2;
+        }
+
+        if (parts.Length < firstConfigIndex + Configuration.BackpackTiers.Length)
+        {
+            ModLogger.Warn($"Invalid config payload format: {payload}");
+            return;
+        }
+
         var newUnlockRanks = new FullRank[Configuration.BackpackTiers.Length];
         var newSlotCounts = new int[Configuration.BackpackTiers.Length];
         var newTierEnabled = new bool[Configuration.BackpackTiers.Length];
@@ -120,7 +134,7 @@ public static class ConfigSyncManager
 
         for (var i = 0; i < Configuration.BackpackTiers.Length; i++)
         {
-            var entry = parts[1 + i];
+            var entry = parts[firstConfigIndex + i];
             var colonIdx = entry.IndexOf(':');
             var slash1Idx = entry.IndexOf('/');
             if (colonIdx < 0 || slash1Idx < 0 || slash1Idx <= colonIdx)
@@ -150,6 +164,7 @@ public static class ConfigSyncManager
                 newTierPrices[i] = Math.Max(0f, price);
         }
 
+        Configuration.Instance.EnableSearch = newEnableSearch;
         Configuration.Instance.TierUnlockRanks = newUnlockRanks;
         Configuration.Instance.TierSlotCounts = newSlotCounts;
         Configuration.Instance.TierEnabled = newTierEnabled;

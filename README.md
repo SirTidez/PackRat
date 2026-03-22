@@ -59,7 +59,7 @@ Everything in your backpack is saved to disk when you save your game. Load back 
 When visiting a shop to sell, your backpack slots appear alongside your hotbar items. You can sell directly out of the backpack without shuffling things into your inventory first.
 
 ### Deal Handover Integration
-During deal handovers, your backpack storage is injected into the handover UI so you can move required items directly from your bag. Larger tiers are paged, with `<` and `>` controls plus a page indicator under the backpack panel. If your last driven vehicle is within 20 meters (the same condition the base game uses for vehicle storage access), a `Show Vehicle` toggle appears so you can switch between backpack and vehicle storage views.
+During deal handovers, your backpack storage is injected into the handover UI so you can move required items directly from your bag. Larger tiers are paged, with `<` and `>` controls plus a page indicator under the backpack panel. If your last driven vehicle is within 20 meters (the same condition the base game uses for vehicle storage access), a `Show Vehicle` toggle appears so you can switch between backpack and vehicle storage views. Recent handover updates keep paging and item movement responsive by restricting UI work to the local storage panel instead of broad handover-wide scans.
 
 ### Cart-Aware Purchasing
 When buying from a shop, the purchase warning accounts for your backpack space. If your hotbar is full but the backpack has room, the game will let you know items will spill into it rather than falsely warning you that everything won't fit.
@@ -68,9 +68,10 @@ When buying from a shop, the purchase warning accounts for your backpack space. 
 Carrying a Duffel Bag or larger makes you a more suspicious target. If police stop and search you while you're rocking a tier 3, 4, or 5 bag, they'll ask to check the backpack too. Anything illegal inside — unpackaged product, contraband — will count against you.
 
 > **Tip:** The Rucksack and Small Pack fly under the radar. If you're moving small amounts and don't want the extra scrutiny, stay at Peddler rank or consider what you're carrying.
+> **Config:** Set `EnableSearch = false` in `UserData/PackRat.cfg` if you want to disable backpack police searches entirely.
 
 ### Multiplayer Support
-In a multiplayer session, the host's configuration is automatically pushed to all clients when they join. Everyone plays by the host's rules — unlock ranks, slot counts, and all. Clients don't need to touch their own config files.
+In a multiplayer session, the host's configuration is automatically pushed to all clients when they join, and the host now acts as the authoritative source for backpack state. Clients request and apply the host's synced backpack snapshot instead of relying on their own local save state, so unlocked tiers and backpack contents stay aligned across the session. Clients don't need to touch their own config files.
 
 ---
 
@@ -114,6 +115,9 @@ Edit this file while the game is closed. In a multiplayer session, only the **ho
 # Accepts any Unity KeyCode name: B, Tab, F1, Backslash, etc.
 ToggleKey = B
 
+# When false, police body searches will not check backpack contents
+EnableSearch = true
+
 # Tier 0 — Rucksack
 # First backpack; can buy at Hardware Store at Hoodlum I
 Tier0_UnlockRank = Hoodlum : 1
@@ -150,6 +154,7 @@ Tier4_Price = 500
 | Key | Default | Description |
 |-----|---------|-------------|
 | `ToggleKey` | `B` | Key to open/close the backpack and to use a backpack item in the hotbar. Any [Unity KeyCode](https://docs.unity3d.com/ScriptReference/KeyCode.html) name. |
+| `EnableSearch` | `true` | When `false`, police body searches never inspect the backpack, even for Duffel Bag and larger tiers. |
 | `Tier{n}_UnlockRank` | See table above | Rank required before the tier appears at the Hardware Store. Format: `RankName : TierNumber` (1–5). |
 | `Tier{n}_SlotCount` | See table above | Number of storage slots for tier n. Clamped between 1 and 40. |
 | `Tier{n}_Price` | 25, 75, 150, 300, 500 | Price (account funds) to buy tier n at the Hardware Store. |
@@ -161,7 +166,7 @@ Street_Rat, Hoodlum, Peddler, Hustler, Bagman,
 Enforcer, Shot_Caller, Block_Boss, Underlord, Baron, Kingpin
 ```
 
-> **Note:** Which tiers trigger police searches is fixed and cannot be configured. Tiers 3, 4, and 5 (Duffel Bag and above) always include the backpack in police body searches.
+> **Note:** The searchable tiers are still fixed. When `EnableSearch = true`, only tiers 3, 4, and 5 (Duffel Bag and above) are included in police body searches.
 
 ---
 

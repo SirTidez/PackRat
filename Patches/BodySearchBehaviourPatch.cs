@@ -1,6 +1,7 @@
 using System.Collections;
 using HarmonyLib;
 using MelonLoader;
+using PackRat.Config;
 using PackRat.Helpers;
 using UnityEngine;
 
@@ -25,7 +26,10 @@ public static class BodySearchBehaviourPatch
     [HarmonyPrefix]
     public static bool SearchClean(BodySearchBehaviour __instance)
     {
-        if (!PlayerBackpack.Instance.IsUnlocked || !PlayerBackpack.Instance.IsPoliceSearchable)
+        if (PlayerBackpack.Instance == null
+            || !Configuration.Instance.EnableSearch
+            || !PlayerBackpack.Instance.IsUnlocked
+            || !PlayerBackpack.Instance.IsPoliceSearchable)
             return true;
 
 #if !MONO

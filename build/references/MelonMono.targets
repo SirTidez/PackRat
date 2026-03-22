@@ -25,7 +25,7 @@
         <Reference Include="Unity.InputSystem.ForUI">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\Unity.InputSystem.ForUI.dll</HintPath>
         </Reference>
-        <Reference Include="Unity.InputSystem.RebindingUI">
+        <Reference Include="Unity.InputSystem.RebindingUI" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\Unity.InputSystem.RebindingUI.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\Unity.InputSystem.RebindingUI.dll</HintPath>
         </Reference>
         <Reference Include="Unity.Mathematics">
@@ -331,7 +331,7 @@
         <Reference Include="Autodesk.Fbx">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\Autodesk.Fbx.dll</HintPath>
         </Reference>
-        <Reference Include="Boxophobic.AtmosphericHeightFog.Runtime">
+        <Reference Include="Boxophobic.AtmosphericHeightFog.Runtime" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\Boxophobic.AtmosphericHeightFog.Runtime.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\Boxophobic.AtmosphericHeightFog.Runtime.dll</HintPath>
         </Reference>
         <Reference Include="Boxophobic.Utils.Scripts">
@@ -346,48 +346,51 @@
         <Reference Include="CorgiGodRays">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\CorgiGodRays.dll</HintPath>
         </Reference>
-        <Reference Include="DOTween">
+        <Reference Include="DOTween" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\DOTween.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\DOTween.dll</HintPath>
         </Reference>
-        <Reference Include="DOTweenPro">
+        <Reference Include="DOTweenPro" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\DOTweenPro.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\DOTweenPro.dll</HintPath>
         </Reference>
-        <Reference Include="EasyButtons">
+        <Reference Include="EasyButtons" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\EasyButtons.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\EasyButtons.dll</HintPath>
         </Reference>
         <Reference Include="FishNet.CodeAnalysis">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\FishNet.CodeAnalysis.dll</HintPath>
         </Reference>
-        <Reference Include="FishNet.Demos">
+        <Reference Include="FishNet.Demos" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\FishNet.Demos.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\FishNet.Demos.dll</HintPath>
         </Reference>
         <Reference Include="FishNet.Runtime">
             <HintPath Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\FishNet.Runtime.Publicized.dll')">$(S1Dir)\Schedule I_Data\Managed\FishNet.Runtime.Publicized.dll</HintPath>
             <HintPath Condition="!Exists('$(S1Dir)\Schedule I_Data\Managed\FishNet.Runtime.Publicized.dll') and Exists('$(S1Dir)\Schedule I_Data\Managed\FishNet.Runtime.dll')">$(S1Dir)\Schedule I_Data\Managed\FishNet.Runtime.dll</HintPath>
         </Reference>
-        <Reference Include="I2.Loc">
+        <Reference Include="I2.Loc" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\I2.Loc.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\I2.Loc.dll</HintPath>
         </Reference>
-        <Reference Include="LitJson">
+        <Reference Include="LitJson" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\LitJson.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\LitJson.dll</HintPath>
         </Reference>
         <Reference Include="MelonLoader">
             <HintPath>$(S1Dir)\MelonLoader\net35\MelonLoader.dll</HintPath>
         </Reference>
-        <Reference Include="MoreMountains.Feedbacks">
+        <Reference Include="MoreMountains.Feedbacks" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\MoreMountains.Feedbacks.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\MoreMountains.Feedbacks.dll</HintPath>
         </Reference>
-        <Reference Include="MoreMountains.NiceVibrations">
+        <Reference Include="MoreMountains.NiceVibrations" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\MoreMountains.NiceVibrations.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\MoreMountains.NiceVibrations.dll</HintPath>
         </Reference>
         <Reference Include="Newtonsoft.Json">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\Newtonsoft.Json.dll</HintPath>
         </Reference>
-        <Reference Include="NSubstitute">
+        <Reference Include="NSubstitute" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\NSubstitute.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\NSubstitute.dll</HintPath>
         </Reference>
-        <Reference Include="TextMeshPro">
+        <Reference Include="TextMeshPro" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\TextMeshPro.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\TextMeshPro.dll</HintPath>
+        </Reference>
+        <Reference Include="ScheduleOne.Core">
+            <HintPath>$(S1Dir)\Schedule I_Data\Managed\ScheduleOne.Core.dll</HintPath>
         </Reference>
     </ItemGroup>
     <ItemGroup Label="AssembliesMono" Condition="'$(IsMono)' == 'true'">
