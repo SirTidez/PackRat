@@ -6,13 +6,21 @@
 - Added a safe backpack item template for IL2CPP fallback definition creation so backpack tier purchases no longer clone arbitrary hardware-store items.
 - Fixed backpack storage lookup to target PackRat's own `StorageEntity` instead of blindly taking the first storage component on the player.
 - Hardened legality checks to read legal status by reflection so both Mono and IL2CPP continue working across game API changes.
+- Fixed extended-slot growth to avoid registering the same storage slot twice, resolving the regression where the final backpack slots could mirror each other when items were moved.
 
 ### Save/load and sizing fixes
 - Ensured the saved purchased backpack tier is applied before restoring saved contents.
 - Fixed slot growth so newly created backpack slots are actually appended to the underlying storage slot list.
+- Added equipped-backpack tier persistence so upgrades and downgrades save correctly and restore the active backpack size on the next load.
 
 ### Compatibility
 - Added the new core assembly references required by the latest Schedule One update for both Mono and IL2CPP builds.
+- Split Mono and IL2CPP intermediate build output into separate `obj` folders so switching runtimes no longer contaminates restore/build state.
+
+### Runtime stability and multiplayer
+- Fixed host-to-client config sync parsing after the `EnableSearch` payload change so clients correctly receive host backpack settings again.
+- Added null-safety around shop/cart backpack checks and guarded backpack save-path lookups against missing player-data indices.
+- Cleaned up duplicate local `PlayerBackpack` components, improved slot clearing to prefer game-native clear methods, and removed the extra IL2CPP handover diagnostics while pruning stale handover panel cache state.
 
 ---
 

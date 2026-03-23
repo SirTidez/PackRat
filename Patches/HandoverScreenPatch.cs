@@ -78,7 +78,6 @@ public static class HandoverScreenPatch
     }
 
     private static readonly Dictionary<int, PanelState> States = new Dictionary<int, PanelState>();
-    private static readonly HashSet<int> HeaderDiagnosticsLogged = new HashSet<int>();
     private const int HeaderReapplyFrameCount = 3;
 
     [HarmonyPatch("Start")]
@@ -87,6 +86,7 @@ public static class HandoverScreenPatch
     {
         try
         {
+            PruneDeadStates();
             EnsurePanel(__instance);
         }
         catch (Exception ex)
@@ -101,6 +101,7 @@ public static class HandoverScreenPatch
     {
         try
         {
+            PruneDeadStates();
             if (!HasBackpack())
             {
                 HidePanelAndRestoreVehicle(__instance);
@@ -171,6 +172,7 @@ public static class HandoverScreenPatch
     [HarmonyPostfix]
     public static void Update(HandoverScreen __instance)
     {
+        PruneDeadStates();
         if (__instance == null || !States.TryGetValue(__instance.GetInstanceID(), out var panel))
             return;
         if (panel.BackpackContainer == null || !panel.BackpackContainer.gameObject.activeSelf)
@@ -216,6 +218,7 @@ public static class HandoverScreenPatch
 
     private static PanelState EnsurePanel(HandoverScreen screen)
     {
+        PruneDeadStates();
         if (screen == null)
             return null;
 
@@ -267,6 +270,34 @@ public static class HandoverScreenPatch
         return state;
     }
 
+    private static void PruneDeadStates()
+    {
+        if (States.Count == 0)
+            return;
+
+        var staleIds = new List<int>();
+        foreach (var entry in States)
+        {
+            var state = entry.Value;
+            if (state == null)
+            {
+                staleIds.Add(entry.Key);
+                continue;
+            }
+
+            if (!IsComponentAlive(state.VehicleContainer)
+                && !IsComponentAlive(state.BackpackContainer)
+                && !IsComponentAlive(state.PagingRoot)
+                && !IsComponentAlive(state.BackpackHeaderRoot))
+            {
+                staleIds.Add(entry.Key);
+            }
+        }
+
+        for (var i = 0; i < staleIds.Count; i++)
+            States.Remove(staleIds[i]);
+    }
+
     private static void RefreshHeaderBindings(PanelState state, HandoverScreen screen)
     {
         if (state == null)
@@ -274,9 +305,6 @@ public static class HandoverScreenPatch
 
         ResolveLabels(state, screen);
         EnsureBackpackHeader(state);
-#if !MONO
-        LogHeaderDiagnosticsOnce(state, screen);
-#endif
     }
 
     private static void ResolveLabels(PanelState state, HandoverScreen screen)
@@ -1999,86 +2027,6 @@ public static class HandoverScreenPatch
 
             SetComponentActive(label, visible);
         }
-    }
-
-    private static void LogHeaderDiagnosticsOnce(PanelState state, HandoverScreen screen)
-    {
-        if (state?.BackpackContainer == null || screen == null)
-            return;
-
-        var screenId = screen.GetInstanceID();
-        if (HeaderDiagnosticsLogged.Contains(screenId))
-            return;
-
-        HeaderDiagnosticsLogged.Add(screenId);
-        ModLogger.Info($"[Handover] Header diagnostics for screen {screenId}");
-        LogContainerLabels(state.VehicleContainer, "VehicleContainer");
-        LogContainerLabels(state.BackpackContainer, "BackpackContainer");
-        LogResolvedLabel("SourceTitle", state.SourceTitleLabel, state.VehicleContainer);
-        LogResolvedLabel("SourceSubtitle", state.SourceSubtitleLabel, state.VehicleContainer);
-        LogResolvedLabel("ClonedTitle", state.ClonedTitleLabel, state.BackpackContainer);
-        LogResolvedLabel("ClonedSubtitle", state.ClonedSubtitleLabel, state.BackpackContainer);
-    }
-
-    private static void LogContainerLabels(RectTransform container, string containerName)
-    {
-        if (container == null)
-        {
-            ModLogger.Info($"[Handover] {containerName}: <null>");
-            return;
-        }
-
-        var components = container.GetComponentsInChildren<Component>(true);
-        var count = 0;
-        for (var i = 0; i < components.Length; i++)
-        {
-            var component = components[i];
-            if (component == null || !IsTextLikeComponent(component))
-                continue;
-
-            count++;
-            var text = NormalizeLabelText(GetLabelText(component));
-            var path = GetTransformPath(container, component.transform);
-            var activeSelf = component.gameObject != null ? component.gameObject.activeSelf.ToString() : "?";
-            var activeInHierarchy = component.gameObject != null ? component.gameObject.activeInHierarchy.ToString() : "?";
-            ModLogger.Info($"[Handover] {containerName} label: type={component.GetType().FullName}, path={path}, activeSelf={activeSelf}, activeInHierarchy={activeInHierarchy}, text='{text}'");
-        }
-
-        ModLogger.Info($"[Handover] {containerName}: logged {count} text-like components");
-    }
-
-    private static void LogResolvedLabel(string labelName, Component component, RectTransform container)
-    {
-        if (component == null)
-        {
-            ModLogger.Info($"[Handover] {labelName}: <null>");
-            return;
-        }
-
-        var text = NormalizeLabelText(GetLabelText(component));
-        var path = GetTransformPath(container, component.transform);
-        ModLogger.Info($"[Handover] {labelName}: type={component.GetType().FullName}, path={path}, text='{text}'");
-    }
-
-    private static string GetTransformPath(Transform root, Transform target)
-    {
-        if (target == null)
-            return "<null>";
-        if (root == null)
-            return target.name;
-
-        var names = new List<string>();
-        var current = target;
-        while (current != null)
-        {
-            names.Add(current.name);
-            if (current == root)
-                break;
-            current = current.parent;
-        }
-
-        names.Reverse();
-        return string.Join("/", names);
     }
 
     private static bool IsUnderTransform(Component component, Transform parent)

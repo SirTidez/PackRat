@@ -46,8 +46,11 @@ public static class StorageMenuPatch
 
             var slot = UnityEngine.Object.Instantiate(prefab, container);
             slot.name = $"{prefab.name} ({i})";
-            slot.gameObject.SetActive(true);
-            slots[i] = slot.GetComponent<ItemSlotUI>();
+            var slotUi = slot.GetComponent<ItemSlotUI>();
+            if (slotUi != null)
+                ResetSlotUi(slotUi);
+            slot.gameObject.SetActive(false);
+            slots[i] = slotUi;
         }
 
         __instance.SlotsUIs = slots;
@@ -57,6 +60,28 @@ public static class StorageMenuPatch
     [HarmonyPostfix]
     public static void Open(StorageMenu __instance, string title, string subtitle, IItemSlotOwner owner)
     {
+        if (owner != null)
+        {
+            for (var i = 0; i < __instance.SlotsUIs.Length; i++)
+            {
+                var slotUi = __instance.SlotsUIs[i];
+                if (slotUi == null)
+                    continue;
+
+                ResetSlotUi(slotUi);
+                slotUi.ClearSlot();
+                if (owner.ItemSlots.Count > i)
+                {
+                    slotUi.gameObject.SetActive(true);
+                    slotUi.AssignSlot(owner.ItemSlots[i]);
+                }
+                else
+                {
+                    slotUi.gameObject.SetActive(false);
+                }
+            }
+        }
+
         var spacing = __instance.SlotGridLayout.cellSize.y + __instance.SlotGridLayout.spacing.y;
         __instance.CloseButton.anchoredPosition = new Vector2(
             0f,
@@ -78,5 +103,28 @@ public static class StorageMenuPatch
     public static void CloseMenu(StorageMenu __instance)
     {
         __instance.Container.localPosition = Vector3.zero;
+    }
+
+    private static void ResetSlotUi(ItemSlotUI slotUi)
+    {
+        if (slotUi == null)
+            return;
+
+        var itemUi = slotUi.ItemUI;
+        if (itemUi != null)
+        {
+            itemUi.Destroy();
+            slotUi.ItemUI = null;
+        }
+
+        if (slotUi.ItemContainer != null)
+        {
+            for (var i = slotUi.ItemContainer.childCount - 1; i >= 0; i--)
+            {
+                var child = slotUi.ItemContainer.GetChild(i);
+                if (child != null)
+                    UnityEngine.Object.Destroy(child.gameObject);
+            }
+        }
     }
 }

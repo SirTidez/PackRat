@@ -50,7 +50,7 @@ public class PlayerBackpack : MonoBehaviour
     private StorageEntity _storage;
     private int _lastTierIndex = -2; // sentinel: distinct from -1 (not unlocked) to force initial apply
     private string _openTitle;
-    private int _highestPurchasedTierIndex = -1;
+    private int _equippedTierIndex = -1;
     private const int TierCheckIntervalFrames = 60; // throttle tier lookup to reduce per-frame work
 
 #if !MONO
@@ -65,17 +65,29 @@ public class PlayerBackpack : MonoBehaviour
     public static PlayerBackpack Instance { get; private set; }
 
     /// <summary>
-    /// Highest backpack tier index the player has purchased (0-4), or -1 if none.
-    /// Set on load and when the player buys a tier at the hardware store.
+    /// Currently equipped backpack tier index (0-4), or -1 if none.
     /// </summary>
-    public int HighestPurchasedTierIndex => _highestPurchasedTierIndex;
+    public int EquippedTierIndex => _equippedTierIndex;
 
     /// <summary>
-    /// Sets the highest purchased tier (e.g. from save data or after a purchase). Clamps to valid range.
+    /// Legacy alias retained for compatibility with older call sites and save-path code.
+    /// </summary>
+    public int HighestPurchasedTierIndex => EquippedTierIndex;
+
+    /// <summary>
+    /// Sets the equipped tier (e.g. from save data or after using a backpack item). Clamps to valid range.
+    /// </summary>
+    public void SetEquippedTierIndex(int tierIndex)
+    {
+        _equippedTierIndex = tierIndex < 0 ? -1 : Math.Min(tierIndex, Configuration.BackpackTiers.Length - 1);
+    }
+
+    /// <summary>
+    /// Legacy alias retained for compatibility with older call sites.
     /// </summary>
     public void SetHighestPurchasedTierIndex(int tierIndex)
     {
-        _highestPurchasedTierIndex = tierIndex < 0 ? -1 : Math.Min(tierIndex, Configuration.BackpackTiers.Length - 1);
+        SetEquippedTierIndex(tierIndex);
     }
 
     /// <summary>
@@ -83,7 +95,7 @@ public class PlayerBackpack : MonoBehaviour
     /// </summary>
     public void RestorePurchasedTier(int tierIndex)
     {
-        SetHighestPurchasedTierIndex(tierIndex);
+        SetEquippedTierIndex(tierIndex);
         EnsureCorrectTierApplied();
     }
 
@@ -95,9 +107,9 @@ public class PlayerBackpack : MonoBehaviour
         get
         {
             var cfg = Configuration.Instance;
-            if (_highestPurchasedTierIndex < 0)
+            if (_equippedTierIndex < 0)
                 return -1;
-            for (var i = _highestPurchasedTierIndex; i >= 0; i--)
+            for (var i = _equippedTierIndex; i >= 0; i--)
             {
                 if (i < cfg.TierEnabled.Length && cfg.TierEnabled[i])
                     return i;
@@ -293,13 +305,11 @@ public class PlayerBackpack : MonoBehaviour
             return false;
         ClearSlotItem(slot);
         RefreshInventoryUIAfterSlotChange(playerInventory, slot);
-        if (tierIndex > _highestPurchasedTierIndex)
+        if (tierIndex != _equippedTierIndex)
         {
-            SetHighestPurchasedTierIndex(tierIndex);
+            SetEquippedTierIndex(tierIndex);
             ApplyTierAfterPurchase(tierIndex);
-            // Remove all tiers 0..tierIndex from the store (buying a tier counts as having all lower tiers)
-            for (var i = 0; i <= tierIndex; i++)
-                BackpackShopIntegration.RemoveTierListingFromAllShops(i);
+            BackpackShopIntegration.RefreshBackpackListingsInAllShops();
             appliedTier = tierIndex;
         }
         return true;
@@ -323,14 +333,21 @@ public class PlayerBackpack : MonoBehaviour
     private static void ClearSlotItem(object slot)
     {
         if (slot == null) return;
-        if (ReflectionUtils.TrySetFieldOrProperty(slot, "ItemInstance", null))
-            return;
         var type = slot.GetType();
         var clear = type.GetMethod("Clear", Type.EmptyTypes) ?? type.GetMethod("ClearSlot", Type.EmptyTypes);
         if (clear != null)
         {
-            try { clear.Invoke(slot, null); } catch { }
+            try
+            {
+                clear.Invoke(slot, null);
+                return;
+            }
+            catch
+            {
+            }
         }
+
+        ReflectionUtils.TrySetFieldOrProperty(slot, "ItemInstance", null);
     }
 
     /// <summary>
@@ -410,7 +427,7 @@ public class PlayerBackpack : MonoBehaviour
         }
         if (!IsUnlocked)
         {
-            ModLogger.Debug($"Backpack open blocked: not unlocked (CurrentTierIndex={CurrentTierIndex}, HighestPurchased={_highestPurchasedTierIndex}). Purchase a tier at the Hardware Store.");
+            ModLogger.Debug($"Backpack open blocked: not unlocked (CurrentTierIndex={CurrentTierIndex}, EquippedTier={_equippedTierIndex}). Purchase a tier at the Hardware Store.");
             return;
         }
         if (_storage == null)
@@ -579,6 +596,7 @@ public class PlayerBackpack : MonoBehaviour
         for (var i = _storage.ItemSlots.Count; i < newSize; i++)
         {
             var itemSlot = new ItemSlot();
+            var slotCountBeforeOwnerAssignment = _storage.ItemSlots.Count;
 #if !MONO
             if (itemSlot.onItemDataChanged == null)
                 itemSlot.onItemDataChanged = (Il2CppSystem.Action)_storage.ContentsChanged;
@@ -590,7 +608,9 @@ public class PlayerBackpack : MonoBehaviour
             itemSlot.onItemDataChanged += _storage.ContentsChanged;
             itemSlot.SetSlotOwner(_storage);
 #endif
-            _storage.ItemSlots.Add(itemSlot);
+            // Newer game builds can register the slot during owner assignment.
+            if (_storage.ItemSlots.Count == slotCountBeforeOwnerAssignment)
+                _storage.ItemSlots.Add(itemSlot);
         }
     }
 
@@ -606,6 +626,7 @@ public class PlayerBackpack : MonoBehaviour
         if (Instance != null)
         {
             ModLogger.Warn($"Multiple instances of {name} exist. Keeping prior instance reference.");
+            Destroy(this);
             return;
         }
 

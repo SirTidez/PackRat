@@ -27,10 +27,17 @@ public static class PlayerManagerPatch
         if (data == null)
             return;
 
+        var index = __instance.loadedPlayerData.IndexOf(data);
+        if (index < 0 || index >= __instance.loadedPlayerDataPaths.Count)
+        {
+            ModLogger.Warn("Failed to resolve loaded player data path for backpack sync payload.");
+            return;
+        }
+
 #if !MONO
-        var dataPath = (Il2CppSystem.String)__instance.loadedPlayerDataPaths[new Index(__instance.loadedPlayerData.IndexOf(data))];
+        var dataPath = (Il2CppSystem.String)__instance.loadedPlayerDataPaths[new Index(index)];
 #else
-        var dataPath = __instance.loadedPlayerDataPaths[__instance.loadedPlayerData.IndexOf(data)];
+        var dataPath = __instance.loadedPlayerDataPaths[index];
 #endif
         var loader = new PlayerLoader();
         if (!loader.TryLoadFile(dataPath, "Backpack", out var backpackString))

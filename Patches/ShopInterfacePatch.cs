@@ -38,7 +38,8 @@ public static class ShopInterfacePatch
     public static void GetAvailableSlots(ShopInterface __instance, ref List<ItemSlot> __result)
 #endif
     {
-        if (!PlayerBackpack.Instance.IsUnlocked)
+        var backpack = PlayerBackpack.Instance;
+        if (backpack == null || !backpack.IsUnlocked)
             return;
 
         var loadingBayVehicle = __instance.GetLoadingBayVehicle();
@@ -46,7 +47,7 @@ public static class ShopInterfacePatch
             return;
 
         var insertIndex = PlayerSingleton<PlayerInventory>.Instance.hotbarSlots.Count;
-        var items = PlayerBackpack.Instance.ItemSlots;
+        var items = backpack.ItemSlots;
         for (var i = 0; i < items.Count; i++)
         {
 #if !MONO

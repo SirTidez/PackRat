@@ -63,13 +63,13 @@ public static class PlayerPatch
         var tierIndex = -1;
         if (__instance.IsOwner && PlayerBackpack.Instance != null)
         {
-            tierIndex = PlayerBackpack.Instance.HighestPurchasedTierIndex;
+            tierIndex = PlayerBackpack.Instance.EquippedTierIndex;
         }
         else if (BackpackStateSyncManager.TryGetLatestSnapshotForPlayer(__instance, out var syncedData) && syncedData != null)
         {
             if (!string.IsNullOrEmpty(syncedData.Contents))
                 contents = syncedData.Contents;
-            tierIndex = syncedData.HighestPurchasedTierIndex;
+            tierIndex = GetStoredTierIndex(syncedData);
         }
         else
         {
@@ -78,7 +78,12 @@ public static class PlayerPatch
                 contents = existingContents;
         }
 
-        var data = new BackpackSaveData { Contents = contents, HighestPurchasedTierIndex = tierIndex };
+        var data = new BackpackSaveData
+        {
+            Contents = contents,
+            EquippedTierIndex = tierIndex,
+            HighestPurchasedTierIndex = tierIndex
+        };
         var json = JsonHelper.SerializeObject(data);
 
 #if !MONO
@@ -103,7 +108,7 @@ public static class PlayerPatch
             if (data != null)
             {
                 contents = data.Contents;
-                tierIndex = data.HighestPurchasedTierIndex;
+                tierIndex = GetStoredTierIndex(data);
             }
         }
         catch
@@ -133,7 +138,7 @@ public static class PlayerPatch
             if (saveData != null && saveData.Contents != null)
             {
                 contents = saveData.Contents;
-                tierIndex = saveData.HighestPurchasedTierIndex;
+                tierIndex = GetStoredTierIndex(saveData);
             }
 
             if (__instance.IsOwner)
@@ -191,7 +196,7 @@ public static class PlayerPatch
             if (hostSnapshot != null)
             {
                 contents = hostSnapshot.Contents ?? string.Empty;
-                tierIndex = hostSnapshot.HighestPurchasedTierIndex;
+                tierIndex = GetStoredTierIndex(hostSnapshot);
                 ModLogger.Info("Loading backpack data from host snapshot request.");
             }
             else
@@ -200,7 +205,7 @@ public static class PlayerPatch
                 if (saveData != null && saveData.Contents != null)
                 {
                     contents = saveData.Contents;
-                    tierIndex = saveData.HighestPurchasedTierIndex;
+                    tierIndex = GetStoredTierIndex(saveData);
                 }
             }
 
@@ -259,6 +264,14 @@ public static class PlayerPatch
             && !Lobby.Instance.IsHost;
     }
 
+    private static int GetStoredTierIndex(BackpackSaveData data)
+    {
+        if (data == null)
+            return -1;
+
+        return data.EquippedTierIndex >= 0 ? data.EquippedTierIndex : data.HighestPurchasedTierIndex;
+    }
+
     private static void ApplyTierToLocalBackpack(Player player, int tierIndex)
     {
         var backpack = PlayerBackpack.Instance;
@@ -271,7 +284,7 @@ public static class PlayerPatch
         if (backpack == null)
             return;
 
-        backpack.SetHighestPurchasedTierIndex(tierIndex);
+        backpack.SetEquippedTierIndex(tierIndex);
         backpack.EnsureCorrectTierApplied();
     }
 }

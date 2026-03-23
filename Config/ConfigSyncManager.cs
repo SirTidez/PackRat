@@ -94,28 +94,42 @@ public static class ConfigSyncManager
 
     private static void SyncFromHost(string payload)
     {
-        var parts = payload.Split(['[', ']', ','], StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 1 + Configuration.BackpackTiers.Length)
+        var openBracket = payload.IndexOf('[');
+        var closeBracket = payload.LastIndexOf(']');
+        if (openBracket < 0 || closeBracket <= openBracket)
         {
             ModLogger.Warn($"Invalid config payload format: {payload}");
             return;
         }
 
-        if (parts[0] != ModVersion)
+        var version = payload[..openBracket];
+        if (version != ModVersion)
         {
-            ModLogger.Warn($"Mod version mismatch: host={parts[0]}, local={ModVersion}");
+            ModLogger.Warn($"Mod version mismatch: host={version}, local={ModVersion}");
             return;
         }
 
-        var firstConfigIndex = 1;
-        var newEnableSearch = Configuration.Instance.EnableSearch;
-        if (parts.Length >= 2 + Configuration.BackpackTiers.Length && (parts[1] == "0" || parts[1] == "1"))
+        var body = payload[(openBracket + 1)..closeBracket];
+        if (string.IsNullOrWhiteSpace(body))
         {
-            newEnableSearch = parts[1] == "1";
-            firstConfigIndex = 2;
+            ModLogger.Warn($"Invalid config payload format: {payload}");
+            return;
         }
 
-        if (parts.Length < firstConfigIndex + Configuration.BackpackTiers.Length)
+        var separatorIndex = body.IndexOf('|');
+        var entriesSection = body;
+        var newEnableSearch = Configuration.Instance.EnableSearch;
+        if (separatorIndex >= 0)
+        {
+            var enableSearchPart = body[..separatorIndex];
+            if (enableSearchPart == "0" || enableSearchPart == "1")
+                newEnableSearch = enableSearchPart == "1";
+
+            entriesSection = body[(separatorIndex + 1)..];
+        }
+
+        var parts = entriesSection.Split([','], StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < Configuration.BackpackTiers.Length)
         {
             ModLogger.Warn($"Invalid config payload format: {payload}");
             return;
@@ -134,7 +148,7 @@ public static class ConfigSyncManager
 
         for (var i = 0; i < Configuration.BackpackTiers.Length; i++)
         {
-            var entry = parts[firstConfigIndex + i];
+            var entry = parts[i];
             var colonIdx = entry.IndexOf(':');
             var slash1Idx = entry.IndexOf('/');
             if (colonIdx < 0 || slash1Idx < 0 || slash1Idx <= colonIdx)

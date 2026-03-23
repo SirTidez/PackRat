@@ -64,12 +64,11 @@ public static class BackpackShopIntegration
         if (!TryMatchHardwareStore(shop, out _))
             return false;
         var id = shop.GetInstanceID();
-        if (_shopsIntegrated.Contains(id))
-            return true;
+        var firstIntegration = _shopsIntegrated.Add(id);
         if (AddBackpackListings(shop))
         {
-            _shopsIntegrated.Add(id);
-            ModLogger.Info($"BackpackShopIntegration: Added backpack tier listings to Hardware Store (instance {id}).");
+            if (firstIntegration)
+                ModLogger.Info($"BackpackShopIntegration: Added backpack tier listings to Hardware Store (instance {id}).");
             return true;
         }
         ModLogger.Warn("BackpackShopIntegration: Hardware Store found but adding listings failed (see tier warnings above).");
@@ -268,8 +267,7 @@ public static class BackpackShopIntegration
             fallbackSprite = Sprite.Create(fallbackTexture, new Rect(0, 0, 2, 2), new Vector2(0.5f, 0.5f));
             ModLogger.Warn("BackpackShopIntegration: Fallback icon resource missing; using generated placeholder icon.");
         }
-        // Only show tiers the player has not already purchased (avoid showing tier 0 if they already have it, etc.)
-        var currentHighest = PlayerBackpack.Instance != null ? PlayerBackpack.Instance.HighestPurchasedTierIndex : -1;
+        var currentEquipped = PlayerBackpack.Instance != null ? PlayerBackpack.Instance.EquippedTierIndex : -1;
         var anyAdded = false;
         var anyEligible = false;
         var anyAlreadyPresent = false;
@@ -278,14 +276,21 @@ public static class BackpackShopIntegration
         var listingFailedCount = 0;
         for (var i = 0; i < Configuration.BackpackTiers.Length; i++)
         {
-            if (i <= currentHighest)
-                continue;
             if (!cfg.TierEnabled[i])
+            {
+                RemoveTierListingFromShop(shop, BackpackItemIdPrefix + i);
                 continue;
+            }
 
             anyEligible = true;
 
             var itemId = BackpackItemIdPrefix + i;
+            if (i == currentEquipped)
+            {
+                RemoveTierListingFromShop(shop, itemId);
+                continue;
+            }
+
             if (ShopHasItem(shop, itemId))
             {
                 anyAlreadyPresent = true;
@@ -323,6 +328,11 @@ public static class BackpackShopIntegration
         ModLogger.Warn($"BackpackShopIntegration: Eligible tiers found but none added. missingDef={missingDefCount}, registerFailed={registerFailedCount}, listingFailed={listingFailedCount}");
 
         return false;
+    }
+
+    public static void RefreshBackpackListingsInAllShops()
+    {
+        AddToAllHardwareStoresInScene();
     }
 
     private static bool ShopHasItem(ShopInterface shop, string itemId)
@@ -682,7 +692,6 @@ public static class BackpackShopIntegration
 
     /// <summary>
     /// Removes the given tier's listing from all hardware stores we have integrated.
-    /// Call this after the player purchases (uses) a tier so it no longer appears in the store.
     /// </summary>
     public static void RemoveTierListingFromAllShops(int tierIndex)
     {

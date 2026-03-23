@@ -47,6 +47,14 @@ public static class BackpackPurchasePatch
             if (item?.ID == null || !item.ID.StartsWith(BackpackShopIntegration.BackpackItemIdPrefix, StringComparison.Ordinal))
                 return true;
 
+            if (BackpackShopIntegration.IsBackpackTierPurchase(item.ID, out var tierIndex)
+                && PlayerBackpack.Instance != null
+                && tierIndex == PlayerBackpack.Instance.EquippedTierIndex)
+            {
+                ModLogger.Info($"Blocked purchase selection for currently equipped backpack tier {tierIndex}.");
+                return false;
+            }
+
             // This is a backpack tier listing. Do not attempt any purchase or deduction here:
             // this click is "select to purchase", and the game uses account funds on confirm.
             // Let the game handle select and confirm; our cleanup will remove the placeholder item and apply the tier.

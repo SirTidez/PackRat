@@ -311,7 +311,7 @@ public static class BackpackStateSyncManager
             }
 
             if (PlayerBackpack.Instance != null)
-                tierIndex = PlayerBackpack.Instance.HighestPurchasedTierIndex;
+                tierIndex = PlayerBackpack.Instance.EquippedTierIndex;
         }
         catch (Exception ex)
         {
@@ -321,6 +321,7 @@ public static class BackpackStateSyncManager
         return new BackpackSaveData
         {
             Contents = contents,
+            EquippedTierIndex = tierIndex,
             HighestPurchasedTierIndex = tierIndex
         };
     }
@@ -423,6 +424,7 @@ public static class BackpackStateSyncManager
             snapshot = new BackpackSaveData
             {
                 Contents = string.Empty,
+                EquippedTierIndex = -1,
                 HighestPurchasedTierIndex = -1
             };
             DebugLog($"Backpack pull: no saved snapshot found for {requestedPlayerKey}; returning empty snapshot.");
@@ -599,6 +601,7 @@ public static class BackpackStateSyncManager
         snapshot = new BackpackSaveData
         {
             Contents = backpackString,
+            EquippedTierIndex = -1,
             HighestPurchasedTierIndex = -1
         };
         return true;
@@ -699,7 +702,7 @@ public static class BackpackStateSyncManager
             }
 
             if (backpack != null)
-                backpack.RestorePurchasedTier(snapshot.HighestPurchasedTierIndex);
+                backpack.RestorePurchasedTier(GetStoredTierIndex(snapshot));
 
             var contents = snapshot.Contents ?? string.Empty;
             if (!ItemSet.TryDeserialize(contents, out var itemSet))
@@ -845,5 +848,13 @@ public static class BackpackStateSyncManager
 
         variableDatabase.SendValue(null, SyncVariableName, payload);
         return true;
+    }
+
+    private static int GetStoredTierIndex(BackpackSaveData snapshot)
+    {
+        if (snapshot == null)
+            return -1;
+
+        return snapshot.EquippedTierIndex >= 0 ? snapshot.EquippedTierIndex : snapshot.HighestPurchasedTierIndex;
     }
 }

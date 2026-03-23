@@ -23,13 +23,14 @@ public static class CartPatch
     [HarmonyPostfix]
     public static void GetWarning(Cart __instance, ref bool __result, ref string warning)
     {
-        if (!PlayerBackpack.Instance.IsUnlocked)
+        var backpack = PlayerBackpack.Instance;
+        if (backpack == null || !backpack.IsUnlocked)
             return;
 
         if (warning.StartsWith("Vehicle") || !__result)
             return;
 
-        var items = PlayerBackpack.Instance.ItemSlots;
+        var items = backpack.ItemSlots;
 #if !MONO
         items.InsertRange(0, PlayerInventory.Instance.hotbarSlots.Cast<Il2CppSystem.Collections.Generic.IEnumerable<ItemSlot>>());
 #else
