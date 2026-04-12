@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Reflection;
 using PackRat.Config;
 using PackRat.Helpers;
 using PackRat.Shops;
@@ -334,7 +335,9 @@ public class PlayerBackpack : MonoBehaviour
     {
         if (slot == null) return;
         var type = slot.GetType();
-        var clear = type.GetMethod("Clear", Type.EmptyTypes) ?? type.GetMethod("ClearSlot", Type.EmptyTypes);
+        var clear = ReflectionUtils.GetMethod(type, "ClearStoredInstance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? ReflectionUtils.GetMethod(type, "Clear", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? ReflectionUtils.GetMethod(type, "ClearSlot", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         if (clear != null)
         {
             try

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.8
+
+### IL2CPP hardware-store stability
+- Reworked IL2CPP backpack definition creation so PackRat no longer falls back to cloning arbitrary shop items when the safe template is unavailable.
+- Deferred safe backpack template creation until hardware-store integration time, when IL2CPP has a valid shop context to seed from if direct `StorableItemDefinition` instantiation is still unavailable.
+- Sanitized fallback template state before reuse and reduced repeated safe-template failure logs to a single actionable warning instead of console spam.
+
+### Release metadata
+- Bumped the mod version to `1.0.8` and restored Thunderstore-compatible semantic versioning in the packaged manifest.
+
+---
+
 ## 1.0.7
 
 ### Backpack definition and storage fixes

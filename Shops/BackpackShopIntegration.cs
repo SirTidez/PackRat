@@ -43,6 +43,9 @@ public static class BackpackShopIntegration
     /// <summary>Instance IDs of shop instances we have already added backpack listings to (so we add to every hardware store, not just one).</summary>
     private static readonly HashSet<int> _shopsIntegrated = new HashSet<int>();
     private static StorableItemDefinition _safeBackpackTemplate;
+    private static bool _loggedSafeTemplateUnavailable;
+    private static bool _loggedBackpackDefinitionCreationFailure;
+    private static bool _loggedListingIntegrationFailureSummary;
 
     /// <summary>
     /// Call when the Main scene has loaded to find all Hardware Stores and add backpack tier listings.
@@ -301,7 +304,6 @@ public static class BackpackShopIntegration
             if (def == null)
             {
                 missingDefCount++;
-                ModLogger.Warn($"BackpackShopIntegration: Tier {i} definition creation returned null.");
                 continue;
             }
             if (!RegisterDefinition(def))
@@ -320,12 +322,22 @@ public static class BackpackShopIntegration
         }
 
         if (anyAdded)
+        {
+            _loggedListingIntegrationFailureSummary = false;
             ModLogger.Info("BackpackShopIntegration: Added backpack tier listings to Hardware Store.");
+        }
 
         if (!anyEligible || anyAlreadyPresent || anyAdded)
+        {
+            _loggedListingIntegrationFailureSummary = false;
             return true;
+        }
 
-        ModLogger.Warn($"BackpackShopIntegration: Eligible tiers found but none added. missingDef={missingDefCount}, registerFailed={registerFailedCount}, listingFailed={listingFailedCount}");
+        if (!_loggedListingIntegrationFailureSummary)
+        {
+            _loggedListingIntegrationFailureSummary = true;
+            ModLogger.Warn($"BackpackShopIntegration: Eligible tiers found but none added. missingDef={missingDefCount}, registerFailed={registerFailedCount}, listingFailed={listingFailedCount}");
+        }
 
         return false;
     }
@@ -355,23 +367,20 @@ public static class BackpackShopIntegration
     {
         try
         {
-#if MONO
-            var def = (StorableItemDefinition)ScriptableObject.CreateInstance(typeof(StorableItemDefinition));
-#else
-            var created = ScriptableObject.CreateInstance("ScheduleOne.ItemFramework.StorableItemDefinition")
-                ?? ScriptableObject.CreateInstance("Il2CppScheduleOne.ItemFramework.StorableItemDefinition")
-                ?? ScriptableObject.CreateInstance("StorableItemDefinition");
-
-            var def = created as StorableItemDefinition;
-
+            var def = CreateEmptyStorableItemDefinition();
             if (def == null)
-                def = CloneSafeBackpackTemplate();
-
+                def = CloneSafeBackpackTemplate(shop);
             if (def == null)
-                ModLogger.Warn("BackpackShopIntegration: Could not create StorableItemDefinition instance in IL2CPP.");
-#endif
+            {
+                if (!_loggedBackpackDefinitionCreationFailure)
+                {
+                    _loggedBackpackDefinitionCreationFailure = true;
+                    ModLogger.Warn("BackpackShopIntegration: Could not create a backpack item definition. Skipping backpack listings until a valid template can be created.");
+                }
+            }
             if (def == null)
                 return null;
+            ApplyBackpackDefinitionDefaults(def);
             if (!ReflectionUtils.TrySetFieldOrProperty(def, "ID", itemId))
                 ReflectionUtils.TrySetFieldOrProperty(def, "id", itemId);
             var displayName = Configuration.BackpackTiers[tierIndex].Name;
@@ -420,12 +429,20 @@ public static class BackpackShopIntegration
                 if (listing?.Item == null)
                     continue;
 
+#if !MONO
+                var template = listing.Item.TryCast<StorableItemDefinition>();
+#else
                 var template = listing.Item as StorableItemDefinition;
+#endif
                 if (template == null)
                     continue;
 
                 var clone = UnityEngine.Object.Instantiate(template);
+#if !MONO
+                return clone.TryCast<StorableItemDefinition>();
+#else
                 return clone as StorableItemDefinition;
+#endif
             }
         }
         catch (Exception ex)
@@ -436,18 +453,30 @@ public static class BackpackShopIntegration
         return null;
     }
 
-    private static StorableItemDefinition CloneSafeBackpackTemplate()
+    private static StorableItemDefinition CloneSafeBackpackTemplate(ShopInterface shop)
     {
         if (_safeBackpackTemplate == null)
         {
-            ModLogger.Error("BackpackShopIntegration: Safe backpack template is null. Cannot clone.");
-            return null;
+            _safeBackpackTemplate = CreateSafeBackpackTemplate(shop);
+            if (_safeBackpackTemplate == null)
+            {
+                if (!_loggedSafeTemplateUnavailable)
+                {
+                    _loggedSafeTemplateUnavailable = true;
+                    ModLogger.Warn("BackpackShopIntegration: Safe backpack template is unavailable in IL2CPP. Backpack listings will retry once the shop can provide a valid storable-item template.");
+                }
+                return null;
+            }
         }
 
         try
         {
             var clone = UnityEngine.Object.Instantiate(_safeBackpackTemplate);
+#if !MONO
+            return clone.TryCast<StorableItemDefinition>();
+#else
             return clone as StorableItemDefinition;
+#endif
         }
         catch (Exception ex)
         {
@@ -456,40 +485,91 @@ public static class BackpackShopIntegration
         }
     }
 
-    public static StorableItemDefinition CreateSafeBackpackTemplate()
+    public static StorableItemDefinition CreateSafeBackpackTemplate(ShopInterface shop = null)
     {
         if (_safeBackpackTemplate != null)
             return _safeBackpackTemplate;
 
         try
         {
-#if MONO
-            _safeBackpackTemplate = (StorableItemDefinition)ScriptableObject.CreateInstance(typeof(StorableItemDefinition));
-#else
-            var created = ScriptableObject.CreateInstance("ScheduleOne.ItemFramework.StorableItemDefinition")
-                ?? ScriptableObject.CreateInstance("Il2CppScheduleOne.ItemFramework.StorableItemDefinition")
-                ?? ScriptableObject.CreateInstance("StorableItemDefinition");
-
-            _safeBackpackTemplate = created as StorableItemDefinition;
-#endif
+            _safeBackpackTemplate = CreateEmptyStorableItemDefinition();
+            if (_safeBackpackTemplate == null && shop != null)
+                _safeBackpackTemplate = CloneTemplateStorableItemDefinition(shop);
             if (_safeBackpackTemplate == null)
             {
-                ModLogger.Error("BackpackShopIntegration: Could not create safe backpack template instance.");
+                if (!_loggedSafeTemplateUnavailable)
+                {
+                    _loggedSafeTemplateUnavailable = true;
+                    ModLogger.Warn("BackpackShopIntegration: Could not create safe backpack template instance yet.");
+                }
                 return null;
             }
 
+            ApplyBackpackDefinitionDefaults(_safeBackpackTemplate);
             ReflectionUtils.TrySetFieldOrProperty(_safeBackpackTemplate, "ID", "PackRat_Template");
             ReflectionUtils.TrySetFieldOrProperty(_safeBackpackTemplate, "Name", "Backpack");
             ReflectionUtils.TrySetFieldOrProperty(_safeBackpackTemplate, "BasePurchasePrice", 0f);
             ReflectionUtils.TrySetFieldOrProperty(_safeBackpackTemplate, "RequiredRank", 0);
             ReflectionUtils.TrySetFieldOrProperty(_safeBackpackTemplate, "RequiresLevelToPurchase", false);
+            ReflectionUtils.TrySetFieldOrProperty(_safeBackpackTemplate, "Description", string.Empty);
 
+            _loggedSafeTemplateUnavailable = false;
+            _loggedBackpackDefinitionCreationFailure = false;
+            _loggedListingIntegrationFailureSummary = false;
             ModLogger.Info("BackpackShopIntegration: Safe backpack template created successfully.");
             return _safeBackpackTemplate;
         }
         catch (Exception ex)
         {
             ModLogger.Error("BackpackShopIntegration: CreateSafeBackpackTemplate", ex);
+            return null;
+        }
+    }
+
+    private static void ApplyBackpackDefinitionDefaults(StorableItemDefinition def)
+    {
+        if (def == null)
+            return;
+
+        ReflectionUtils.TrySetFieldOrProperty(def, "Description", string.Empty);
+        ReflectionUtils.TrySetEnumFieldOrProperty(def, "Category", "Storage");
+        ReflectionUtils.TrySetFieldOrProperty(def, "StoredItem", null);
+        ReflectionUtils.TrySetFieldOrProperty(def, "StationItem", null);
+        ReflectionUtils.TrySetFieldOrProperty(def, "Equippable", null);
+        ReflectionUtils.TrySetFieldOrProperty(def, "CustomItemUI", null);
+        ReflectionUtils.TrySetFieldOrProperty(def, "CustomInfoContent", null);
+        ReflectionUtils.TrySetEnumFieldOrProperty(def, "legalStatus", "Legal");
+        ReflectionUtils.TrySetFieldOrProperty(def, "ResellMultiplier", 0.5f);
+        ReflectionUtils.TrySetFieldOrProperty(def, "PickpocketDifficultyMultiplier", 1f);
+        ReflectionUtils.TrySetFieldOrProperty(def, "CombatUtility", 0f);
+    }
+
+    private static StorableItemDefinition CreateEmptyStorableItemDefinition()
+    {
+        try
+        {
+#if MONO
+            return (StorableItemDefinition)ScriptableObject.CreateInstance(typeof(StorableItemDefinition));
+#else
+            var il2CppType = Il2CppType.Of<StorableItemDefinition>();
+            if (il2CppType != null)
+            {
+                var createdFromType = ScriptableObject.CreateInstance(il2CppType);
+                var typed = createdFromType.TryCast<StorableItemDefinition>();
+                if (typed != null)
+                    return typed;
+            }
+
+            var createdFromName = ScriptableObject.CreateInstance("ScheduleOne.ItemFramework.StorableItemDefinition")
+                ?? ScriptableObject.CreateInstance("Il2CppScheduleOne.ItemFramework.StorableItemDefinition")
+                ?? ScriptableObject.CreateInstance("StorableItemDefinition");
+
+            return createdFromName?.TryCast<StorableItemDefinition>();
+#endif
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("BackpackShopIntegration: CreateEmptyStorableItemDefinition", ex);
             return null;
         }
     }

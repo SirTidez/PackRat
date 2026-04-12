@@ -10,6 +10,7 @@ using ScheduleOne.Levelling;
 using ScheduleOne.PlayerScripts;
 using ScheduleOne.UI.Shop;
 #else
+using Il2CppInterop.Runtime;
 using Il2CppScheduleOne.DevUtilities;
 using Il2CppScheduleOne.ItemFramework;
 using Il2CppScheduleOne.Levelling;
@@ -43,7 +44,16 @@ public static class BackpackPurchasePatch
             if (listing == null)
                 return true;
 
-            var item = ReflectionUtils.TryGetFieldOrProperty(listing, "Item") as StorableItemDefinition;
+            var itemObj = ReflectionUtils.TryGetFieldOrProperty(listing, "Item");
+#if !MONO
+            StorableItemDefinition item = null;
+            if (itemObj is Il2CppSystem.Object il2CppItem)
+                item = il2CppItem.TryCast<StorableItemDefinition>();
+            else
+                item = itemObj as StorableItemDefinition;
+#else
+            var item = itemObj as StorableItemDefinition;
+#endif
             if (item?.ID == null || !item.ID.StartsWith(BackpackShopIntegration.BackpackItemIdPrefix, StringComparison.Ordinal))
                 return true;
 

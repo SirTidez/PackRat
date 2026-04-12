@@ -234,6 +234,44 @@ internal static class ReflectionUtils
     }
 
     /// <summary>
+    /// Attempts to set an enum field or property by enum member name.
+    /// </summary>
+    internal static bool TrySetEnumFieldOrProperty(object target, string memberName, string enumValueName)
+    {
+        if (target == null || string.IsNullOrWhiteSpace(memberName) || string.IsNullOrWhiteSpace(enumValueName))
+            return false;
+
+        var type = target.GetType();
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+        var fi = type.GetField(memberName, flags);
+        if (fi != null && fi.FieldType.IsEnum)
+        {
+            try
+            {
+                var parsed = Enum.Parse(fi.FieldType, enumValueName, ignoreCase: true);
+                fi.SetValue(target, parsed);
+                return true;
+            }
+            catch { }
+        }
+
+        var pi = type.GetProperty(memberName, flags);
+        if (pi != null && pi.CanWrite && pi.PropertyType.IsEnum)
+        {
+            try
+            {
+                var parsed = Enum.Parse(pi.PropertyType, enumValueName, ignoreCase: true);
+                pi.SetValue(target, parsed);
+                return true;
+            }
+            catch { }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Attempts to get a field or property value from an object using reflection.
     /// Tries field first, then property. Handles both public and non-public members.
     /// </summary>
