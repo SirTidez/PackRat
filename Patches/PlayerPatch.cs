@@ -244,17 +244,6 @@ public static class PlayerPatch
             BackpackStateSyncManager.TryApplyPendingHostSnapshotToLocalPlayer("update fallback");
     }
 
-    [HarmonyPatch("OnDied")]
-    [HarmonyPrefix]
-    public static void OnDied(Player __instance)
-    {
-        if (!__instance.Owner.IsLocalClient)
-            return;
-
-        ModLogger.Info("Player died, disabling backpack.");
-        PlayerBackpack.Instance?.SetBackpackEnabled(false);
-    }
-
     private static bool ShouldSkipLocalBackpackPersistence(Player player)
     {
         return player != null

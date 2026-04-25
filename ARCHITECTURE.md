@@ -85,17 +85,15 @@ PlayerBackpack (MonoBehaviour on player.LocalGameObject)
   │     └── _storage.SendAccessor(null)
   ├── ContainsItemsOfInterest(maxStealthLevel)
   │     └── Iterates slots, checks legal status / stealth packaging
-  ├── Upgrade(slotCount) / Downgrade(slotCount, force)
-  └── SetBackpackEnabled(bool) ← called by PlayerPatch hooks
+  └── Upgrade(slotCount) / Downgrade(slotCount, force)
 
-PlayerPatch (7 hooks on Player)
+PlayerPatch (6 hooks on Player)
   ├── Awake [prefix]           → register "Backpack" in LocalExtraFiles
   ├── WriteData [postfix]      → serialize ItemSet → write "Backpack" subfile
   ├── Load [prefix]            → load "Backpack" subfile → ItemSet.TryDeserialize → LoadTo
   ├── LoadInventory [prefix]   → split "|||" → left=inventory, right=backpack data
-  ├── Activate [prefix]        → PlayerBackpack.Instance.SetBackpackEnabled(true)
-  ├── Deactivate [prefix]      → PlayerBackpack.Instance.SetBackpackEnabled(false)
-  └── OnDied [prefix]          → PlayerBackpack.Instance.SetBackpackEnabled(false)
+  ├── RequestSavePlayer [prefix] → request host backpack snapshot for local player
+  └── Update [prefix]          → apply pending host snapshot fallback for non-host clients
 
 PlayerManagerPatch (postfix on PlayerManager.TryGetPlayerData)
   └── Appends "|||" + backpackString to inventoryString for network sync

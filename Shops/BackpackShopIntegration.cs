@@ -300,13 +300,17 @@ public static class BackpackShopIntegration
                 continue;
             }
             var tierSprite = LevelManagerPatch.GetTierSprite(i, fallbackSprite, fallbackTexture);
-            var def = CreateBackpackTierDefinition(shop, i, itemId, cfg, tierSprite);
+            var def = GetRegisteredBackpackDefinition(itemId);
+            if (def != null)
+                ConfigureBackpackTierDefinition(def, i, itemId, cfg, tierSprite);
+            else
+                def = CreateBackpackTierDefinition(shop, i, itemId, cfg, tierSprite);
             if (def == null)
             {
                 missingDefCount++;
                 continue;
             }
-            if (!RegisterDefinition(def))
+            if (GetRegisteredBackpackDefinition(itemId) == null && !RegisterDefinition(def))
             {
                 registerFailedCount++;
                 ModLogger.Warn($"BackpackShopIntegration: Could not register definition for tier {i}.");
@@ -380,39 +384,78 @@ public static class BackpackShopIntegration
             }
             if (def == null)
                 return null;
-            ApplyBackpackDefinitionDefaults(def);
-            if (!ReflectionUtils.TrySetFieldOrProperty(def, "ID", itemId))
-                ReflectionUtils.TrySetFieldOrProperty(def, "id", itemId);
-            var displayName = Configuration.BackpackTiers[tierIndex].Name;
-            if (!ReflectionUtils.TrySetFieldOrProperty(def, "Name", displayName))
-                ReflectionUtils.TrySetFieldOrProperty(def, "name", displayName);
-            if (iconSprite != null)
-            {
-                foreach (var name in new[] { "Icon", "icon", "Sprite", "sprite", "ItemIcon", "itemIcon", "DisplayIcon" })
-                {
-                    if (ReflectionUtils.TrySetFieldOrProperty(def, name, iconSprite))
-                        break;
-                }
-            }
-            var price = tierIndex < cfg.TierPrices.Length ? cfg.TierPrices[tierIndex] : 25f + tierIndex * 50f;
-            ReflectionUtils.TrySetFieldOrProperty(def, "BasePurchasePrice", price);
-            var rank = tierIndex < cfg.TierUnlockRanks.Length ? cfg.TierUnlockRanks[tierIndex] : Configuration.BackpackTiers[tierIndex].DefaultUnlockRank;
-            ReflectionUtils.TrySetFieldOrProperty(def, "RequiredRank", rank);
-            ReflectionUtils.TrySetFieldOrProperty(def, "RequiresLevelToPurchase", true);
-            var description = tierIndex < TierDescriptions.Length ? TierDescriptions[tierIndex] : null;
-            if (!string.IsNullOrEmpty(description))
-            {
-                foreach (var name in new[] { "Description", "description", "TooltipText", "tooltipText", "FlavorText", "flavorText", "ItemDescription", "itemDescription" })
-                {
-                    if (ReflectionUtils.TrySetFieldOrProperty(def, name, description))
-                        break;
-                }
-            }
+            ConfigureBackpackTierDefinition(def, tierIndex, itemId, cfg, iconSprite);
             return def;
         }
         catch (Exception ex)
         {
             ModLogger.Error($"BackpackShopIntegration: CreateBackpackTierDefinition tier {tierIndex}", ex);
+            return null;
+        }
+    }
+
+    private static void ConfigureBackpackTierDefinition(StorableItemDefinition def, int tierIndex, string itemId, Configuration cfg, Sprite iconSprite)
+    {
+        if (def == null)
+            return;
+
+        ApplyBackpackDefinitionDefaults(def);
+        if (!ReflectionUtils.TrySetFieldOrProperty(def, "ID", itemId))
+            ReflectionUtils.TrySetFieldOrProperty(def, "id", itemId);
+
+        var displayName = Configuration.BackpackTiers[tierIndex].Name;
+        if (!ReflectionUtils.TrySetFieldOrProperty(def, "Name", displayName))
+            ReflectionUtils.TrySetFieldOrProperty(def, "name", displayName);
+
+        if (iconSprite != null)
+        {
+            foreach (var name in new[] { "Icon", "icon", "Sprite", "sprite", "ItemIcon", "itemIcon", "DisplayIcon" })
+            {
+                if (ReflectionUtils.TrySetFieldOrProperty(def, name, iconSprite))
+                    break;
+            }
+        }
+
+        var price = tierIndex < cfg.TierPrices.Length ? cfg.TierPrices[tierIndex] : 25f + tierIndex * 50f;
+        ReflectionUtils.TrySetFieldOrProperty(def, "BasePurchasePrice", price);
+
+        var rank = tierIndex < cfg.TierUnlockRanks.Length
+            ? cfg.TierUnlockRanks[tierIndex]
+            : Configuration.BackpackTiers[tierIndex].DefaultUnlockRank;
+        ReflectionUtils.TrySetFieldOrProperty(def, "RequiredRank", rank);
+        ReflectionUtils.TrySetFieldOrProperty(def, "RequiresLevelToPurchase", true);
+
+        var description = tierIndex < TierDescriptions.Length ? TierDescriptions[tierIndex] : null;
+        if (string.IsNullOrEmpty(description))
+            return;
+
+        foreach (var name in new[] { "Description", "description", "TooltipText", "tooltipText", "FlavorText", "flavorText", "ItemDescription", "itemDescription" })
+        {
+            if (ReflectionUtils.TrySetFieldOrProperty(def, name, description))
+                break;
+        }
+    }
+
+    private static StorableItemDefinition GetRegisteredBackpackDefinition(string itemId)
+    {
+        if (string.IsNullOrWhiteSpace(itemId))
+            return null;
+
+        try
+        {
+            var existing = Registry.GetItem(itemId);
+            if (existing == null)
+                return null;
+
+#if !MONO
+            return existing.TryCast<StorableItemDefinition>();
+#else
+            return existing as StorableItemDefinition;
+#endif
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("BackpackShopIntegration: GetRegisteredBackpackDefinition", ex);
             return null;
         }
     }
