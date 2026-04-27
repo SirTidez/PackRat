@@ -443,7 +443,7 @@ public static class BackpackShopIntegration
 
         try
         {
-            var existing = Registry.GetItem(itemId);
+            var existing = GetRegisteredItemDefinition(itemId);
             if (existing == null)
                 return null;
 
@@ -459,6 +459,79 @@ public static class BackpackShopIntegration
             return null;
         }
     }
+
+    private static ItemDefinition GetRegisteredItemDefinition(string itemId)
+    {
+        if (string.IsNullOrWhiteSpace(itemId))
+            return null;
+
+        try
+        {
+            if (Registry.ItemExists(itemId))
+                return Registry.GetItem(itemId);
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var registry = Registry.Instance;
+            if (registry == null)
+                return null;
+
+            var existing = FindDefinitionInRegistryList(registry.ItemRegistry, itemId);
+            if (existing != null)
+                return existing;
+
+            return FindDefinitionInRegistryList(registry.ItemsAddedAtRuntime, itemId);
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("BackpackShopIntegration: GetRegisteredItemDefinition", ex);
+            return null;
+        }
+    }
+
+#if !MONO
+    private static ItemDefinition FindDefinitionInRegistryList(Il2CppSystem.Collections.Generic.List<Registry.ItemRegister> registryList, string itemId)
+    {
+        if (registryList == null || string.IsNullOrWhiteSpace(itemId))
+            return null;
+
+        for (var i = 0; i < registryList.Count; i++)
+        {
+            var entry = registryList[i];
+            if (entry == null || !string.Equals(entry.ID, itemId, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return entry.Definition;
+        }
+
+        return null;
+    }
+#else
+    private static ItemDefinition FindDefinitionInRegistryList(System.Collections.IEnumerable registryList, string itemId)
+    {
+        if (registryList == null || string.IsNullOrWhiteSpace(itemId))
+            return null;
+
+        foreach (var entry in registryList)
+        {
+            if (entry == null)
+                continue;
+
+            var id = ReflectionUtils.TryGetFieldOrProperty(entry, "ID") as string;
+            if (!string.Equals(id, itemId, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var definition = ReflectionUtils.TryGetFieldOrProperty(entry, "Definition");
+            return definition as ItemDefinition;
+        }
+
+        return null;
+    }
+#endif
 
     private static StorableItemDefinition CloneTemplateStorableItemDefinition(ShopInterface shop)
     {
@@ -621,6 +694,15 @@ public static class BackpackShopIntegration
     {
         try
         {
+            if (def == null || string.IsNullOrWhiteSpace(def.ID))
+                return false;
+
+            if (GetRegisteredItemDefinition(def.ID) != null)
+            {
+                ModLogger.Debug($"BackpackShopIntegration: Definition '{def.ID}' is already registered; reusing existing definition.");
+                return true;
+            }
+
 #if MONO
             var registry = Registry.Instance;
             if (registry == null)

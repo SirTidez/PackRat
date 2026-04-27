@@ -76,6 +76,30 @@ public static class LevelManagerPatch
         RegisterBackpackUnlockables(__instance);
     }
 
+    [HarmonyPatch("AddUnlockable")]
+    [HarmonyPrefix]
+    public static bool AddUnlockable(LevelManager __instance, Unlockable unlockable)
+    {
+        try
+        {
+            if (__instance == null || unlockable == null)
+                return true;
+
+            if (!TryGetBackpackTierIndex(unlockable.Title, out var tierIndex))
+                return true;
+
+            if (!HasBackpackUnlockable(__instance, unlockable.Rank, tierIndex))
+                return true;
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("LevelManagerPatch.AddUnlockable", ex);
+            return true;
+        }
+    }
+
     /// <summary>
     /// Called when a client receives config from the host; registers unlockables using synced config.
     /// </summary>
@@ -134,6 +158,59 @@ public static class LevelManagerPatch
             var unlockable = new Unlockable(cfg.TierUnlockRanks[i], displayName, sprite);
             levelManager.AddUnlockable(unlockable);
         }
+    }
+
+    private static bool HasBackpackUnlockable(LevelManager levelManager, FullRank rank, int tierIndex)
+    {
+        if (levelManager?.Unlockables == null)
+            return false;
+
+#if !MONO
+        if (!levelManager.Unlockables.ContainsKey(rank))
+            return false;
+
+        var unlockables = levelManager.Unlockables[rank];
+        if (unlockables == null)
+            return false;
+
+        for (var i = 0; i < unlockables.Count; i++)
+        {
+            var existing = unlockables[i];
+            if (existing != null && TryGetBackpackTierIndex(existing.Title, out var existingTier) && existingTier == tierIndex)
+                return true;
+        }
+#else
+        if (!levelManager.Unlockables.TryGetValue(rank, out var unlockables) || unlockables == null)
+            return false;
+
+        foreach (var existing in unlockables)
+        {
+            if (existing != null && TryGetBackpackTierIndex(existing.Title, out var existingTier) && existingTier == tierIndex)
+                return true;
+        }
+#endif
+
+        return false;
+    }
+
+    private static bool TryGetBackpackTierIndex(string title, out int tierIndex)
+    {
+        tierIndex = -1;
+        if (string.IsNullOrWhiteSpace(title))
+            return false;
+
+        for (var i = 0; i < Configuration.BackpackTiers.Length; i++)
+        {
+            var tierName = Configuration.BackpackTiers[i].Name;
+            if (string.Equals(title, tierName, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(title, tierName + HardwareStoreSuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                tierIndex = i;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

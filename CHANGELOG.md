@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1
+
+### Backpack UI integration
+- Added backpack integration for storage containers and station UIs, with paginated 3x3 panels and quick-move support.
+
+### Gameplay fixes
+- Added backpack ammo support for weapon reloads.
+- Fixed duplicate backpack unlockable registration.
+- Fixed unintended backpack disabling on player death.
+
+---
+
 ## 1.0.8
 
 ### IL2CPP hardware-store stability
