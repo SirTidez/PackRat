@@ -1,14 +1,20 @@
 # Changelog
 
-## 1.1
+## 1.1.2
 
 ### Backpack UI integration
 - Added backpack integration for storage containers and station UIs, with paginated 3x3 panels and quick-move support.
+- Added configurable X/Y offsets for storage, station, and handover backpack overlays via `PackRat.cfg`.
 
 ### Gameplay fixes
 - Added backpack ammo support for weapon reloads.
 - Fixed duplicate backpack unlockable registration.
 - Fixed unintended backpack disabling on player death.
+- Fixed cash quick-move ordering so hot-deposited money stacks into existing cash slots before filling empty storage or backpack slots.
+- Fixed station backpack panel raycaster registration so drag/drop can target backpack slots inside station UIs.
+
+### Release metadata
+- Bumped the mod version to `1.1.2`.
 
 ---
 

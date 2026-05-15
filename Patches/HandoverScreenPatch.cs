@@ -252,7 +252,7 @@ public static class HandoverScreenPatch
         {
             var clone = UnityEngine.Object.Instantiate(state.VehicleContainer, state.VehicleContainer.parent);
             clone.name = "BackpackContainer";
-            clone.anchoredPosition = state.VehicleOriginalAnchoredPos;
+            clone.anchoredPosition = GetHandoverBackpackPosition(state);
             clone.localScale = state.VehicleContainer.localScale;
             clone.gameObject.SetActive(false);
             state.BackpackContainer = clone;
@@ -1865,7 +1865,7 @@ public static class HandoverScreenPatch
 
         if (state.BackpackContainer != null)
         {
-            state.BackpackContainer.anchoredPosition = state.VehicleOriginalAnchoredPos;
+            state.BackpackContainer.anchoredPosition = GetHandoverBackpackPosition(state);
             state.BackpackContainer.gameObject.SetActive(true);
         }
 
@@ -1885,6 +1885,16 @@ public static class HandoverScreenPatch
 
         if (state.PagingRoot != null)
             state.PagingRoot.gameObject.SetActive(true);
+    }
+
+    private static Vector2 GetHandoverBackpackPosition(PanelState state)
+    {
+        var config = Configuration.Instance;
+        var basePosition = state?.VehicleOriginalAnchoredPos ?? Vector2.zero;
+        return new Vector2(
+            basePosition.x + config.HandoverOverlayOffsetX,
+            basePosition.y + config.HandoverOverlayOffsetY
+        );
     }
 
     private static void UpdatePagingLayout(PanelState state)

@@ -1,4 +1,5 @@
 using HarmonyLib;
+using PackRat.Config;
 using PackRat.Extensions;
 using PackRat.Helpers;
 using UnityEngine;
@@ -7,6 +8,7 @@ using UnityEngine.UI;
 #if MONO
 using ScheduleOne.DevUtilities;
 using ScheduleOne.ItemFramework;
+using ScheduleOne.Money;
 using ScheduleOne.ObjectScripts;
 using ScheduleOne.PlayerScripts;
 using ScheduleOne.StationFramework;
@@ -16,6 +18,7 @@ using ScheduleOne.UI.Stations;
 #else
 using Il2CppScheduleOne.DevUtilities;
 using Il2CppScheduleOne.ItemFramework;
+using Il2CppScheduleOne.Money;
 using Il2CppScheduleOne.ObjectScripts;
 using Il2CppScheduleOne.PlayerScripts;
 using Il2CppScheduleOne.StationFramework;
@@ -235,7 +238,11 @@ public static class StationBackpackPanelPatch
             return;
 
         ConfigureRoot(stationContainer, panel.Root);
-        panel.Root.anchoredPosition = new Vector2(-LeftOffset, 0f);
+        var config = Configuration.Instance;
+        panel.Root.anchoredPosition = new Vector2(
+            -LeftOffset + config.StationOverlayOffsetX,
+            config.StationOverlayOffsetY
+        );
         panel.Root.localPosition = new Vector3(panel.Root.localPosition.x, panel.Root.localPosition.y, 0f);
     }
 
@@ -322,8 +329,26 @@ public static class StationBackpackPanelPatch
 
         root.SetAsLastSibling();
 
-        if (root.GetComponent<GraphicRaycaster>() == null)
-            root.gameObject.AddComponent<GraphicRaycaster>();
+        var raycaster = root.GetComponent<GraphicRaycaster>();
+        if (raycaster == null)
+            raycaster = root.gameObject.AddComponent<GraphicRaycaster>();
+
+        RegisterItemUiRaycaster(raycaster);
+    }
+
+    private static void RegisterItemUiRaycaster(GraphicRaycaster raycaster)
+    {
+        if (raycaster == null)
+            return;
+
+        try
+        {
+            Singleton<ItemUIManager>.Instance?.AddRaycaster(raycaster);
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("StationBackpackPanelPatch.RegisterItemUiRaycaster", ex);
+        }
     }
 
     private static void AssignBackpackPage(PanelState panel, List<ItemSlot> backpackSlots)
@@ -568,21 +593,65 @@ public static class StationBackpackPanelPatch
         if (sourceSlot?.ItemInstance == null || candidates == null)
             return;
 
+        if (sourceSlot.ItemInstance is CashInstance)
+        {
+            AddCashQuickMoveTargets(sourceSlot, candidates, targets);
+            return;
+        }
+
         for (var i = 0; i < candidates.Count; i++)
         {
             var candidate = candidates[i];
-            if (candidate == null || candidate == sourceSlot || targets.Contains(candidate))
+            if (!CanQuickMoveToSlot(sourceSlot, candidate, targets))
                 continue;
-            if (candidate.IsLocked || candidate.IsAddLocked || candidate.IsRemovalLocked)
-                continue;
-            if (!candidate.DoesItemMatchHardFilters(sourceSlot.ItemInstance))
-                continue;
-            if (candidate.GetCapacityForItem(sourceSlot.ItemInstance, false) <= 0
-                && !(sourceSlot.ItemInstance is CashInstance))
+            if (candidate.GetCapacityForItem(sourceSlot.ItemInstance, false) <= 0)
                 continue;
 
             targets.Add(candidate);
         }
+    }
+
+    private static void AddCashQuickMoveTargets(ItemSlot sourceSlot, List<ItemSlot> candidates, List<ItemSlot> targets)
+    {
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            var candidate = candidates[i];
+            if (!CanQuickMoveToSlot(sourceSlot, candidate, targets))
+                continue;
+            if (!(candidate.ItemInstance is CashInstance cash) || GetCashCapacity(candidate, cash) <= 0f)
+                continue;
+
+            targets.Add(candidate);
+        }
+
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            var candidate = candidates[i];
+            if (!CanQuickMoveToSlot(sourceSlot, candidate, targets))
+                continue;
+            if (candidate.ItemInstance != null)
+                continue;
+
+            targets.Add(candidate);
+        }
+    }
+
+    private static bool CanQuickMoveToSlot(ItemSlot sourceSlot, ItemSlot candidate, List<ItemSlot> targets)
+    {
+        if (sourceSlot?.ItemInstance == null || candidate == null || candidate == sourceSlot || targets.Contains(candidate))
+            return false;
+        if (candidate.IsLocked || candidate.IsAddLocked || candidate.IsRemovalLocked)
+            return false;
+        return candidate.DoesItemMatchHardFilters(sourceSlot.ItemInstance);
+    }
+
+    private static float GetCashCapacity(ItemSlot slot, CashInstance cash)
+    {
+        if (slot == null || cash == null)
+            return 0f;
+
+        var maxBalance = slot is CashSlot ? float.MaxValue : 1000f;
+        return Math.Max(0f, maxBalance - cash.Balance);
     }
 
     private static Text CreateText(string name, Transform parent, Vector2 position, int fontSize, string text)

@@ -1,4 +1,5 @@
 using HarmonyLib;
+using PackRat.Config;
 using PackRat.Extensions;
 using PackRat.Helpers;
 using UnityEngine;
@@ -7,6 +8,7 @@ using UnityEngine.UI;
 #if MONO
 using ScheduleOne.DevUtilities;
 using ScheduleOne.ItemFramework;
+using ScheduleOne.Money;
 using ScheduleOne.PlayerScripts;
 using ScheduleOne.Storage;
 using ScheduleOne.UI;
@@ -16,6 +18,7 @@ using S1TMP = TMPro.TextMeshProUGUI;
 using Il2CppInterop.Runtime;
 using Il2CppScheduleOne.DevUtilities;
 using Il2CppScheduleOne.ItemFramework;
+using Il2CppScheduleOne.Money;
 using Il2CppScheduleOne.PlayerScripts;
 using Il2CppScheduleOne.Storage;
 using Il2CppScheduleOne.UI;
@@ -306,9 +309,10 @@ public static class StorageMenuPatch
             return;
 
         var original = menu.Container;
+        var config = Configuration.Instance;
         clone.localPosition = new Vector3(
-            original.localPosition.x - StorageBackpackLeftOffset,
-            original.localPosition.y,
+            original.localPosition.x - StorageBackpackLeftOffset + config.StorageOverlayOffsetX,
+            original.localPosition.y + config.StorageOverlayOffsetY,
             original.localPosition.z
         );
     }
@@ -650,21 +654,65 @@ public static class StorageMenuPatch
         if (sourceSlot?.ItemInstance == null || candidates == null)
             return;
 
+        if (sourceSlot.ItemInstance is CashInstance)
+        {
+            AddCashQuickMoveTargets(sourceSlot, candidates, targets);
+            return;
+        }
+
         for (var i = 0; i < candidates.Count; i++)
         {
             var candidate = candidates[i];
-            if (candidate == null || candidate == sourceSlot || targets.Contains(candidate))
+            if (!CanQuickMoveToSlot(sourceSlot, candidate, targets))
                 continue;
-            if (candidate.IsLocked || candidate.IsAddLocked || candidate.IsRemovalLocked)
-                continue;
-            if (!candidate.DoesItemMatchHardFilters(sourceSlot.ItemInstance))
-                continue;
-            if (candidate.GetCapacityForItem(sourceSlot.ItemInstance, false) <= 0
-                && !(sourceSlot.ItemInstance is CashInstance))
+            if (candidate.GetCapacityForItem(sourceSlot.ItemInstance, false) <= 0)
                 continue;
 
             targets.Add(candidate);
         }
+    }
+
+    private static void AddCashQuickMoveTargets(ItemSlot sourceSlot, List<ItemSlot> candidates, List<ItemSlot> targets)
+    {
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            var candidate = candidates[i];
+            if (!CanQuickMoveToSlot(sourceSlot, candidate, targets))
+                continue;
+            if (!(candidate.ItemInstance is CashInstance cash) || GetCashCapacity(candidate, cash) <= 0f)
+                continue;
+
+            targets.Add(candidate);
+        }
+
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            var candidate = candidates[i];
+            if (!CanQuickMoveToSlot(sourceSlot, candidate, targets))
+                continue;
+            if (candidate.ItemInstance != null)
+                continue;
+
+            targets.Add(candidate);
+        }
+    }
+
+    private static bool CanQuickMoveToSlot(ItemSlot sourceSlot, ItemSlot candidate, List<ItemSlot> targets)
+    {
+        if (sourceSlot?.ItemInstance == null || candidate == null || candidate == sourceSlot || targets.Contains(candidate))
+            return false;
+        if (candidate.IsLocked || candidate.IsAddLocked || candidate.IsRemovalLocked)
+            return false;
+        return candidate.DoesItemMatchHardFilters(sourceSlot.ItemInstance);
+    }
+
+    private static float GetCashCapacity(ItemSlot slot, CashInstance cash)
+    {
+        if (slot == null || cash == null)
+            return 0f;
+
+        var maxBalance = slot is CashSlot ? float.MaxValue : 1000f;
+        return Math.Max(0f, maxBalance - cash.Balance);
     }
 
     private static void SetPanelHeader(StorageMenu menu, RectTransform container)

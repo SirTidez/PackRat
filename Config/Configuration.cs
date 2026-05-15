@@ -25,6 +25,12 @@ public class Configuration
     private readonly MelonPreferences_Entry<KeyCode> _toggleKeyEntry;
     private readonly MelonPreferences_Entry<bool> _enableSearchEntry;
     private readonly MelonPreferences_Entry<bool> _backpackSyncDebugLoggingEntry;
+    private readonly MelonPreferences_Entry<float> _storageOverlayOffsetXEntry;
+    private readonly MelonPreferences_Entry<float> _storageOverlayOffsetYEntry;
+    private readonly MelonPreferences_Entry<float> _stationOverlayOffsetXEntry;
+    private readonly MelonPreferences_Entry<float> _stationOverlayOffsetYEntry;
+    private readonly MelonPreferences_Entry<float> _handoverOverlayOffsetXEntry;
+    private readonly MelonPreferences_Entry<float> _handoverOverlayOffsetYEntry;
     private readonly MelonPreferences_Entry<FullRank>[] _tierUnlockRankEntries;
     private readonly MelonPreferences_Entry<int>[] _tierSlotCountEntries;
     private readonly MelonPreferences_Entry<bool>[] _tierEnabledEntries;
@@ -60,6 +66,36 @@ public class Configuration
             "BackpackSyncDebugLogging",
             false,
             "Enable verbose backpack sync debug logging (host/client save sync diagnostics)"
+        );
+        _storageOverlayOffsetXEntry = _category.CreateEntry(
+            "StorageOverlayOffsetX",
+            0f,
+            "Horizontal offset for backpack overlay in storage container menus"
+        );
+        _storageOverlayOffsetYEntry = _category.CreateEntry(
+            "StorageOverlayOffsetY",
+            0f,
+            "Vertical offset for backpack overlay in storage container menus"
+        );
+        _stationOverlayOffsetXEntry = _category.CreateEntry(
+            "StationOverlayOffsetX",
+            0f,
+            "Horizontal offset for backpack overlay in station menus"
+        );
+        _stationOverlayOffsetYEntry = _category.CreateEntry(
+            "StationOverlayOffsetY",
+            0f,
+            "Vertical offset for backpack overlay in station menus"
+        );
+        _handoverOverlayOffsetXEntry = _category.CreateEntry(
+            "HandoverOverlayOffsetX",
+            0f,
+            "Horizontal offset for backpack overlay in deal handover menus"
+        );
+        _handoverOverlayOffsetYEntry = _category.CreateEntry(
+            "HandoverOverlayOffsetY",
+            0f,
+            "Vertical offset for backpack overlay in deal handover menus"
         );
 
         _tierUnlockRankEntries = new MelonPreferences_Entry<FullRank>[BackpackTiers.Length];
@@ -99,6 +135,12 @@ public class Configuration
     public KeyCode ToggleKey { get; set; }
     public bool EnableSearch { get; set; }
     public bool BackpackSyncDebugLogging { get; set; }
+    public float StorageOverlayOffsetX { get; set; }
+    public float StorageOverlayOffsetY { get; set; }
+    public float StationOverlayOffsetX { get; set; }
+    public float StationOverlayOffsetY { get; set; }
+    public float HandoverOverlayOffsetX { get; set; }
+    public float HandoverOverlayOffsetY { get; set; }
     public FullRank[] TierUnlockRanks { get; internal set; }
     public int[] TierSlotCounts { get; internal set; }
 
@@ -130,6 +172,12 @@ public class Configuration
         ToggleKey = _toggleKeyEntry.Value;
         EnableSearch = _enableSearchEntry.Value;
         BackpackSyncDebugLogging = _backpackSyncDebugLoggingEntry.Value;
+        StorageOverlayOffsetX = _storageOverlayOffsetXEntry.Value;
+        StorageOverlayOffsetY = _storageOverlayOffsetYEntry.Value;
+        StationOverlayOffsetX = _stationOverlayOffsetXEntry.Value;
+        StationOverlayOffsetY = _stationOverlayOffsetYEntry.Value;
+        HandoverOverlayOffsetX = _handoverOverlayOffsetXEntry.Value;
+        HandoverOverlayOffsetY = _handoverOverlayOffsetYEntry.Value;
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
             var rank = _tierUnlockRankEntries[i].Value;
@@ -148,6 +196,12 @@ public class Configuration
         _toggleKeyEntry.Value = ToggleKey;
         _enableSearchEntry.Value = EnableSearch;
         _backpackSyncDebugLoggingEntry.Value = BackpackSyncDebugLogging;
+        _storageOverlayOffsetXEntry.Value = StorageOverlayOffsetX;
+        _storageOverlayOffsetYEntry.Value = StorageOverlayOffsetY;
+        _stationOverlayOffsetXEntry.Value = StationOverlayOffsetX;
+        _stationOverlayOffsetYEntry.Value = StationOverlayOffsetY;
+        _handoverOverlayOffsetXEntry.Value = HandoverOverlayOffsetX;
+        _handoverOverlayOffsetYEntry.Value = HandoverOverlayOffsetY;
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
             _tierUnlockRankEntries[i].Value = new FullRank(TierUnlockRanks[i].Rank, Math.Clamp(TierUnlockRanks[i].Tier, 1, 5));
@@ -183,6 +237,12 @@ public class Configuration
         sb.AppendLine("[PackRat]");
         sb.AppendLine($"ToggleKey = \"{ToggleKey}\"");
         sb.AppendLine($"EnableSearch = {EnableSearch.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"StorageOverlayOffsetX = {StorageOverlayOffsetX.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
+        sb.AppendLine($"StorageOverlayOffsetY = {StorageOverlayOffsetY.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
+        sb.AppendLine($"StationOverlayOffsetX = {StationOverlayOffsetX.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
+        sb.AppendLine($"StationOverlayOffsetY = {StationOverlayOffsetY.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
+        sb.AppendLine($"HandoverOverlayOffsetX = {HandoverOverlayOffsetX.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
+        sb.AppendLine($"HandoverOverlayOffsetY = {HandoverOverlayOffsetY.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
 
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
