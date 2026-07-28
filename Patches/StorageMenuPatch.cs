@@ -754,6 +754,52 @@ public static class StorageMenuPatch
         }
     }
 
+    /// <summary>
+    /// Pages the hotkey-opened backpack with all four arrow keys. Left and up go back; right and
+    /// down advance. The input is left untouched while the live search field owns focus.
+    /// </summary>
+    public static bool HandleStandaloneBackpackPaginationHotkeys()
+    {
+        var previousRequested = Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.UpArrow);
+        var nextRequested = Input.GetKeyDown(KeyCode.RightArrow) || Input.GetKeyDown(KeyCode.DownArrow);
+        if (!previousRequested && !nextRequested)
+            return false;
+
+        try
+        {
+            var menu = Singleton<StorageMenu>.Instance;
+            if (menu == null || !StandaloneBackpackPanels.TryGetValue(menu.GetInstanceID(), out var state) || !state.IsOpen)
+                return false;
+
+            if (state.SearchInput != null && state.SearchInput.isFocused)
+                return false;
+
+            var displaySlots = GetFilteredBackpackSlots(GetBackpackSlots(), state.SearchTerm);
+            var totalPages = Mathf.Max(1, Mathf.CeilToInt(displaySlots.Count / (float)StandaloneBackpackSlotsPerPage));
+            if (state.LastPageInputFrame == Time.frameCount)
+                return true;
+
+            var requestedPage = state.CurrentPage;
+            if (previousRequested)
+                requestedPage--;
+            else if (nextRequested)
+                requestedPage++;
+
+            state.LastPageInputFrame = Time.frameCount;
+            state.CurrentPage = Mathf.Clamp(requestedPage, 0, totalPages - 1);
+            if (state.CurrentPage != requestedPage)
+                return true;
+
+            ApplyStandaloneBackpackMenu(menu);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("StorageMenuPatch.HandleStandaloneBackpackPaginationHotkeys", ex);
+            return false;
+        }
+    }
+
     private static void ApplyBackpackSidePanel(StorageMenu menu, IItemSlotOwner openedOwner)
     {
         try

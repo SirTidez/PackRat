@@ -199,11 +199,17 @@ public class PlayerBackpack : MonoBehaviour
             }
         }
 
-        if (!_backpackEnabled || !keyDown)
+        if (!_backpackEnabled)
             return;
 
         try
         {
+            if (IsOpen && Patches.StorageMenuPatch.HandleStandaloneBackpackPaginationHotkeys())
+                return;
+
+            if (!keyDown)
+                return;
+
             // The toggle key is also a valid character in the live search field. Let the focused
             // InputField consume it before considering an open/close backpack action.
             if (IsOpen && Patches.StorageMenuPatch.IsStandaloneBackpackSearchFocused())
