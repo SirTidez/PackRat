@@ -6,16 +6,18 @@ using UnityEngine;
 using ScheduleOne.AvatarFramework;
 using ScheduleOne.AvatarFramework.Customization;
 using ScheduleOne.DevUtilities;
+using ScheduleOne.Money;
 using ScheduleOne.PlayerScripts;
-using ScheduleOne.UI.ATM;
+using ScheduleOne.UI;
 using ScheduleOne.UI.Shop;
 using ScheduleOne.TV;
 #else
 using Il2CppScheduleOne.AvatarFramework;
 using Il2CppScheduleOne.AvatarFramework.Customization;
 using Il2CppScheduleOne.DevUtilities;
+using Il2CppScheduleOne.Money;
 using Il2CppScheduleOne.PlayerScripts;
-using Il2CppScheduleOne.UI.ATM;
+using Il2CppScheduleOne.UI;
 using Il2CppScheduleOne.UI.Shop;
 using Il2CppScheduleOne.TV;
 #endif

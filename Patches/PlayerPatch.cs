@@ -259,6 +259,9 @@ public static class PlayerPatch
     [HarmonyPrefix]
     public static void Update(Player __instance)
     {
+        if (__instance != null && __instance.IsOwner)
+            BackpackStateSyncManager.Tick();
+
         if (ShouldSkipLocalBackpackPersistence(__instance))
             BackpackStateSyncManager.TryApplyPendingHostSnapshotToLocalPlayer("update fallback");
     }

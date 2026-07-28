@@ -1,13 +1,14 @@
-using System.Reflection;
 using HarmonyLib;
 using PackRat.Helpers;
 using PackRatUtils = PackRat.Helpers.Utils;
 using UnityEngine;
 
 #if MONO
+using S1PlayerSpawner = FishNet.Component.Spawning.PlayerSpawner;
 using ScheduleOne.PlayerScripts;
 using ScheduleOne.Storage;
 #else
+using S1PlayerSpawner = Il2CppFishNet.Component.Spawning.PlayerSpawner;
 using Il2CppScheduleOne.PlayerScripts;
 using Il2CppScheduleOne.Storage;
 #endif
@@ -18,35 +19,9 @@ namespace PackRat.Patches;
 /// Harmony patch for player spawner initialization.
 /// Attaches StorageEntity and PlayerBackpack to the player prefab.
 /// </summary>
-[HarmonyPatch]
+[HarmonyPatch(typeof(S1PlayerSpawner), "InitializeOnce")]
 public static class PlayerSpawnerPatch
 {
-    private static readonly string[] CandidateSpawnerTypeNames =
-    {
-        "FishNet.Component.Spawning.PlayerSpawner",
-        "Il2CppFishNet.Component.Spawning.PlayerSpawner",
-        "ScheduleOne.PlayerScripts.PlayerSpawner",
-        "Il2CppScheduleOne.PlayerScripts.PlayerSpawner"
-    };
-
-    [HarmonyTargetMethod]
-    public static MethodBase TargetMethod()
-    {
-        for (var i = 0; i < CandidateSpawnerTypeNames.Length; i++)
-        {
-            var type = AccessTools.TypeByName(CandidateSpawnerTypeNames[i]);
-            if (type == null)
-                continue;
-
-            var method = AccessTools.Method(type, "InitializeOnce");
-            if (method != null)
-                return method;
-        }
-
-        ModLogger.Warn("Failed to resolve PlayerSpawner.InitializeOnce for backpack prefab setup patch.");
-        return null;
-    }
-
     [HarmonyPostfix]
     public static void InitializeOnce(object __instance)
     {

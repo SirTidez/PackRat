@@ -28,7 +28,7 @@
         <Reference Include="Unity.Mathematics">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Unity.Mathematics.dll</HintPath>
         </Reference>
-        <Reference Include="Unity.Postprocessing.Runtime">
+        <Reference Include="Unity.Postprocessing.Runtime" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Unity.Postprocessing.Runtime.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Unity.Postprocessing.Runtime.dll</HintPath>
         </Reference>
         <Reference Include="Unity.RenderPipeline.Universal.ShaderLibrary">
@@ -285,10 +285,10 @@
         <Reference Include="Il2CppInterop.Common">
             <HintPath>$(S1Dir)\MelonLoader\net6\Il2CppInterop.Common.dll</HintPath>
         </Reference>
-        <Reference Include="Il2CppAeLa.EasyFeedback">
+        <Reference Include="Il2CppAeLa.EasyFeedback" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppAeLa.EasyFeedback.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppAeLa.EasyFeedback.dll</HintPath>
         </Reference>
-        <Reference Include="Il2CppAeLa.EasyFeedback.InputSystemSupport">
+        <Reference Include="Il2CppAeLa.EasyFeedback.InputSystemSupport" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppAeLa.EasyFeedback.InputSystemSupport.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppAeLa.EasyFeedback.InputSystemSupport.dll</HintPath>
         </Reference>
         <Reference Include="Il2CppAmplifyImpostors">
@@ -303,10 +303,10 @@
         <Reference Include="Il2CppBoxophobic.AtmosphericHeightFog.Runtime" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppBoxophobic.AtmosphericHeightFog.Runtime.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppBoxophobic.AtmosphericHeightFog.Runtime.dll</HintPath>
         </Reference>
-        <Reference Include="Il2CppBoxophobic.Utils.Scripts">
+        <Reference Include="Il2CppBoxophobic.Utils.Scripts" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppBoxophobic.Utils.Scripts.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppBoxophobic.Utils.Scripts.dll</HintPath>
         </Reference>
-        <Reference Include="Il2CppCinemachine">
+        <Reference Include="Il2CppCinemachine" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppCinemachine.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppCinemachine.dll</HintPath>
         </Reference>
         <Reference Include="Il2Cppcom.rlabrecque.steamworks.net">
@@ -315,13 +315,13 @@
         <Reference Include="Il2CppCorgiGodRays">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppCorgiGodRays.dll</HintPath>
         </Reference>
-        <Reference Include="Il2CppEasyButtons">
+        <Reference Include="Il2CppEasyButtons" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppEasyButtons.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppEasyButtons.dll</HintPath>
         </Reference>
         <Reference Include="Il2CppEdgegap">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppEdgegap.dll</HintPath>
         </Reference>
-        <Reference Include="Il2CppFishNet.Demos">
+        <Reference Include="Il2CppFishNet.Demos" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppFishNet.Demos.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppFishNet.Demos.dll</HintPath>
         </Reference>
         <Reference Include="Il2CppFishNet.Runtime">
@@ -336,16 +336,16 @@
         <Reference Include="Il2CppGameKit.Utilities">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppGameKit.Utilities.dll</HintPath>
         </Reference>
-        <Reference Include="Il2CppHBAO.Demo.Runtime">
+        <Reference Include="Il2CppHBAO.Demo.Runtime" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppHBAO.Demo.Runtime.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppHBAO.Demo.Runtime.dll</HintPath>
         </Reference>
-        <Reference Include="Il2CppHBAO.Demo.Universal.Runtime">
+        <Reference Include="Il2CppHBAO.Demo.Universal.Runtime" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppHBAO.Demo.Universal.Runtime.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppHBAO.Demo.Universal.Runtime.dll</HintPath>
         </Reference>
-        <Reference Include="Il2CppHBAO.Runtime">
+        <Reference Include="Il2CppHBAO.Runtime" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppHBAO.Runtime.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppHBAO.Runtime.dll</HintPath>
         </Reference>
-        <Reference Include="Il2CppHBAO.Universal.Runtime">
+        <Reference Include="Il2CppHBAO.Universal.Runtime" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppHBAO.Universal.Runtime.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppHBAO.Universal.Runtime.dll</HintPath>
         </Reference>
         <Reference Include="Il2CppHSVPicker">
@@ -372,7 +372,7 @@
         <Reference Include="Il2CppPathfinding.Poly2Tri">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppPathfinding.Poly2Tri.dll</HintPath>
         </Reference>
-        <Reference Include="Il2CppRadiantGI">
+        <Reference Include="Il2CppRadiantGI" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppRadiantGI.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppRadiantGI.dll</HintPath>
         </Reference>
         <Reference Include="Il2CppRootMotion">
@@ -381,13 +381,13 @@
         <Reference Include="Il2CppRuntimePreviewGenerator.Runtime">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppRuntimePreviewGenerator.Runtime.dll</HintPath>
         </Reference>
-        <Reference Include="Il2Cppsc.stylizedgrass.runtime">
+        <Reference Include="Il2Cppsc.stylizedgrass.runtime" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2Cppsc.stylizedgrass.runtime.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2Cppsc.stylizedgrass.runtime.dll</HintPath>
         </Reference>
         <Reference Include="Il2Cppsc.stylizedwater2.runtime">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2Cppsc.stylizedwater2.runtime.dll</HintPath>
         </Reference>
-        <Reference Include="Il2CppStylizedWaterForURP">
+        <Reference Include="Il2CppStylizedWaterForURP" Condition="Exists('$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppStylizedWaterForURP.dll')">
             <HintPath>$(S1Dir)\MelonLoader\Il2CppAssemblies\Il2CppStylizedWaterForURP.dll</HintPath>
         </Reference>
         <Reference Include="Il2CppSystem.Configuration">

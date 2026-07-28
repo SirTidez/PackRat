@@ -21,26 +21,23 @@ using Il2CppScheduleOne.UI.Shop;
 namespace PackRat.Patches;
 
 /// <summary>
-/// Intercepts the shop's ListingClicked only to detect backpack tier listings.
-/// We do NOT run any purchase logic here: the first click is "select for purchase" (not confirm),
-/// and the game uses account funds (not cash) when the player confirms. So we let the game handle
-/// the full flow: select → confirm → deduct account funds → add item. Our cleanup in PlayerBackpack
-/// (RemoveBackpackTierItemsFromPlayerInventory) removes the placeholder item and applies the tier.
+/// Intercepts the shop's AddItem action only to detect backpack tier listings.
+/// The game owns the purchase flow; PackRat only blocks re-adding the already equipped tier.
 /// </summary>
 [HarmonyPatch(typeof(ShopInterface))]
 public static class BackpackPurchasePatch
 {
-    [HarmonyPatch("ListingClicked", typeof(ListingUI))]
+    [HarmonyPatch("AddItem", typeof(ListingUI))]
     [HarmonyPrefix]
-    public static bool ListingClicked_Prefix(ShopInterface __instance, ListingUI listingUI)
+    public static bool AddItem_Prefix(ShopInterface __instance, ListingUI ui)
     {
         try
         {
-            if (listingUI == null)
+            if (ui == null)
                 return true;
 
-            var listing = ReflectionUtils.TryGetFieldOrProperty(listingUI, "Listing")
-                ?? ReflectionUtils.TryGetFieldOrProperty(listingUI, "listing");
+            var listing = ReflectionUtils.TryGetFieldOrProperty(ui, "Listing")
+                ?? ReflectionUtils.TryGetFieldOrProperty(ui, "listing");
             if (listing == null)
                 return true;
 
@@ -65,14 +62,12 @@ public static class BackpackPurchasePatch
                 return false;
             }
 
-            // This is a backpack tier listing. Do not attempt any purchase or deduction here:
-            // this click is "select to purchase", and the game uses account funds on confirm.
-            // Let the game handle select and confirm; our cleanup will remove the placeholder item and apply the tier.
+            // Let the game add the purchased tier item; PlayerBackpack consumes it and applies the tier.
             return true;
         }
         catch (Exception ex)
         {
-            ModLogger.Error("BackpackPurchasePatch: ListingClicked prefix error", ex);
+            ModLogger.Error("BackpackPurchasePatch: AddItem prefix error", ex);
             return true;
         }
     }

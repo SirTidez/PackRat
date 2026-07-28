@@ -836,18 +836,18 @@ public static class BackpackShopIntegration
         try
         {
 #if !MONO
-            listingUI.onClicked = (Il2CppSystem.Action)(() => shop.ListingClicked(listingUI));
-            listingUI.onDropdownClicked = (Il2CppSystem.Action)(() => shop.DropdownClicked(listingUI));
-            listingUI.hoverStart = (Il2CppSystem.Action)(() => shop.EntryHovered(listingUI));
-            listingUI.hoverEnd = (Il2CppSystem.Action)(() => shop.EntryUnhovered());
+            listingUI.onAddItem = DelegateSupport.ConvertDelegate<Il2CppSystem.Action>((Action)(() => shop.AddItem(listingUI)));
+            listingUI.onRemoveItem = DelegateSupport.ConvertDelegate<Il2CppSystem.Action>((Action)(() => shop.RemoveItem(listingUI)));
+            listingUI.onDropdownClicked = DelegateSupport.ConvertDelegate<Il2CppSystem.Action>((Action)(() => shop.DropdownClicked(listingUI)));
+            listingUI.hoverStart = DelegateSupport.ConvertDelegate<Il2CppSystem.Action>((Action)(() => shop.EntryHovered(listingUI)));
+            listingUI.hoverEnd = DelegateSupport.ConvertDelegate<Il2CppSystem.Action>((Action)(() => shop.EntryUnhovered()));
 #else
             var shopType = typeof(ShopInterface);
-            var listingClicked = shopType.GetMethod("ListingClicked", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
             var dropdownClicked = shopType.GetMethod("DropdownClicked", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
             var entryHovered = shopType.GetMethod("EntryHovered", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
             var entryUnhovered = shopType.GetMethod("EntryUnhovered", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
-            if (listingClicked != null)
-                listingUI.onClicked = (Action)Delegate.Combine(listingUI.onClicked, (Action)(() => listingClicked.Invoke(shop, new object[] { listingUI })));
+            listingUI.onAddItem = (Action)Delegate.Combine(listingUI.onAddItem, (Action)(() => shop.AddItem(listingUI)));
+            listingUI.onRemoveItem = (Action)Delegate.Combine(listingUI.onRemoveItem, (Action)(() => shop.RemoveItem(listingUI)));
             if (dropdownClicked != null)
                 listingUI.onDropdownClicked = (Action)Delegate.Combine(listingUI.onDropdownClicked, (Action)(() => dropdownClicked.Invoke(shop, new object[] { listingUI })));
             if (entryHovered != null)

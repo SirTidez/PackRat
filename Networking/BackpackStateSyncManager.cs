@@ -37,10 +37,17 @@ public static class BackpackStateSyncManager
     private const string ResponseVerb = "RES";
     private const string PullRequestVerb = "PULL_REQ";
     private const string PullResponseVerb = "PULL_RES";
+    private const string PushVerb = "PUSH";
+    private const string PushAckVerb = "PUSH_ACK";
     private const int ChunkSize = 700;
+    private const int MaxChunkCount = 128;
+    private const float PushRetrySeconds = 2f;
+    private const int MaxPushAttempts = 3;
+    private const float PendingPushExpirySeconds = 15f;
 
     private static readonly Dictionary<string, BackpackSaveData> _latestSnapshotsByPlayerKey = new Dictionary<string, BackpackSaveData>();
     private static readonly Dictionary<string, PendingResponse> _pendingResponses = new Dictionary<string, PendingResponse>();
+    private static readonly Dictionary<string, PendingResponse> _pendingPushResponses = new Dictionary<string, PendingResponse>();
     private static readonly HashSet<string> _pendingPlayers = new HashSet<string>();
     private static readonly Dictionary<string, string> _playerKeyAliases = new Dictionary<string, string>();
     private static readonly HashSet<string> _unknownResponseKeysLogged = new HashSet<string>();
@@ -53,6 +60,9 @@ public static class BackpackStateSyncManager
     private static PendingResponse _pendingPullResponse;
     private static BackpackSaveData _pendingHostSnapshotForLocalPlayer;
     private static float _lastPullRequestTime;
+    private static string _backpackEditStartFingerprint;
+    private static string _lastAcknowledgedFingerprint;
+    private static PendingLocalPush _pendingLocalPush;
 
     private static string _activeNonce;
     private static float _syncStartTime;
@@ -64,6 +74,91 @@ public static class BackpackStateSyncManager
         public int ChunkCount;
         public string[] Chunks;
         public int ReceivedCount;
+        public float LastUpdatedTime;
+    }
+
+    private sealed class PendingLocalPush
+    {
+        public string SnapshotId;
+        public string PlayerKey;
+        public BackpackSaveData Snapshot;
+        public string Fingerprint;
+        public float LastSendTime;
+        public int Attempts;
+    }
+
+    /// <summary>
+    /// Captures the current client-owned backpack snapshot when the hotkey menu opens. The
+    /// corresponding close callback transmits only when the item set or tier actually changed.
+    /// </summary>
+    public static void BeginLocalBackpackEdit()
+    {
+        _backpackEditStartFingerprint = null;
+        if (!IsRemoteClient() || !TryBuildLocalSnapshot(out var snapshot))
+            return;
+
+        _backpackEditStartFingerprint = GetSnapshotFingerprint(snapshot);
+        DebugLog("Backpack push: captured edit-session baseline.");
+    }
+
+    /// <summary>
+    /// Called when the player closes the backpack UI. A changed client snapshot is queued until
+    /// the host acknowledges it, so reconnect pulls can use the newest known state immediately.
+    /// </summary>
+    public static void CompleteLocalBackpackEdit()
+    {
+        if (!IsRemoteClient())
+            return;
+
+        if (!TryBuildLocalSnapshot(out var snapshot))
+        {
+            ModLogger.Warn("Backpack push skipped after close: unable to build a valid local snapshot.");
+            return;
+        }
+
+        var fingerprint = GetSnapshotFingerprint(snapshot);
+        var changedDuringEdit = !string.Equals(_backpackEditStartFingerprint, fingerprint, StringComparison.Ordinal);
+        _backpackEditStartFingerprint = null;
+        if (!changedDuringEdit || string.Equals(_lastAcknowledgedFingerprint, fingerprint, StringComparison.Ordinal))
+        {
+            DebugLog("Backpack push skipped after close: state unchanged.");
+            return;
+        }
+
+        var playerKey = GetPlayerIdentityKey(Player.Local);
+        if (string.IsNullOrEmpty(playerKey))
+        {
+            ModLogger.Warn("Backpack push skipped after close: local player identity is unavailable.");
+            return;
+        }
+
+        _pendingLocalPush = new PendingLocalPush
+        {
+            SnapshotId = Guid.NewGuid().ToString("N"),
+            PlayerKey = playerKey,
+            Snapshot = snapshot,
+            Fingerprint = fingerprint
+        };
+        ModLogger.Info("[BackpackSync] Changed backpack state queued after menu close.");
+        TrySendPendingLocalPush();
+    }
+
+    /// <summary>
+    /// Advances acknowledgement retries and expires incomplete host-side chunk assemblies.
+    /// Invoked from the local player's update patch.
+    /// </summary>
+    public static void Tick()
+    {
+        ExpireStalePushResponses();
+
+        if (!IsRemoteClient() || _pendingLocalPush == null)
+            return;
+
+        if (_pendingLocalPush.Attempts >= MaxPushAttempts)
+            return;
+
+        if (Time.unscaledTime - _pendingLocalPush.LastSendTime >= PushRetrySeconds)
+            TrySendPendingLocalPush();
     }
 
     public static bool BeginHostSaveSync(float timeoutSeconds = 5f)
@@ -248,6 +343,18 @@ public static class BackpackStateSyncManager
                 HandlePullResponse(value);
                 return true;
             }
+
+            if (value.StartsWith(PushVerb + "|", StringComparison.Ordinal))
+            {
+                HandlePush(value);
+                return true;
+            }
+
+            if (value.StartsWith(PushAckVerb + "|", StringComparison.Ordinal))
+            {
+                HandlePushAcknowledgement(value);
+                return true;
+            }
         }
         catch (Exception ex)
         {
@@ -279,7 +386,12 @@ public static class BackpackStateSyncManager
 
         DebugLog($"Backpack sync request received on client for nonce={nonce}.");
 
-        var snapshot = BuildLocalSnapshot();
+        if (!TryBuildLocalSnapshot(out var snapshot))
+        {
+            ModLogger.Warn($"Backpack sync request ignored for nonce={nonce}: local snapshot is not ready.");
+            return;
+        }
+
         var json = JsonHelper.SerializeObject(snapshot) ?? "";
         var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
         var chunkCount = Math.Max(1, (int)Math.Ceiling(encoded.Length / (float)ChunkSize));
@@ -295,10 +407,9 @@ public static class BackpackStateSyncManager
         DebugLog($"Backpack sync response sent from {responseKey}: chunks={chunkCount}, bytes={encoded.Length}.");
     }
 
-    private static BackpackSaveData BuildLocalSnapshot()
+    private static bool TryBuildLocalSnapshot(out BackpackSaveData snapshot)
     {
-        var contents = string.Empty;
-        var tierIndex = -1;
+        snapshot = null;
 
         try
         {
@@ -306,27 +417,28 @@ public static class BackpackStateSyncManager
             if (PlayerBackpack.Instance != null)
                 PlayerBackpack.Instance.EnsureCorrectTierApplied();
 
-            if (localPlayer != null)
-            {
-                var storage = localPlayer.GetBackpackStorage();
-                if (storage != null)
-                    contents = new ItemSet(storage.ItemSlots).GetJSON();
-            }
+            var storage = localPlayer?.GetBackpackStorage();
+            if (storage == null)
+                return false;
 
-            if (PlayerBackpack.Instance != null)
-                tierIndex = PlayerBackpack.Instance.EquippedTierIndex;
+            var contents = new ItemSet(storage.ItemSlots).GetJSON();
+            if (string.IsNullOrWhiteSpace(contents))
+                return false;
+
+            var tierIndex = PlayerBackpack.Instance?.EquippedTierIndex ?? -1;
+            snapshot = new BackpackSaveData
+            {
+                Contents = contents,
+                EquippedTierIndex = tierIndex,
+                HighestPurchasedTierIndex = tierIndex
+            };
+            return true;
         }
         catch (Exception ex)
         {
             ModLogger.Error("Failed to build local backpack snapshot", ex);
+            return false;
         }
-
-        return new BackpackSaveData
-        {
-            Contents = contents,
-            EquippedTierIndex = tierIndex,
-            HighestPurchasedTierIndex = tierIndex
-        };
     }
 
     private static void HandleResponse(string payload)
@@ -406,6 +518,157 @@ public static class BackpackStateSyncManager
             DebugLog("Backpack sync: all client snapshots received.");
             _syncInProgress = false;
         }
+    }
+
+    /// <summary>
+    /// Receives a client-originated backpack snapshot outside the save cycle. The host keeps the
+    /// validated result in memory immediately, which makes it available to a reconnecting client
+    /// before the next world save writes it to disk.
+    /// </summary>
+    private static void HandlePush(string payload)
+    {
+        if (Lobby.Instance == null || !Lobby.Instance.IsInLobby || !Lobby.Instance.IsHost)
+            return;
+
+        var parts = payload.Split(['|'], 6, StringSplitOptions.None);
+        if (parts.Length < 6)
+            return;
+
+        var snapshotId = parts[1];
+        var rawPlayerKey = parts[2];
+        if (string.IsNullOrEmpty(snapshotId) || string.IsNullOrEmpty(rawPlayerKey)
+            || !int.TryParse(parts[3], out var chunkIndex)
+            || !int.TryParse(parts[4], out var chunkCount)
+            || chunkCount < 1 || chunkCount > MaxChunkCount || chunkIndex < 0 || chunkIndex >= chunkCount)
+            return;
+
+        var playerKey = ResolveLivePlayerKey(rawPlayerKey) ?? NormalizePlayerKey(rawPlayerKey);
+        if (string.IsNullOrEmpty(playerKey))
+            return;
+
+        var key = snapshotId + "|" + playerKey;
+        if (!_pendingPushResponses.TryGetValue(key, out var response))
+        {
+            response = new PendingResponse
+            {
+                ChunkCount = chunkCount,
+                Chunks = new string[chunkCount],
+                LastUpdatedTime = Time.unscaledTime
+            };
+            _pendingPushResponses[key] = response;
+        }
+
+        if (response.ChunkCount != chunkCount)
+            return;
+
+        if (response.Chunks[chunkIndex] == null)
+            response.ReceivedCount++;
+
+        response.Chunks[chunkIndex] = parts[5] ?? string.Empty;
+        response.LastUpdatedTime = Time.unscaledTime;
+        if (response.ReceivedCount < response.ChunkCount)
+            return;
+
+        _pendingPushResponses.Remove(key);
+        try
+        {
+            var encoded = string.Concat(response.Chunks);
+            var json = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
+            var snapshot = JsonHelper.DeserializeObject<BackpackSaveData>(json);
+            if (!IsValidSnapshot(snapshot))
+            {
+                ModLogger.Warn($"Backpack push rejected from {playerKey}: snapshot contents were invalid.");
+                return;
+            }
+
+            StoreLatestSnapshot(playerKey, snapshot);
+            SendPushAcknowledgement(snapshotId, playerKey);
+            ModLogger.Info($"[BackpackSync] Host accepted backpack state from {playerKey}.");
+            DebugLog($"Backpack push accepted from {playerKey}: chunks={chunkCount}.");
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error($"Backpack push: failed to decode snapshot from {playerKey}", ex);
+        }
+    }
+
+    private static void HandlePushAcknowledgement(string payload)
+    {
+        if (!IsRemoteClient() || _pendingLocalPush == null)
+            return;
+
+        var parts = payload.Split(['|'], 3, StringSplitOptions.None);
+        if (parts.Length < 3 || !string.Equals(parts[1], _pendingLocalPush.SnapshotId, StringComparison.Ordinal))
+            return;
+
+        if (!IsLocalTargetKey(parts[2]))
+            return;
+
+        _lastAcknowledgedFingerprint = _pendingLocalPush.Fingerprint;
+        ModLogger.Info("[BackpackSync] Host acknowledged backpack state.");
+        DebugLog($"Backpack push acknowledged after {_pendingLocalPush.Attempts} attempt(s).");
+        _pendingLocalPush = null;
+    }
+
+    private static void TrySendPendingLocalPush()
+    {
+        var pending = _pendingLocalPush;
+        if (pending == null || !IsRemoteClient() || string.IsNullOrEmpty(pending.PlayerKey) || pending.Snapshot == null)
+            return;
+
+        var json = JsonHelper.SerializeObject(pending.Snapshot);
+        if (string.IsNullOrEmpty(json))
+            return;
+
+        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
+        var chunkCount = Math.Max(1, (int)Math.Ceiling(encoded.Length / (float)ChunkSize));
+        if (chunkCount > MaxChunkCount)
+        {
+            ModLogger.Warn($"Backpack push skipped: snapshot needs {chunkCount} chunks (limit {MaxChunkCount}).");
+            _pendingLocalPush = null;
+            return;
+        }
+
+        var sent = true;
+        for (var i = 0; i < chunkCount; i++)
+        {
+            var start = i * ChunkSize;
+            var length = Math.Min(ChunkSize, encoded.Length - start);
+            var chunk = encoded.Substring(start, length);
+            sent &= SendSyncMessage($"{PushVerb}|{pending.SnapshotId}|{pending.PlayerKey}|{i}|{chunkCount}|{chunk}");
+        }
+
+        pending.LastSendTime = Time.unscaledTime;
+        pending.Attempts++;
+        if (!sent)
+            DebugLog($"Backpack push attempt {pending.Attempts} could not enter the variable database.");
+        else
+            DebugLog($"Backpack push sent: attempt={pending.Attempts}, chunks={chunkCount}.");
+    }
+
+    private static void SendPushAcknowledgement(string snapshotId, string playerKey)
+    {
+        if (string.IsNullOrEmpty(snapshotId) || string.IsNullOrEmpty(playerKey))
+            return;
+
+        if (!SendSyncMessage($"{PushAckVerb}|{snapshotId}|{playerKey}"))
+            ModLogger.Warn($"Backpack push acknowledgement could not be sent for {playerKey}.");
+    }
+
+    private static void ExpireStalePushResponses()
+    {
+        if (_pendingPushResponses.Count == 0)
+            return;
+
+        var expired = new List<string>();
+        foreach (var pair in _pendingPushResponses)
+        {
+            if (Time.unscaledTime - pair.Value.LastUpdatedTime >= PendingPushExpirySeconds)
+                expired.Add(pair.Key);
+        }
+
+        for (var i = 0; i < expired.Count; i++)
+            _pendingPushResponses.Remove(expired[i]);
     }
 
     private static void HandlePullRequest(string payload)
@@ -514,6 +777,11 @@ public static class BackpackStateSyncManager
     {
         snapshot = null;
 
+        // A newly pushed client state is newer than the last world save. Reconnects must see this
+        // cache first instead of being rolled back to the older Backpack.json on disk.
+        if (TryGetCachedSnapshot(requestedPlayerKey, out snapshot))
+            return true;
+
         var manager = PlayerManager.Instance;
         if (manager == null || string.IsNullOrWhiteSpace(requestedPlayerKey))
             return false;
@@ -536,14 +804,56 @@ public static class BackpackStateSyncManager
                 return true;
         }
 
-        var normalizedKey = NormalizePlayerKey(requestedPlayerKey);
-        if (!string.IsNullOrEmpty(normalizedKey) && _latestSnapshotsByPlayerKey.TryGetValue(normalizedKey, out snapshot) && snapshot != null)
-            return true;
-
         if (TryLoadBackpackByPathSearch(manager, requestedPlayerKey, out snapshot))
             return true;
 
         return false;
+    }
+
+    private static bool TryGetCachedSnapshot(string playerKey, out BackpackSaveData snapshot)
+    {
+        snapshot = null;
+        var candidates = BuildPlayerCodeCandidates(playerKey);
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            var candidate = NormalizePlayerKey(candidates[i]);
+            if (!string.IsNullOrEmpty(candidate)
+                && _latestSnapshotsByPlayerKey.TryGetValue(candidate, out snapshot)
+                && snapshot != null)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static void StoreLatestSnapshot(string playerKey, BackpackSaveData snapshot)
+    {
+        if (snapshot == null)
+            return;
+
+        var canonicalKey = ResolveLivePlayerKey(playerKey) ?? NormalizePlayerKey(playerKey);
+        if (string.IsNullOrEmpty(canonicalKey))
+            return;
+
+        _latestSnapshotsByPlayerKey[canonicalKey] = snapshot;
+        var players = Player.PlayerList;
+        for (var i = 0; i < players.Count; i++)
+        {
+            var player = players[i];
+            if (player == null || !KeysReferToSamePlayer(canonicalKey, player))
+                continue;
+
+            var identity = GetPlayerIdentityKey(player);
+            var playerCode = NormalizePlayerKey(player.PlayerCode);
+            var saveFolderName = NormalizePlayerKey(player.SaveFolderName);
+            if (!string.IsNullOrEmpty(identity))
+                _latestSnapshotsByPlayerKey[identity] = snapshot;
+            if (!string.IsNullOrEmpty(playerCode))
+                _latestSnapshotsByPlayerKey[playerCode] = snapshot;
+            if (!string.IsNullOrEmpty(saveFolderName))
+                _latestSnapshotsByPlayerKey[saveFolderName] = snapshot;
+            break;
+        }
     }
 
     private static List<string> BuildPlayerCodeCandidates(string requestedPlayerKey)
@@ -724,6 +1034,74 @@ public static class BackpackStateSyncManager
             ModLogger.Error($"Backpack pull: failed to apply snapshot from {source}", ex);
             return false;
         }
+    }
+
+    private static bool IsRemoteClient()
+    {
+        return Lobby.Instance != null && Lobby.Instance.IsInLobby && !Lobby.Instance.IsHost;
+    }
+
+    private static bool IsValidSnapshot(BackpackSaveData snapshot)
+    {
+        if (snapshot == null || string.IsNullOrWhiteSpace(snapshot.Contents))
+            return false;
+
+        return ItemSet.TryDeserialize(snapshot.Contents, out _);
+    }
+
+    private static string GetSnapshotFingerprint(BackpackSaveData snapshot)
+    {
+        if (snapshot == null)
+            return string.Empty;
+
+        return $"{GetStoredTierIndex(snapshot)}|{snapshot.Contents ?? string.Empty}";
+    }
+
+    private static string ResolveLivePlayerKey(string playerKey)
+    {
+        var normalized = NormalizePlayerKey(playerKey);
+        if (string.IsNullOrEmpty(normalized))
+            return null;
+
+        var players = Player.PlayerList;
+        for (var i = 0; i < players.Count; i++)
+        {
+            var player = players[i];
+            if (player != null && KeysReferToSamePlayer(normalized, player))
+                return GetPlayerIdentityKey(player);
+        }
+
+        return null;
+    }
+
+    private static bool KeysReferToSamePlayer(string key, Player player)
+    {
+        if (player == null)
+            return false;
+
+        var normalized = NormalizePlayerKey(key);
+        if (string.IsNullOrEmpty(normalized))
+            return false;
+
+        var identity = GetPlayerIdentityKey(player);
+        var playerCode = NormalizePlayerKey(player.PlayerCode);
+        var saveFolderName = NormalizePlayerKey(player.SaveFolderName);
+        return KeysMatch(normalized, identity) || KeysMatch(normalized, playerCode) || KeysMatch(normalized, saveFolderName);
+    }
+
+    private static bool KeysMatch(string left, string right)
+    {
+        left = NormalizePlayerKey(left);
+        right = NormalizePlayerKey(right);
+        if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right))
+            return false;
+
+        if (string.Equals(left, right, StringComparison.Ordinal))
+            return true;
+
+        var leftWithoutPrefix = left.StartsWith("player_", StringComparison.Ordinal) ? left.Substring("player_".Length) : left;
+        var rightWithoutPrefix = right.StartsWith("player_", StringComparison.Ordinal) ? right.Substring("player_".Length) : right;
+        return string.Equals(leftWithoutPrefix, rightWithoutPrefix, StringComparison.Ordinal);
     }
 
     private static bool IsLocalTargetKey(string targetPlayerKey)
