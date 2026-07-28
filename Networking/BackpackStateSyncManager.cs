@@ -303,6 +303,9 @@ public static class BackpackStateSyncManager
         try
         {
             var localPlayer = Player.Local;
+            if (PlayerBackpack.Instance != null)
+                PlayerBackpack.Instance.EnsureCorrectTierApplied();
+
             if (localPlayer != null)
             {
                 var storage = localPlayer.GetBackpackStorage();

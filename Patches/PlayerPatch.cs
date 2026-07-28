@@ -57,6 +57,9 @@ public static class PlayerPatch
         if (ShouldSkipLocalBackpackPersistence(__instance))
             return;
 
+        if (__instance.IsOwner)
+            ResolveBackpackComponent(__instance)?.EnsureCorrectTierApplied();
+
         var backpackStorage = __instance.GetBackpackStorage();
         var contents = new ItemSet(backpackStorage.ItemSlots).GetJSON();
 
@@ -67,13 +70,23 @@ public static class PlayerPatch
         }
         else if (BackpackStateSyncManager.TryGetLatestSnapshotForPlayer(__instance, out var syncedData) && syncedData != null)
         {
-            if (!string.IsNullOrEmpty(syncedData.Contents))
-                contents = syncedData.Contents;
-            tierIndex = GetStoredTierIndex(syncedData);
+            var syncedTierIndex = GetStoredTierIndex(syncedData);
+            if (string.IsNullOrEmpty(syncedData.Contents) && syncedTierIndex < 0
+                && TryReadExistingData(__instance, parentFolderPath, out var existingContents, out var existingTierIndex))
+            {
+                contents = existingContents;
+                tierIndex = existingTierIndex;
+            }
+            else
+            {
+                if (!string.IsNullOrEmpty(syncedData.Contents))
+                    contents = syncedData.Contents;
+                tierIndex = syncedTierIndex;
+            }
         }
         else
         {
-            TryReadExistingData(parentFolderPath, out var existingContents, out tierIndex);
+            TryReadExistingData(__instance, parentFolderPath, out var existingContents, out tierIndex);
             if (!string.IsNullOrEmpty(existingContents))
                 contents = existingContents;
         }
@@ -94,27 +107,33 @@ public static class PlayerPatch
 #endif
     }
 
-    private static void TryReadExistingData(string parentFolderPath, out string contents, out int tierIndex)
+    private static bool TryReadExistingData(Player player, string parentFolderPath, out string contents, out int tierIndex)
     {
         contents = null;
         tierIndex = -1;
         try
         {
-            var path = System.IO.Path.Combine(parentFolderPath, "Backpack");
-            if (!System.IO.File.Exists(path))
-                return;
-            var json = System.IO.File.ReadAllText(path);
+            if (player == null || string.IsNullOrEmpty(parentFolderPath))
+                return false;
+
+            var playerFolderPath = System.IO.Path.Combine(parentFolderPath, player.SaveFolderName);
+            if (!player.Loader.TryLoadFile(playerFolderPath, "Backpack", out var json))
+                return false;
+
             var data = JsonHelper.DeserializeObject<BackpackSaveData>(json);
             if (data != null)
             {
                 contents = data.Contents;
                 tierIndex = GetStoredTierIndex(data);
+                return true;
             }
         }
         catch
         {
             // ignore; keep existing defaults
         }
+
+        return false;
     }
 
     [HarmonyPatch("Load", typeof(PlayerData), typeof(string))]
@@ -263,17 +282,21 @@ public static class PlayerPatch
 
     private static void ApplyTierToLocalBackpack(Player player, int tierIndex)
     {
-        var backpack = PlayerBackpack.Instance;
-        if (backpack == null && player != null)
-        {
-            var localGameObject = player.LocalGameObject != null ? player.LocalGameObject : player.gameObject;
-            backpack = Utils.GetComponentSafe<PlayerBackpack>(localGameObject);
-        }
-
+        var backpack = ResolveBackpackComponent(player);
         if (backpack == null)
             return;
 
         backpack.SetEquippedTierIndex(tierIndex);
         backpack.EnsureCorrectTierApplied();
+    }
+
+    private static PlayerBackpack ResolveBackpackComponent(Player player)
+    {
+        var backpack = PlayerBackpack.Instance;
+        if (backpack != null || player == null)
+            return backpack;
+
+        var localGameObject = player.LocalGameObject != null ? player.LocalGameObject : player.gameObject;
+        return Utils.GetComponentSafe<PlayerBackpack>(localGameObject);
     }
 }

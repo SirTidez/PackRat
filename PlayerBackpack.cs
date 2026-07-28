@@ -163,20 +163,20 @@ public class PlayerBackpack : MonoBehaviour
         }
 
         ModLogger.Info("Configuring backpack storage...");
-        var tierIdx = CurrentTierIndex;
-        var slotCount = tierIdx >= 0
-            ? Configuration.Instance.TierSlotCounts[tierIdx]
-            : Configuration.BackpackTiers[0].DefaultSlotCount;
         // Defer configuration to next frame to avoid triggering MonoMod/Harmony detour compilation
         // during initial JIT (fatal CLR error 0x80131506 in DetourRuntimeNETCore30Platform.CompileMethodHook).
-        MelonLoader.MelonCoroutines.Start(DeferredConfigureStorage(this, slotCount));
+        MelonLoader.MelonCoroutines.Start(DeferredConfigureStorage(this));
     }
 
-    private static IEnumerator DeferredConfigureStorage(PlayerBackpack instance, int slotCount)
+    private static IEnumerator DeferredConfigureStorage(PlayerBackpack instance)
     {
         yield return null;
         if (instance == null || instance._storage == null)
             yield break;
+        var tierIdx = instance.CurrentTierIndex;
+        var slotCount = tierIdx >= 0
+            ? Configuration.Instance.TierSlotCounts[tierIdx]
+            : Configuration.BackpackTiers[0].DefaultSlotCount;
         instance.UpdateSize(slotCount);
         instance.OnStartClient(true);
     }
@@ -375,7 +375,7 @@ public class PlayerBackpack : MonoBehaviour
             return;
 
         var targetSlots = Configuration.Instance.TierSlotCounts[tierIdx];
-        if (_storage.SlotCount == targetSlots)
+        if (_storage.SlotCount == targetSlots && _storage.ItemSlots.Count == targetSlots)
             return;
 
         ModLogger.Info($"Backpack upgraded to {Configuration.BackpackTiers[tierIdx].Name} ({targetSlots} slots).");

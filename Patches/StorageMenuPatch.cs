@@ -267,6 +267,7 @@ public static class StorageMenuPatch
             && existing.SlotGridLayout != null
             && existing.SlotUIs != null)
         {
+            EnsureOverlaySorting(existing.Container, menu.Container);
             EnsurePagingControls(existing);
             return existing;
         }
@@ -282,6 +283,7 @@ public static class StorageMenuPatch
         root.sizeDelta = menu.Container.sizeDelta;
         root.localScale = menu.Container.localScale;
         root.gameObject.SetActive(false);
+        EnsureOverlaySorting(root, menu.Container);
 
         panel.Container = root;
         panel.TitleLabel = CloneLabel(menu.TitleLabel, menu.Container, root);
@@ -300,6 +302,61 @@ public static class StorageMenuPatch
         SetPanelHeader(menu, root);
         EnsurePagingControls(panel);
         return panel;
+    }
+
+    private static void EnsureOverlaySorting(RectTransform root, RectTransform sourceContainer)
+    {
+        if (root == null)
+            return;
+
+#if !MONO
+        var rootCanvas = Utils.GetOrAddComponentSafe<Canvas>(root.gameObject);
+#else
+        var rootCanvas = root.GetComponent<Canvas>();
+        if (rootCanvas == null)
+            rootCanvas = root.gameObject.AddComponent<Canvas>();
+#endif
+        if (rootCanvas != null)
+        {
+            rootCanvas.overrideSorting = true;
+            var parentCanvas = sourceContainer != null
+                ? sourceContainer.GetComponentInParent<Canvas>()
+                : null;
+            if (parentCanvas != null)
+            {
+                rootCanvas.sortingLayerID = parentCanvas.sortingLayerID;
+                rootCanvas.sortingOrder = parentCanvas.sortingOrder + 200;
+            }
+            else
+            {
+                rootCanvas.sortingOrder = 5000;
+            }
+        }
+
+#if !MONO
+        var raycaster = Utils.GetOrAddComponentSafe<GraphicRaycaster>(root.gameObject);
+#else
+        var raycaster = root.GetComponent<GraphicRaycaster>();
+        if (raycaster == null)
+            raycaster = root.gameObject.AddComponent<GraphicRaycaster>();
+#endif
+        RegisterItemUiRaycaster(raycaster);
+        root.SetAsLastSibling();
+    }
+
+    private static void RegisterItemUiRaycaster(GraphicRaycaster raycaster)
+    {
+        if (raycaster == null)
+            return;
+
+        try
+        {
+            Singleton<ItemUIManager>.Instance?.AddRaycaster(raycaster);
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("StorageMenuPatch.RegisterItemUiRaycaster", ex);
+        }
     }
 
     private static void PositionSideBySide(StorageMenu menu, BackpackPanelState panel)
