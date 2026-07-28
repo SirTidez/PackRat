@@ -37,7 +37,7 @@
         <Reference Include="Unity.Postprocessing.Runtime">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\Unity.Postprocessing.Runtime.dll</HintPath>
         </Reference>
-        <Reference Include="Unity.ProGrids">
+        <Reference Include="Unity.ProGrids" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\Unity.ProGrids.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\Unity.ProGrids.dll</HintPath>
         </Reference>
         <Reference Include="Unity.RenderPipeline.Universal.ShaderLibrary">
@@ -334,10 +334,10 @@
         <Reference Include="Boxophobic.AtmosphericHeightFog.Runtime" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\Boxophobic.AtmosphericHeightFog.Runtime.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\Boxophobic.AtmosphericHeightFog.Runtime.dll</HintPath>
         </Reference>
-        <Reference Include="Boxophobic.Utils.Scripts">
+        <Reference Include="Boxophobic.Utils.Scripts" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\Boxophobic.Utils.Scripts.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\Boxophobic.Utils.Scripts.dll</HintPath>
         </Reference>
-        <Reference Include="Cinemachine">
+        <Reference Include="Cinemachine" Condition="Exists('$(S1Dir)\Schedule I_Data\Managed\Cinemachine.dll')">
             <HintPath>$(S1Dir)\Schedule I_Data\Managed\Cinemachine.dll</HintPath>
         </Reference>
         <Reference Include="com.rlabrecque.steamworks.net">

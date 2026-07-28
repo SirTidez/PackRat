@@ -38,6 +38,9 @@ namespace PackRat.Patches;
 public static class HandoverScreenPatch
 {
     private const float VehicleMaxDistance = 20f;
+    private const float BackpackGridScale = 0.74f;
+    private const float BackpackContentCenterY = 125f;
+    private static readonly Vector2 BackpackCardSize = new Vector2(380f, 450f);
     private const string VehicleHeaderTitle = "Vehicle";
     private const string VehicleHeaderSubtitle = "This is the vehicle you last drove.\nMust be within 20 meters.";
 
@@ -46,6 +49,12 @@ public static class HandoverScreenPatch
         public RectTransform BackpackContainer;
         public RectTransform BackpackSlotContainer;
         public RectTransform BackpackHeaderRoot;
+        public RectTransform BackpackVisualRoot;
+        public Canvas DedicatedCanvas;
+        public RectTransform DedicatedCard;
+        public RectTransform DedicatedGrid;
+        public RectTransform CanvasProofMarker;
+        public ItemSlotUI SlotPrefab;
         public RectTransform PagingRoot;
         public RectTransform VehicleContainer;
         public Component SourceTitleLabel;
@@ -59,10 +68,18 @@ public static class HandoverScreenPatch
         public Button NextButton;
         public Button ToggleButton;
         public Text PageLabel;
+        public Text VisualTitleLabel;
+        public Text VisualMetaLabel;
         public Action PrevAction;
         public Action NextAction;
         public Action ToggleAction;
         public Vector2 VehicleOriginalAnchoredPos;
+        public Vector2 DoneButtonOriginalAnchorMin;
+        public Vector2 DoneButtonOriginalAnchorMax;
+        public Vector2 DoneButtonOriginalPivot;
+        public Vector2 DoneButtonOriginalAnchoredPos;
+        public Vector3 DoneButtonOriginalScale;
+        public bool DoneButtonLayoutCaptured;
         public int CurrentPage;
         public int SlotsPerPage;
         public bool ShowingVehicle;
@@ -86,6 +103,7 @@ public static class HandoverScreenPatch
     {
         try
         {
+            ModLogger.Info($"[HandoverUI] Start receipt: id={__instance?.GetInstanceID()}");
             PruneDeadStates();
             EnsurePanel(__instance);
         }
@@ -101,6 +119,7 @@ public static class HandoverScreenPatch
     {
         try
         {
+            ModLogger.Info($"[HandoverUI] Open receipt: id={__instance?.GetInstanceID()}, hasBackpack={HasBackpack()}");
             PruneDeadStates();
             if (!HasBackpack())
             {
@@ -122,16 +141,11 @@ public static class HandoverScreenPatch
             UpdateBackpackHeaderTexts(panel);
 
             var hasVehicle = HasNearbyVehicleStorage();
-            if (__instance.NoVehicle != null)
-                __instance.NoVehicle.SetActive(!hasVehicle && !panel.BackpackContainer.gameObject.activeSelf);
-
             ApplyVisibleStorageMode(panel, hasVehicle);
-            if (__instance.NoVehicle != null)
-                __instance.NoVehicle.SetActive(false);
 
-            if (panel.BackpackContainer != null)
+            if (panel.DedicatedCanvas == null && panel.BackpackContainer != null)
                 panel.BackpackContainer.gameObject.SetActive(true);
-            if (panel.BackpackSlotContainer != null)
+            if (panel.DedicatedCanvas == null && panel.BackpackSlotContainer != null)
                 panel.BackpackSlotContainer.gameObject.SetActive(true);
             if (panel.VehicleContainer != null)
                 panel.VehicleContainer.gameObject.SetActive(false);
@@ -181,6 +195,7 @@ public static class HandoverScreenPatch
             return;
         if (panel.VehicleContainer != null && panel.VehicleContainer.gameObject.activeSelf)
             panel.VehicleContainer.gameObject.SetActive(false);
+        ConfigureCompactBackpackLayout(__instance, panel);
         ApplyPrimaryHeaderForMode(__instance, panel, false);
         if (panel.BackpackHeaderRoot != null && panel.BackpackHeaderRoot.gameObject.activeSelf)
         {
@@ -205,10 +220,16 @@ public static class HandoverScreenPatch
                 panel.BackpackContainer.gameObject.SetActive(false);
             if (panel.PagingRoot != null)
                 panel.PagingRoot.gameObject.SetActive(false);
+            if (panel.DedicatedCanvas != null)
+                panel.DedicatedCanvas.gameObject.SetActive(false);
+            if (panel.CanvasProofMarker != null)
+                panel.CanvasProofMarker.gameObject.SetActive(false);
+            SetBackpackVisualVisible(panel, false);
             HideOverlayHeader(panel);
             SetHeaderPairActive(panel.SourceTitleLabel, panel.SourceSubtitleLabel, true);
             if (panel.VehicleContainer != null)
                 panel.VehicleContainer.anchoredPosition = panel.VehicleOriginalAnchoredPos;
+            RestoreDoneButtonLayout(__instance, panel);
         }
         catch (Exception ex)
         {
@@ -252,22 +273,87 @@ public static class HandoverScreenPatch
         {
             var clone = UnityEngine.Object.Instantiate(state.VehicleContainer, state.VehicleContainer.parent);
             clone.name = "BackpackContainer";
-            clone.anchoredPosition = GetHandoverBackpackPosition(state);
-            clone.localScale = state.VehicleContainer.localScale;
             clone.gameObject.SetActive(false);
             state.BackpackContainer = clone;
         }
 
+        CenterBackpackContainer(state);
         state.BackpackSlotContainer = FindMatchingRectTransform(state.BackpackContainer, screen.VehicleSlotContainer);
         var slotSearchRoot = state.BackpackSlotContainer != null ? state.BackpackSlotContainer : state.BackpackContainer;
         state.SlotUIs = slotSearchRoot.GetComponentsInChildren<ItemSlotUI>(includeInactive: false);
         if (state.SlotUIs == null || state.SlotUIs.Length == 0)
             state.SlotUIs = slotSearchRoot.GetComponentsInChildren<ItemSlotUI>(includeInactive: true);
+        state.SlotPrefab = state.SlotUIs != null && state.SlotUIs.Length > 0 ? state.SlotUIs[0] : null;
         RefreshHeaderBindings(state, screen);
+        EnsureCanvasProofMarker(screen, state);
+        EnsureDedicatedBackpackOverlay(screen, state);
+        if (state.DedicatedCard == null)
+        {
+            EnsureBackpackVisuals(state);
+            ConfigureCompactBackpackLayout(screen, state);
+        }
         EnsurePagingControls(state);
         state.Initialized = true;
         States[id] = state;
         return state;
+    }
+
+    /// <summary>
+    /// Temporary runtime receipt for the screen we believe owns dead-drop handover. It deliberately
+    /// lives on the game's own canvas, avoiding every cloned or custom canvas path. Its presence
+    /// (or absence) makes the next live test decisive before we continue changing UI geometry.
+    /// </summary>
+    private static void EnsureCanvasProofMarker(HandoverScreen screen, PanelState state)
+    {
+        if (screen?.Canvas == null || state == null)
+        {
+            ModLogger.Warn("[HandoverUI] Canvas proof skipped: HandoverScreen.Canvas was null.");
+            return;
+        }
+
+        var canvasRoot = screen.Canvas.transform as RectTransform;
+        if (canvasRoot == null)
+        {
+            ModLogger.Warn("[HandoverUI] Canvas proof skipped: canvas root was not a RectTransform.");
+            return;
+        }
+
+        var marker = state.CanvasProofMarker;
+        if (marker == null)
+        {
+            var markerGo = new GameObject("PackRat_HandoverCanvasProof");
+            marker = markerGo.AddComponent<RectTransform>();
+            marker.SetParent(canvasRoot, worldPositionStays: false);
+            var markerImage = markerGo.AddComponent<Image>();
+            markerImage.color = new Color32(217, 56, 168, 245);
+            markerImage.raycastTarget = false;
+
+            var labelGo = new GameObject("Label");
+            var labelRect = labelGo.AddComponent<RectTransform>();
+            labelRect.SetParent(marker, worldPositionStays: false);
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+            var label = labelGo.AddComponent<Text>();
+            label.text = "PACKRAT HANDOVER CANVAS RECEIPT";
+            label.font = ResolveUiFont(canvasRoot);
+            label.fontSize = 16;
+            label.fontStyle = FontStyle.Bold;
+            label.alignment = TextAnchor.MiddleCenter;
+            label.color = Color.white;
+            label.raycastTarget = false;
+            state.CanvasProofMarker = marker;
+        }
+
+        marker.anchorMin = new Vector2(0.5f, 0.5f);
+        marker.anchorMax = new Vector2(0.5f, 0.5f);
+        marker.pivot = new Vector2(0.5f, 0.5f);
+        marker.anchoredPosition = new Vector2(0f, 300f);
+        marker.sizeDelta = new Vector2(440f, 42f);
+        marker.SetAsLastSibling();
+        marker.gameObject.SetActive(true);
+        ModLogger.Info($"[HandoverUI] Canvas proof active: canvas={screen.Canvas.name}, mode={screen.Canvas.renderMode}, rect={canvasRoot.rect.width:0}x{canvasRoot.rect.height:0}, markerParent={marker.parent?.name}");
     }
 
     private static void PruneDeadStates()
@@ -313,6 +399,10 @@ public static class HandoverScreenPatch
             out state.SourceTitleLabel, out state.SourceSubtitleLabel);
         ResolveHeaderPairInContainer(state.BackpackContainer, state.BackpackSlotContainer, state.PagingRoot, state.BackpackHeaderRoot,
             out state.ClonedTitleLabel, out state.ClonedSubtitleLabel);
+        if (IsUnderTransform(state.ClonedTitleLabel, state.BackpackVisualRoot))
+            state.ClonedTitleLabel = null;
+        if (IsUnderTransform(state.ClonedSubtitleLabel, state.BackpackVisualRoot))
+            state.ClonedSubtitleLabel = null;
     }
 
     private static void ResolveHeaderPairInContainer(
@@ -784,29 +874,472 @@ public static class HandoverScreenPatch
 
         if (state.OverlaySubtitleLabel != null)
             SetLabelText(state.OverlaySubtitleLabel, "Items from your backpack.");
+
+        UpdateBackpackVisuals(state);
+    }
+
+    private static void CenterBackpackContainer(PanelState state)
+    {
+        if (state?.BackpackContainer == null)
+            return;
+
+        var container = state.BackpackContainer;
+        container.anchorMin = new Vector2(0.5f, 0.5f);
+        container.anchorMax = new Vector2(0.5f, 0.5f);
+        container.pivot = new Vector2(0.5f, 0.5f);
+        container.localScale = Vector3.one;
+        container.anchoredPosition = GetHandoverBackpackPosition(state);
+    }
+
+    /// <summary>
+    /// Uses the same dedicated overlay-canvas approach as established S1 mods rather than
+    /// attaching new layout to HandoverScreen's animated vehicle hierarchy. Native ItemSlotUI
+    /// prefabs are cloned into a fixed grid, preserving item rendering and click behavior.
+    /// </summary>
+    private static void EnsureDedicatedBackpackOverlay(HandoverScreen screen, PanelState state)
+    {
+        if (screen == null || state == null || state.SlotPrefab == null)
+            return;
+
+        if (state.DedicatedCanvas == null)
+        {
+            var canvasGo = new GameObject("PackRat_HandoverBackpackCanvas");
+#if !MONO
+            var canvas = Utils.AddComponentSafe<Canvas>(canvasGo);
+            var scaler = Utils.AddComponentSafe<UnityEngine.UI.CanvasScaler>(canvasGo);
+            var raycaster = Utils.AddComponentSafe<GraphicRaycaster>(canvasGo);
+#else
+            var canvas = canvasGo.AddComponent<Canvas>();
+            var scaler = canvasGo.AddComponent<UnityEngine.UI.CanvasScaler>();
+            var raycaster = canvasGo.AddComponent<GraphicRaycaster>();
+#endif
+            if (canvas == null || scaler == null)
+            {
+                UnityEngine.Object.Destroy(canvasGo);
+                return;
+            }
+
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = (screen.Canvas != null ? screen.Canvas.sortingOrder : 0) + 50;
+            scaler.uiScaleMode = UnityEngine.UI.CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.matchWidthOrHeight = 0.5f;
+            RegisterItemUiRaycaster(raycaster);
+            state.DedicatedCanvas = canvas;
+
+            var cardGo = new GameObject("PackRat_BackpackCard");
+            var card = cardGo.AddComponent<RectTransform>();
+            card.SetParent(canvas.transform, worldPositionStays: false);
+            card.anchorMin = new Vector2(0.5f, 0.5f);
+            card.anchorMax = new Vector2(0.5f, 0.5f);
+            card.pivot = new Vector2(0.5f, 0.5f);
+            card.anchoredPosition = new Vector2(0f, 90f);
+            card.sizeDelta = new Vector2(360f, 410f);
+            var cardImage = cardGo.AddComponent<Image>();
+            cardImage.color = new Color32(15, 21, 28, 238);
+            cardImage.raycastTarget = false;
+            state.DedicatedCard = card;
+            state.BackpackVisualRoot = card;
+
+            var headerGo = new GameObject("Header");
+            var header = headerGo.AddComponent<RectTransform>();
+            header.SetParent(card, worldPositionStays: false);
+            header.anchorMin = new Vector2(0f, 1f);
+            header.anchorMax = new Vector2(1f, 1f);
+            header.pivot = new Vector2(0.5f, 1f);
+            header.offsetMin = new Vector2(10f, -62f);
+            header.offsetMax = new Vector2(-10f, -8f);
+            var headerImage = headerGo.AddComponent<Image>();
+            headerImage.color = new Color32(35, 61, 86, 248);
+            headerImage.raycastTarget = false;
+
+            var accentGo = new GameObject("Accent");
+            var accent = accentGo.AddComponent<RectTransform>();
+            accent.SetParent(header, worldPositionStays: false);
+            accent.anchorMin = new Vector2(0f, 0f);
+            accent.anchorMax = new Vector2(1f, 0f);
+            accent.pivot = new Vector2(0.5f, 0f);
+            accent.offsetMin = Vector2.zero;
+            accent.offsetMax = new Vector2(0f, 3f);
+            var accentImage = accentGo.AddComponent<Image>();
+            accentImage.color = new Color32(76, 173, 229, 255);
+            accentImage.raycastTarget = false;
+
+            state.VisualTitleLabel = EnsureVisualLabel(header, "Title", new Vector2(0f, -16f), 18, FontStyle.Bold);
+            state.VisualMetaLabel = EnsureVisualLabel(header, "Meta", new Vector2(0f, -38f), 11, FontStyle.Normal);
+
+            var gridGo = new GameObject("SlotGrid");
+            var grid = gridGo.AddComponent<RectTransform>();
+            grid.SetParent(card, worldPositionStays: false);
+            grid.anchorMin = new Vector2(0.5f, 0.5f);
+            grid.anchorMax = new Vector2(0.5f, 0.5f);
+            grid.pivot = new Vector2(0.5f, 0.5f);
+            grid.anchoredPosition = new Vector2(0f, -24f);
+            grid.sizeDelta = new Vector2(306f, 306f);
+            var layout = gridGo.AddComponent<GridLayoutGroup>();
+            layout.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            layout.constraintCount = 4;
+            layout.cellSize = new Vector2(72f, 72f);
+            layout.spacing = new Vector2(6f, 6f);
+            layout.childAlignment = TextAnchor.MiddleCenter;
+            state.DedicatedGrid = grid;
+
+            var slots = new List<ItemSlotUI>();
+            for (var i = 0; i < 16; i++)
+            {
+                var slotGo = UnityEngine.Object.Instantiate(state.SlotPrefab.gameObject, grid);
+                slotGo.name = $"PackRat_BackpackSlot_{i + 1}";
+#if !MONO
+                var slotUi = Utils.GetComponentSafe<ItemSlotUI>(slotGo);
+#else
+                var slotUi = slotGo.GetComponent<ItemSlotUI>();
+#endif
+                if (slotUi == null)
+                    continue;
+                slotUi.ClearSlot();
+                slotUi.gameObject.SetActive(true);
+                slots.Add(slotUi);
+            }
+
+            state.SlotUIs = slots.ToArray();
+            state.SlotsPerPage = state.SlotUIs.Length;
+            canvasGo.SetActive(false);
+        }
+
+        UpdateDedicatedOverlayLayout(screen, state);
+    }
+
+    private static void UpdateDedicatedOverlayLayout(HandoverScreen screen, PanelState state)
+    {
+        if (state?.DedicatedCard == null)
+            return;
+
+        var config = Configuration.Instance;
+        state.DedicatedCard.anchoredPosition = new Vector2(
+            config.HandoverOverlayOffsetX,
+            90f + config.HandoverOverlayOffsetY
+        );
+        state.DedicatedCard.sizeDelta = new Vector2(360f, 410f);
+
+        var doneRect = screen?.DoneButton?.transform as RectTransform;
+        if (doneRect == null)
+            return;
+
+        if (!state.DoneButtonLayoutCaptured)
+        {
+            state.DoneButtonOriginalAnchorMin = doneRect.anchorMin;
+            state.DoneButtonOriginalAnchorMax = doneRect.anchorMax;
+            state.DoneButtonOriginalPivot = doneRect.pivot;
+            state.DoneButtonOriginalAnchoredPos = doneRect.anchoredPosition;
+            state.DoneButtonOriginalScale = doneRect.localScale;
+            state.DoneButtonLayoutCaptured = true;
+        }
+
+        doneRect.anchorMin = new Vector2(0.5f, 0.5f);
+        doneRect.anchorMax = new Vector2(0.5f, 0.5f);
+        doneRect.pivot = new Vector2(0.5f, 0.5f);
+        doneRect.localScale = Vector3.one * 0.82f;
+        doneRect.anchoredPosition = new Vector2(
+            state.DedicatedCard.anchoredPosition.x,
+            state.DedicatedCard.anchoredPosition.y - state.DedicatedCard.rect.height * 0.5f - 48f
+        );
+    }
+
+    private static void RegisterItemUiRaycaster(GraphicRaycaster raycaster)
+    {
+        if (raycaster == null)
+            return;
+
+        try
+        {
+            Singleton<ItemUIManager>.Instance?.AddRaycaster(raycaster);
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("HandoverScreenPatch.RegisterItemUiRaycaster", ex);
+        }
+    }
+
+    /// <summary>
+    /// VehicleContainer fills the handover canvas. Positioning its cloned outer rect does not
+    /// move the grid, so compact layout is applied directly to the cloned slot container.
+    /// </summary>
+    private static void ConfigureCompactBackpackLayout(HandoverScreen screen, PanelState state)
+    {
+        var config = Configuration.Instance;
+        var contentPosition = new Vector2(
+            config.HandoverOverlayOffsetX,
+            BackpackContentCenterY + config.HandoverOverlayOffsetY
+        );
+
+        var screenRoot = screen?.Container?.transform as RectTransform;
+        if (screenRoot != null && state?.BackpackVisualRoot != null && state.BackpackVisualRoot.parent != screenRoot)
+        {
+            state.BackpackVisualRoot.SetParent(screenRoot, worldPositionStays: false);
+            state.BackpackVisualRoot.SetAsLastSibling();
+        }
+
+        if (state?.BackpackVisualRoot != null)
+        {
+            state.BackpackVisualRoot.anchorMin = new Vector2(0.5f, 0.5f);
+            state.BackpackVisualRoot.anchorMax = new Vector2(0.5f, 0.5f);
+            state.BackpackVisualRoot.pivot = new Vector2(0.5f, 0.5f);
+            state.BackpackVisualRoot.anchoredPosition = contentPosition;
+            state.BackpackVisualRoot.localScale = Vector3.one;
+        }
+
+        if (state?.BackpackSlotContainer != null)
+        {
+            var grid = state.BackpackSlotContainer;
+            if (state.BackpackVisualRoot != null && grid.parent != state.BackpackVisualRoot)
+                grid.SetParent(state.BackpackVisualRoot, worldPositionStays: false);
+            grid.anchorMin = new Vector2(0.5f, 0.5f);
+            grid.anchorMax = new Vector2(0.5f, 0.5f);
+            grid.pivot = new Vector2(0.5f, 0.5f);
+            grid.anchoredPosition = new Vector2(0f, -16f);
+            grid.localScale = Vector3.one * BackpackGridScale;
+        }
+
+        var doneRect = screen?.DoneButton?.transform as RectTransform;
+        if (doneRect == null)
+            return;
+
+        if (!state.DoneButtonLayoutCaptured)
+        {
+            state.DoneButtonOriginalAnchorMin = doneRect.anchorMin;
+            state.DoneButtonOriginalAnchorMax = doneRect.anchorMax;
+            state.DoneButtonOriginalPivot = doneRect.pivot;
+            state.DoneButtonOriginalAnchoredPos = doneRect.anchoredPosition;
+            state.DoneButtonOriginalScale = doneRect.localScale;
+            state.DoneButtonLayoutCaptured = true;
+        }
+
+        doneRect.anchorMin = new Vector2(0.5f, 0.5f);
+        doneRect.anchorMax = new Vector2(0.5f, 0.5f);
+        doneRect.pivot = new Vector2(0.5f, 0.5f);
+        doneRect.anchoredPosition = new Vector2(contentPosition.x, -120f + config.HandoverOverlayOffsetY);
+        doneRect.localScale = Vector3.one * BackpackGridScale;
+    }
+
+    private static void RestoreDoneButtonLayout(HandoverScreen screen, PanelState state)
+    {
+        if (screen == null || state == null || !state.DoneButtonLayoutCaptured)
+            return;
+
+        var doneRect = screen.DoneButton?.transform as RectTransform;
+        if (doneRect == null)
+            return;
+
+        doneRect.anchorMin = state.DoneButtonOriginalAnchorMin;
+        doneRect.anchorMax = state.DoneButtonOriginalAnchorMax;
+        doneRect.pivot = state.DoneButtonOriginalPivot;
+        doneRect.anchoredPosition = state.DoneButtonOriginalAnchoredPos;
+        doneRect.localScale = state.DoneButtonOriginalScale;
+    }
+
+    private static void EnsureBackpackVisuals(PanelState state)
+    {
+        if (state?.BackpackContainer == null)
+            return;
+
+        var root = state.BackpackVisualRoot;
+        if (root == null)
+            root = state.BackpackContainer.Find("PackRat_BackpackVisual") as RectTransform;
+
+        if (root == null)
+        {
+            var rootGo = new GameObject("PackRat_BackpackVisual");
+            root = rootGo.AddComponent<RectTransform>();
+            root.SetParent(state.BackpackContainer, worldPositionStays: false);
+            rootGo.AddComponent<Image>();
+        }
+
+        root.anchorMin = new Vector2(0.5f, 0.5f);
+        root.anchorMax = new Vector2(0.5f, 0.5f);
+        root.pivot = new Vector2(0.5f, 0.5f);
+        var config = Configuration.Instance;
+        root.anchoredPosition = new Vector2(
+            config.HandoverOverlayOffsetX,
+            BackpackContentCenterY + config.HandoverOverlayOffsetY
+        );
+        root.sizeDelta = BackpackCardSize;
+        root.localScale = Vector3.one;
+        root.SetAsFirstSibling();
+
+        var layout = root.GetComponent<LayoutElement>();
+        if (layout == null)
+            layout = root.gameObject.AddComponent<LayoutElement>();
+        layout.ignoreLayout = true;
+
+        var rootImage = root.GetComponent<Image>();
+        if (rootImage != null)
+        {
+            rootImage.color = new Color32(15, 21, 28, 238);
+            rootImage.raycastTarget = false;
+        }
+
+        var header = root.Find("Header") as RectTransform;
+        if (header == null)
+        {
+            var headerGo = new GameObject("Header");
+            header = headerGo.AddComponent<RectTransform>();
+            header.SetParent(root, worldPositionStays: false);
+            headerGo.AddComponent<Image>();
+        }
+
+        header.anchorMin = new Vector2(0f, 1f);
+        header.anchorMax = new Vector2(1f, 1f);
+        header.pivot = new Vector2(0.5f, 1f);
+        header.anchoredPosition = new Vector2(0f, -8f);
+        header.sizeDelta = new Vector2(0f, 58f);
+        var headerImage = header.GetComponent<Image>();
+        if (headerImage != null)
+        {
+            headerImage.color = new Color32(35, 61, 86, 248);
+            headerImage.raycastTarget = false;
+        }
+
+        var accent = header.Find("Accent") as RectTransform;
+        if (accent == null)
+        {
+            var accentGo = new GameObject("Accent");
+            accent = accentGo.AddComponent<RectTransform>();
+            accent.SetParent(header, worldPositionStays: false);
+            accentGo.AddComponent<Image>();
+        }
+
+        accent.anchorMin = new Vector2(0f, 0f);
+        accent.anchorMax = new Vector2(1f, 0f);
+        accent.pivot = new Vector2(0.5f, 0f);
+        accent.anchoredPosition = Vector2.zero;
+        accent.sizeDelta = new Vector2(0f, 3f);
+        var accentImage = accent.GetComponent<Image>();
+        if (accentImage != null)
+        {
+            accentImage.color = new Color32(76, 173, 229, 255);
+            accentImage.raycastTarget = false;
+        }
+
+        state.VisualTitleLabel = EnsureVisualLabel(header, "Title", new Vector2(0f, -18f), 19, FontStyle.Bold);
+        state.VisualMetaLabel = EnsureVisualLabel(header, "Meta", new Vector2(0f, -40f), 11, FontStyle.Normal);
+        state.BackpackVisualRoot = root;
+        UpdateBackpackVisuals(state);
+    }
+
+    private static Text EnsureVisualLabel(RectTransform parent, string name, Vector2 position, int fontSize, FontStyle fontStyle)
+    {
+        var labelTransform = parent.Find(name) as RectTransform;
+        if (labelTransform == null)
+        {
+            var labelGo = new GameObject(name);
+            labelTransform = labelGo.AddComponent<RectTransform>();
+            labelTransform.SetParent(parent, worldPositionStays: false);
+            labelGo.AddComponent<Text>();
+        }
+
+        labelTransform.anchorMin = new Vector2(0.5f, 1f);
+        labelTransform.anchorMax = new Vector2(0.5f, 1f);
+        labelTransform.pivot = new Vector2(0.5f, 1f);
+        labelTransform.anchoredPosition = position;
+        labelTransform.sizeDelta = new Vector2(360f, 24f);
+
+        var label = labelTransform.GetComponent<Text>();
+        if (label != null)
+        {
+            label.font = ResolveUiFont(parent);
+            label.fontSize = fontSize;
+            label.fontStyle = fontStyle;
+            label.alignment = TextAnchor.MiddleCenter;
+            label.color = Color.white;
+            label.raycastTarget = false;
+        }
+
+        return label;
+    }
+
+    private static void UpdateBackpackVisuals(PanelState state)
+    {
+        if (state == null)
+            return;
+
+        if (state.VisualTitleLabel != null)
+            state.VisualTitleLabel.text = GetBackpackDisplayName().ToUpperInvariant();
+
+        if (state.VisualMetaLabel != null)
+        {
+            var slotCount = GetBackpackSlots().Count;
+            var pageCount = Mathf.Max(1, Mathf.CeilToInt(slotCount / (float)Mathf.Max(1, state.SlotsPerPage)));
+            state.VisualMetaLabel.text = $"{slotCount} SLOTS  •  PAGE {state.CurrentPage + 1}/{pageCount}";
+        }
+    }
+
+    private static void SetBackpackVisualVisible(PanelState state, bool visible)
+    {
+        if (state?.BackpackVisualRoot != null)
+            state.BackpackVisualRoot.gameObject.SetActive(visible);
+    }
+
+    private static void FitBackpackVisualToSlots(PanelState state)
+    {
+        if (state?.BackpackVisualRoot == null)
+            return;
+        if (state.DedicatedCard != null)
+        {
+            UpdateDedicatedOverlayLayout(FindOwningScreen(state), state);
+            return;
+        }
+        if (!TryGetSlotBoundsInTransform(state, state.BackpackVisualRoot, out var min, out var max))
+            return;
+
+        const float sidePadding = 20f;
+        const float bottomPadding = 18f;
+        const float headerHeight = 76f;
+        var root = state.BackpackVisualRoot;
+        var bottom = min.y - bottomPadding;
+        var top = max.y + headerHeight;
+        root.sizeDelta = new Vector2(
+            Mathf.Max(1f, max.x - min.x + sidePadding * 2f),
+            Mathf.Max(1f, top - bottom)
+        );
+        PositionDoneButtonBelowCard(FindOwningScreen(state), state);
+    }
+
+    private static void PositionDoneButtonBelowCard(HandoverScreen screen, PanelState state)
+    {
+        var doneRect = screen?.DoneButton?.transform as RectTransform;
+        var card = state?.BackpackVisualRoot;
+        if (doneRect == null || card == null)
+            return;
+
+        doneRect.anchoredPosition = new Vector2(
+            card.anchoredPosition.x,
+            card.anchoredPosition.y - card.rect.height * 0.5f - 52f
+        );
     }
 
     private static void EnsurePagingControls(PanelState state)
     {
-        if (state.BackpackContainer == null)
+        var host = state?.DedicatedCard ?? state?.BackpackContainer;
+        if (host == null)
             return;
 
-        var pagingRoot = state.BackpackContainer.Find("PackRat_Paging");
+        var pagingRoot = host.Find("PackRat_Paging");
         if (pagingRoot == null)
         {
-            var parent = state.BackpackContainer.parent;
+            var parent = host.parent;
             if (parent != null)
                 pagingRoot = parent.Find("PackRat_Paging");
         }
 
-        if (pagingRoot != null && pagingRoot.parent != state.BackpackContainer)
-            pagingRoot.SetParent(state.BackpackContainer, worldPositionStays: false);
+        if (pagingRoot != null && pagingRoot.parent != host)
+            pagingRoot.SetParent(host, worldPositionStays: false);
 
         if (pagingRoot == null)
         {
             var rootGo = new GameObject("PackRat_Paging");
             pagingRoot = rootGo.transform;
-            pagingRoot.SetParent(state.BackpackContainer, worldPositionStays: false);
+            pagingRoot.SetParent(host, worldPositionStays: false);
 
             var rootRt = rootGo.AddComponent<RectTransform>();
             rootRt.pivot = new Vector2(0.5f, 1f);
@@ -894,7 +1427,7 @@ public static class HandoverScreenPatch
         UpdatePagingLayout(state);
 
         if (TryGetGameObject(pagingRoot, out var pagingObject)
-            && TryGetGameObject(state.BackpackContainer, out var containerObject))
+            && TryGetGameObject(host, out var containerObject))
         {
             SetLayerRecursively(pagingObject, containerObject.layer);
             pagingRoot.SetAsLastSibling();
@@ -902,7 +1435,7 @@ public static class HandoverScreenPatch
             Canvas parentCanvas = null;
             try
             {
-                parentCanvas = state.BackpackContainer.GetComponentInParent<Canvas>();
+                parentCanvas = host.GetComponentInParent<Canvas>();
             }
             catch
             {
@@ -1379,7 +1912,9 @@ public static class HandoverScreenPatch
         if (state.PageLabel != null)
             state.PageLabel.text = $"{state.CurrentPage + 1}/{totalPages}";
 
+        UpdateBackpackVisuals(state);
         Canvas.ForceUpdateCanvases();
+        FitBackpackVisualToSlots(state);
         UpdatePagingLayout(state);
 
         UpdatePagerControls(state, totalPages, HasNearbyVehicleStorage());
@@ -1795,6 +2330,7 @@ public static class HandoverScreenPatch
 
         UpdateBackpackHeaderTexts(panel);
         HideOverlayHeader(panel);
+        SetBackpackVisualVisible(panel, !showingVehicle);
 
         if (showingVehicle)
         {
@@ -1812,23 +2348,8 @@ public static class HandoverScreenPatch
         }
 
         SetHeaderPairActive(panel.SourceTitleLabel, panel.SourceSubtitleLabel, false);
-        var appliedBackpackHeader = TryApplyHeaderPair(panel.ClonedTitleLabel, panel.ClonedSubtitleLabel, backpackTitle, backpackSubtitle);
-        if (appliedBackpackHeader)
-        {
-            ReplaceVehicleTextEverywhere(panel, backpackTitle);
-            SetHeaderPairActive(panel.ClonedTitleLabel, panel.ClonedSubtitleLabel, true);
-            return;
-        }
-
-        var appliedSourceFallback = TryApplyHeaderPair(panel.SourceTitleLabel, panel.SourceSubtitleLabel, backpackTitle, backpackSubtitle);
-        if (appliedSourceFallback)
-        {
-            SetHeaderPairActive(panel.SourceTitleLabel, panel.SourceSubtitleLabel, true);
-            return;
-        }
-
         SetHeaderPairActive(panel.ClonedTitleLabel, panel.ClonedSubtitleLabel, false);
-        ShowOverlayHeader(panel, backpackTitle, backpackSubtitle);
+        UpdateBackpackVisuals(panel);
     }
 
     private static HandoverScreen FindOwningScreen(PanelState state)
@@ -1856,6 +2377,23 @@ public static class HandoverScreenPatch
 
         var showVehicle = hasVehicle && state.ShowingVehicle;
 
+        if (state.DedicatedCanvas != null)
+        {
+            var screen = FindOwningScreen(state);
+            UpdateDedicatedOverlayLayout(screen, state);
+            state.DedicatedCanvas.gameObject.SetActive(!showVehicle);
+            if (state.BackpackContainer != null)
+                state.BackpackContainer.gameObject.SetActive(false);
+            if (state.VehicleContainer != null)
+            {
+                state.VehicleContainer.anchoredPosition = state.VehicleOriginalAnchoredPos;
+                state.VehicleContainer.gameObject.SetActive(showVehicle);
+            }
+            if (state.PagingRoot != null)
+                state.PagingRoot.gameObject.SetActive(!showVehicle);
+            return;
+        }
+
         // Force VehicleContainer off first so it never stays visible in backpack mode (game may re-enable it elsewhere).
         if (state.VehicleContainer != null)
         {
@@ -1865,9 +2403,11 @@ public static class HandoverScreenPatch
 
         if (state.BackpackContainer != null)
         {
-            state.BackpackContainer.anchoredPosition = GetHandoverBackpackPosition(state);
+            CenterBackpackContainer(state);
             state.BackpackContainer.gameObject.SetActive(true);
         }
+
+        ConfigureCompactBackpackLayout(FindOwningScreen(state), state);
 
         if (state.BackpackSlotContainer != null)
             state.BackpackSlotContainer.gameObject.SetActive(!showVehicle);
@@ -1890,29 +2430,52 @@ public static class HandoverScreenPatch
     private static Vector2 GetHandoverBackpackPosition(PanelState state)
     {
         var config = Configuration.Instance;
-        var basePosition = state?.VehicleOriginalAnchoredPos ?? Vector2.zero;
+        var desired = new Vector2(
+            config.HandoverOverlayOffsetX,
+            config.HandoverOverlayOffsetY
+        );
+
+        var container = state?.BackpackContainer;
+        var parent = container?.parent as RectTransform;
+        if (container == null || parent == null)
+            return desired;
+
+        const float margin = 24f;
+        var halfWidth = Mathf.Max(0f, parent.rect.width * 0.5f - container.rect.width * 0.5f - margin);
+        var halfHeight = Mathf.Max(0f, parent.rect.height * 0.5f - container.rect.height * 0.5f - margin);
         return new Vector2(
-            basePosition.x + config.HandoverOverlayOffsetX,
-            basePosition.y + config.HandoverOverlayOffsetY
+            Mathf.Clamp(desired.x, -halfWidth, halfWidth),
+            Mathf.Clamp(desired.y, -halfHeight, halfHeight)
         );
     }
 
     private static void UpdatePagingLayout(PanelState state)
     {
-        if (state?.PagingRoot == null || state.BackpackContainer == null)
+        var host = state?.DedicatedCard ?? state?.BackpackContainer;
+        if (state?.PagingRoot == null || host == null)
             return;
 
-        if (state.PagingRoot.parent != state.BackpackContainer)
-            state.PagingRoot.SetParent(state.BackpackContainer, worldPositionStays: false);
+        if (state.PagingRoot.parent != host)
+            state.PagingRoot.SetParent(host, worldPositionStays: false);
 
         var rootRt = state.PagingRoot;
         rootRt.anchorMin = new Vector2(0.5f, 0.5f);
         rootRt.anchorMax = new Vector2(0.5f, 0.5f);
         rootRt.pivot = new Vector2(0.5f, 1f);
         rootRt.localScale = Vector3.one;
-        const float marginBelowContainer = 150f;
+        if (state.DedicatedCard != null)
+        {
+            rootRt.anchoredPosition = new Vector2(0f, -state.DedicatedCard.rect.height * 0.5f - 92f);
+            return;
+        }
+
         var bottomOfContainer = -(state.BackpackContainer.rect.height * state.BackpackContainer.pivot.y);
-        rootRt.anchoredPosition = new Vector2(0f, bottomOfContainer - marginBelowContainer);
+        if (TryGetBottomSlotYInContainer(state, out var bottomSlotY))
+            bottomOfContainer = bottomSlotY;
+
+        // Keep the controls close to the visible slots. The old fixed 150px gap pushed the
+        // pager below the screen when the game or player used a reduced UI scale.
+        rootRt.anchoredPosition = new Vector2(0f, bottomOfContainer - 20f);
     }
 
     private static bool TryGetBottomSlotYInContainer(PanelState state, out float y)
@@ -1947,6 +2510,43 @@ public static class HandoverScreenPatch
 
         y = minY;
         return true;
+    }
+
+    private static bool TryGetSlotBoundsInTransform(PanelState state, RectTransform target, out Vector2 min, out Vector2 max)
+    {
+        min = new Vector2(float.MaxValue, float.MaxValue);
+        max = new Vector2(float.MinValue, float.MinValue);
+        if (state?.SlotUIs == null || target == null)
+            return false;
+
+        var found = false;
+        for (var i = 0; i < state.SlotUIs.Length; i++)
+        {
+            var slotUi = state.SlotUIs[i];
+            if (slotUi == null || !slotUi.gameObject.activeInHierarchy)
+                continue;
+
+            var slot = slotUi.transform as RectTransform;
+            if (slot == null)
+                continue;
+
+            var corners = new[]
+            {
+                new Vector3(slot.rect.xMin, slot.rect.yMin, 0f),
+                new Vector3(slot.rect.xMax, slot.rect.yMax, 0f)
+            };
+            for (var cornerIndex = 0; cornerIndex < corners.Length; cornerIndex++)
+            {
+                var local = target.InverseTransformPoint(slot.TransformPoint(corners[cornerIndex]));
+                min.x = Mathf.Min(min.x, local.x);
+                min.y = Mathf.Min(min.y, local.y);
+                max.x = Mathf.Max(max.x, local.x);
+                max.y = Mathf.Max(max.y, local.y);
+                found = true;
+            }
+        }
+
+        return found;
     }
 
     private static bool IsComponentAlive(Component component)
@@ -2133,9 +2733,15 @@ public static class HandoverScreenPatch
             state.BackpackContainer.gameObject.SetActive(false);
         if (state.PagingRoot != null)
             state.PagingRoot.gameObject.SetActive(false);
+        if (state.DedicatedCanvas != null)
+            state.DedicatedCanvas.gameObject.SetActive(false);
+        if (state.CanvasProofMarker != null)
+            state.CanvasProofMarker.gameObject.SetActive(false);
+        SetBackpackVisualVisible(state, false);
         HideOverlayHeader(state);
         SetHeaderPairActive(state.SourceTitleLabel, state.SourceSubtitleLabel, true);
         if (state.VehicleContainer != null)
             state.VehicleContainer.anchoredPosition = state.VehicleOriginalAnchoredPos;
+        RestoreDoneButtonLayout(screen, state);
     }
 }

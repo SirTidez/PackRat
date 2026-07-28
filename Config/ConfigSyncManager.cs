@@ -71,7 +71,7 @@ public static class ConfigSyncManager
         const float waitTime = 1f;
         for (var i = 0; i < maxAttempts; ++i)
         {
-            var payload = SteamMatchmaking.GetLobbyData(Lobby.Instance.LobbySteamID, Prefix);
+            var payload = SteamMatchmaking.GetLobbyData(new CSteamID(Lobby.Instance.LobbyID), Prefix);
             if (string.IsNullOrEmpty(payload))
             {
                 yield return new UnityEngine.WaitForSeconds(waitTime);

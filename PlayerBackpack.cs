@@ -2,6 +2,7 @@ using System.Collections;
 using System.Reflection;
 using PackRat.Config;
 using PackRat.Helpers;
+using PackRat.Networking;
 using PackRat.Shops;
 using UnityEngine;
 
@@ -122,6 +123,9 @@ public class PlayerBackpack : MonoBehaviour
     /// <summary>
     /// Returns the current tier definition, or null if the backpack is not yet unlocked.
     /// </summary>
+#if !MONO
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+#endif
     public BackpackTierDefinition CurrentTier
     {
         get
@@ -163,20 +167,20 @@ public class PlayerBackpack : MonoBehaviour
         }
 
         ModLogger.Info("Configuring backpack storage...");
-        var tierIdx = CurrentTierIndex;
-        var slotCount = tierIdx >= 0
-            ? Configuration.Instance.TierSlotCounts[tierIdx]
-            : Configuration.BackpackTiers[0].DefaultSlotCount;
         // Defer configuration to next frame to avoid triggering MonoMod/Harmony detour compilation
         // during initial JIT (fatal CLR error 0x80131506 in DetourRuntimeNETCore30Platform.CompileMethodHook).
-        MelonLoader.MelonCoroutines.Start(DeferredConfigureStorage(this, slotCount));
+        MelonLoader.MelonCoroutines.Start(DeferredConfigureStorage(this));
     }
 
-    private static IEnumerator DeferredConfigureStorage(PlayerBackpack instance, int slotCount)
+    private static IEnumerator DeferredConfigureStorage(PlayerBackpack instance)
     {
         yield return null;
         if (instance == null || instance._storage == null)
             yield break;
+        var tierIdx = instance.CurrentTierIndex;
+        var slotCount = tierIdx >= 0
+            ? Configuration.Instance.TierSlotCounts[tierIdx]
+            : Configuration.BackpackTiers[0].DefaultSlotCount;
         instance.UpdateSize(slotCount);
         instance.OnStartClient(true);
     }
@@ -200,6 +204,11 @@ public class PlayerBackpack : MonoBehaviour
 
         try
         {
+            // The toggle key is also a valid character in the live search field. Let the focused
+            // InputField consume it before considering an open/close backpack action.
+            if (IsOpen && Patches.StorageMenuPatch.IsStandaloneBackpackSearchFocused())
+                return;
+
             // If the player has a backpack tier item selected in the hotbar, consuming it applies the tier and opens the backpack
             if (TryConsumeSelectedHotbarBackpackItem(out var appliedTier))
             {
@@ -286,6 +295,9 @@ public class PlayerBackpack : MonoBehaviour
         }
     }
 
+#if !MONO
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+#endif
     private bool TryConsumeBackpackItemFromSlot(object playerInventory, object slotsList, int index, out int appliedTier)
     {
         appliedTier = -1;
@@ -375,7 +387,7 @@ public class PlayerBackpack : MonoBehaviour
             return;
 
         var targetSlots = Configuration.Instance.TierSlotCounts[tierIdx];
-        if (_storage.SlotCount == targetSlots)
+        if (_storage.SlotCount == targetSlots && _storage.ItemSlots.Count == targetSlots)
             return;
 
         ModLogger.Info($"Backpack upgraded to {Configuration.BackpackTiers[tierIdx].Name} ({targetSlots} slots).");
@@ -449,12 +461,16 @@ public class PlayerBackpack : MonoBehaviour
 
         _openTitle = CurrentTier?.Name ?? StorageName;
         var storageMenu = Singleton<StorageMenu>.Instance;
-        storageMenu.SlotGridLayout.constraintCount = _storage.DisplayRowCount;
+        ModLogger.Info($"[BackpackUI] PlayerBackpack.Open -> StorageMenu.Open: title='{_openTitle}', slots={_storage.ItemSlots.Count}.");
+        BackpackStateSyncManager.BeginLocalBackpackEdit();
+        // Keep the regular backpack view at a predictable four-row grid. The storage-menu patch
+        // pages the backing slots, so larger bags do not force the game to shrink the slot UI.
+        storageMenu.SlotGridLayout.constraintCount = 4;
 
 #if !MONO
-        storageMenu.Open(_openTitle, string.Empty, _storage.Cast<IItemSlotOwner>());
+        storageMenu.Open(_storage.Cast<IItemSlotOwner>(), _openTitle, string.Empty, null);
 #else
-        storageMenu.Open(_openTitle, string.Empty, _storage);
+        storageMenu.Open(_storage, _openTitle, string.Empty, null);
 #endif
 
         _storage.SendAccessor(Player.Local.NetworkObject);
@@ -468,7 +484,9 @@ public class PlayerBackpack : MonoBehaviour
         if (!_backpackEnabled || !IsOpen)
             return;
 
-        Singleton<StorageMenu>.Instance.CloseMenu();
+        // CloseMenu only hides the internal storage panel. Close performs the matching UI-state
+        // exit that releases the cursor, camera, and full-screen overlay just like Done/Escape.
+        Singleton<StorageMenu>.Instance.Close();
         _storage.SendAccessor(null);
     }
 

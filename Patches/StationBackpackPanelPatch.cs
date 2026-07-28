@@ -53,10 +53,12 @@ public static class StationBackpackPanelPatch
         public bool Initialized;
     }
 
-    private const int SlotsPerPage = 9;
-    private const int GridRows = 3;
-    private const float LeftOffset = 520f;
-    private static readonly Vector2 PanelSize = new Vector2(380f, 520f);
+    private const int SlotsPerPage = 4;
+    private const int GridRows = 4;
+    private const float PanelMargin = 24f;
+    private static readonly Vector2 PanelSize = new Vector2(184f, 472f);
+    private static readonly Vector2 SlotContainerSize = new Vector2(152f, 332f);
+    private static readonly Vector2 SlotSize = new Vector2(72f, 72f);
     private static readonly Dictionary<int, PanelState> Panels = new Dictionary<int, PanelState>();
     private static readonly List<ItemSlot> ActiveInventorySlots = new List<ItemSlot>();
     private static readonly List<ItemSlot> ActiveStationSlots = new List<ItemSlot>();
@@ -123,11 +125,13 @@ public static class StationBackpackPanelPatch
             if (panel == null)
                 return;
 
+            var backpackSlots = GetBackpackSlots();
             panel.CurrentPage = 0;
             PositionPanel(container, panel);
-            AssignBackpackPage(panel, GetBackpackSlots());
+            UpdatePanelHeader(panel, backpackSlots);
+            AssignBackpackPage(panel, backpackSlots);
             panel.Root.gameObject.SetActive(true);
-            RebuildQuickMove(stationSlots, GetBackpackSlots());
+            RebuildQuickMove(stationSlots, backpackSlots);
         }
         catch (Exception ex)
         {
@@ -185,8 +189,11 @@ public static class StationBackpackPanelPatch
         root.gameObject.SetActive(false);
 
         panel.Root = root;
-        panel.TitleLabel = CreateText("PackRat_StationBackpackTitle", root, new Vector2(0f, 208f), 24, PlayerBackpack.Instance?.CurrentTier?.Name ?? PlayerBackpack.StorageName);
-        panel.SubtitleLabel = CreateText("PackRat_StationBackpackSubtitle", root, new Vector2(0f, 168f), 18, "Items from your backpack.");
+        EnsurePanelBackground(root);
+        panel.TitleLabel = CreateText("PackRat_StationBackpackTitle", root, new Vector2(0f, 206f), 18, "BACKPACK");
+        panel.SubtitleLabel = CreateText("PackRat_StationBackpackSubtitle", root, new Vector2(0f, 176f), 12, string.Empty);
+        panel.TitleLabel.GetComponent<RectTransform>().sizeDelta = new Vector2(160f, 30f);
+        panel.SubtitleLabel.GetComponent<RectTransform>().sizeDelta = new Vector2(160f, 24f);
 
         var slotContainerObject = new GameObject("PackRat_StationBackpackSlotContainer");
         var slotContainer = slotContainerObject.AddComponent<RectTransform>();
@@ -194,20 +201,15 @@ public static class StationBackpackPanelPatch
         slotContainer.anchorMin = new Vector2(0.5f, 0.5f);
         slotContainer.anchorMax = new Vector2(0.5f, 0.5f);
         slotContainer.pivot = new Vector2(0.5f, 0.5f);
-        slotContainer.anchoredPosition = new Vector2(0f, -10f);
-        slotContainer.sizeDelta = new Vector2(340f, 340f);
+        slotContainer.anchoredPosition = new Vector2(0f, -14f);
+        slotContainer.sizeDelta = SlotContainerSize;
         panel.SlotContainer = slotContainer;
-
-        var templateRect = slotTemplate.GetComponent<RectTransform>();
-        var cellSize = templateRect != null && templateRect.sizeDelta.x > 0f
-            ? templateRect.sizeDelta
-            : new Vector2(96f, 96f);
 
         var grid = slotContainerObject.AddComponent<GridLayoutGroup>();
         grid.constraint = GridLayoutGroup.Constraint.FixedRowCount;
         grid.constraintCount = GridRows;
-        grid.cellSize = cellSize;
-        grid.spacing = new Vector2(12f, 12f);
+        grid.cellSize = SlotSize;
+        grid.spacing = new Vector2(8f, 8f);
         grid.childAlignment = TextAnchor.UpperCenter;
         panel.Grid = grid;
 
@@ -239,11 +241,12 @@ public static class StationBackpackPanelPatch
 
         ConfigureRoot(stationContainer, panel.Root);
         var config = Configuration.Instance;
-        panel.Root.anchoredPosition = new Vector2(
-            -LeftOffset + config.StationOverlayOffsetX,
-            config.StationOverlayOffsetY
+        var desired = new Vector2(
+            stationContainer.anchoredPosition.x - stationContainer.rect.width * 0.5f - panel.Root.rect.width * 0.5f - PanelMargin
+                + config.StationOverlayOffsetX,
+            stationContainer.anchoredPosition.y + config.StationOverlayOffsetY
         );
-        panel.Root.localPosition = new Vector3(panel.Root.localPosition.x, panel.Root.localPosition.y, 0f);
+        panel.Root.anchoredPosition = ClampToParentBounds(panel.Root, desired, PanelMargin);
     }
 
     private static void ConfigureRoot(RectTransform stationContainer, RectTransform root)
@@ -263,6 +266,39 @@ public static class StationBackpackPanelPatch
         root.localScale = Vector3.one;
         EnsureIgnoredByLayout(root);
         EnsureOverlaySorting(root, stationContainer);
+    }
+
+    private static void EnsurePanelBackground(RectTransform root)
+    {
+        if (root == null)
+            return;
+
+#if !MONO
+        var image = Utils.GetOrAddComponentSafe<Image>(root.gameObject);
+#else
+        var image = root.GetComponent<Image>();
+        if (image == null)
+            image = root.gameObject.AddComponent<Image>();
+#endif
+        if (image != null)
+        {
+            image.color = new Color32(18, 20, 23, 220);
+            image.raycastTarget = false;
+        }
+    }
+
+    private static Vector2 ClampToParentBounds(RectTransform rectTransform, Vector2 desired, float margin)
+    {
+        var parent = rectTransform?.parent as RectTransform;
+        if (rectTransform == null || parent == null)
+            return desired;
+
+        var halfWidth = Mathf.Max(0f, parent.rect.width * 0.5f - rectTransform.rect.width * 0.5f - margin);
+        var halfHeight = Mathf.Max(0f, parent.rect.height * 0.5f - rectTransform.rect.height * 0.5f - margin);
+        return new Vector2(
+            Mathf.Clamp(desired.x, -halfWidth, halfWidth),
+            Mathf.Clamp(desired.y, -halfHeight, halfHeight)
+        );
     }
 
     private static Transform FindOverlayParent(RectTransform stationContainer)
@@ -308,9 +344,13 @@ public static class StationBackpackPanelPatch
         if (root == null)
             return;
 
+#if !MONO
+        var rootCanvas = Utils.GetOrAddComponentSafe<Canvas>(root.gameObject);
+#else
         var rootCanvas = root.GetComponent<Canvas>();
         if (rootCanvas == null)
             rootCanvas = root.gameObject.AddComponent<Canvas>();
+#endif
 
         rootCanvas.overrideSorting = true;
 
@@ -329,9 +369,13 @@ public static class StationBackpackPanelPatch
 
         root.SetAsLastSibling();
 
+#if !MONO
+        var raycaster = Utils.GetOrAddComponentSafe<GraphicRaycaster>(root.gameObject);
+#else
         var raycaster = root.GetComponent<GraphicRaycaster>();
         if (raycaster == null)
             raycaster = root.gameObject.AddComponent<GraphicRaycaster>();
+#endif
 
         RegisterItemUiRaycaster(raycaster);
     }
@@ -382,6 +426,24 @@ public static class StationBackpackPanelPatch
         UpdatePager(panel, totalPages);
     }
 
+    private static void UpdatePanelHeader(PanelState panel, List<ItemSlot> backpackSlots)
+    {
+        if (panel == null)
+            return;
+
+        var usedSlots = 0;
+        for (var i = 0; i < backpackSlots.Count; i++)
+        {
+            if (backpackSlots[i]?.ItemInstance != null)
+                usedSlots++;
+        }
+
+        if (panel.TitleLabel != null)
+            panel.TitleLabel.text = "BACKPACK";
+        if (panel.SubtitleLabel != null)
+            panel.SubtitleLabel.text = $"{usedSlots} / {backpackSlots.Count} slots";
+    }
+
     private static void EnsurePager(PanelState panel)
     {
         if (panel.PagingRoot == null)
@@ -392,7 +454,7 @@ public static class StationBackpackPanelPatch
             pagingRoot.anchorMin = new Vector2(0.5f, 0.5f);
             pagingRoot.anchorMax = new Vector2(0.5f, 0.5f);
             pagingRoot.pivot = new Vector2(0.5f, 1f);
-            pagingRoot.anchoredPosition = new Vector2(0f, -205f);
+            pagingRoot.anchoredPosition = new Vector2(0f, -226f);
             pagingRoot.sizeDelta = new Vector2(180f, 40f);
             panel.PagingRoot = pagingRoot;
         }
@@ -781,97 +843,102 @@ public static class StationBackpackPanelPatch
         }
     }
 
-    [HarmonyPatch(typeof(ChemistryStationCanvas), "Open")]
+    [HarmonyPatch(typeof(ChemistryStationInterface), "Open")]
     private static class ChemistryOpenPatch
     {
         [HarmonyPostfix]
-        public static void Postfix(ChemistryStationCanvas __instance) => ShowForStation(__instance);
+        public static void Postfix(ChemistryStationInterface __instance) => ShowForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(ChemistryStationCanvas), "Close")]
+    [HarmonyPatch(typeof(ChemistryStationInterface), "Close")]
     private static class ChemistryClosePatch
     {
         [HarmonyPrefix]
-        public static void Prefix(ChemistryStationCanvas __instance) => HideForStation(__instance);
+        public static void Prefix(ChemistryStationInterface __instance) => HideForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(MixingStationCanvas), "Open")]
+    [HarmonyPatch(typeof(MixingStationInterface), "Open")]
     private static class MixingOpenPatch
     {
         [HarmonyPostfix]
-        public static void Postfix(MixingStationCanvas __instance) => ShowForStation(__instance);
+        public static void Postfix(MixingStationInterface __instance) => ShowForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(MixingStationCanvas), "Close")]
+    [HarmonyPatch(typeof(MixingStationInterface), "Close")]
     private static class MixingClosePatch
     {
         [HarmonyPrefix]
-        public static void Prefix(MixingStationCanvas __instance) => HideForStation(__instance);
+        public static void Prefix(MixingStationInterface __instance) => HideForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(PackagingStationCanvas), "SetIsOpen")]
-    private static class PackagingSetOpenPatch
+    [HarmonyPatch(typeof(PackagingStationCanvas), "Open")]
+    private static class PackagingOpenPatch
     {
         [HarmonyPostfix]
-        public static void Postfix(PackagingStationCanvas __instance, bool open)
-        {
-            if (open)
-                ShowForStation(__instance);
-            else
-                HideForStation(__instance);
-        }
+        public static void Postfix(PackagingStationCanvas __instance) => ShowForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(BrickPressCanvas), "SetIsOpen")]
-    private static class BrickPressSetOpenPatch
+    [HarmonyPatch(typeof(PackagingStationCanvas), "Close")]
+    private static class PackagingClosePatch
     {
-        [HarmonyPostfix]
-        public static void Postfix(BrickPressCanvas __instance, bool open)
-        {
-            if (open)
-                ShowForStation(__instance);
-            else
-                HideForStation(__instance);
-        }
+        [HarmonyPrefix]
+        public static void Prefix(PackagingStationCanvas __instance) => HideForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(CauldronCanvas), "SetIsOpen")]
-    private static class CauldronSetOpenPatch
+    [HarmonyPatch(typeof(BrickPressCanvas), "Open")]
+    private static class BrickPressOpenPatch
     {
         [HarmonyPostfix]
-        public static void Postfix(CauldronCanvas __instance, bool open)
-        {
-            if (open)
-                ShowForStation(__instance);
-            else
-                HideForStation(__instance);
-        }
+        public static void Postfix(BrickPressCanvas __instance) => ShowForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(LabOvenCanvas), "SetIsOpen")]
-    private static class LabOvenSetOpenPatch
+    [HarmonyPatch(typeof(BrickPressCanvas), "Close")]
+    private static class BrickPressClosePatch
     {
-        [HarmonyPostfix]
-        public static void Postfix(LabOvenCanvas __instance, bool open)
-        {
-            if (open)
-                ShowForStation(__instance);
-            else
-                HideForStation(__instance);
-        }
+        [HarmonyPrefix]
+        public static void Prefix(BrickPressCanvas __instance) => HideForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(DryingRackCanvas), "SetIsOpen")]
-    private static class DryingRackSetOpenPatch
+    [HarmonyPatch(typeof(CauldronInterface), "Open")]
+    private static class CauldronOpenPatch
     {
         [HarmonyPostfix]
-        public static void Postfix(DryingRackCanvas __instance, bool open)
-        {
-            if (open)
-                ShowForStation(__instance);
-            else
-                HideForStation(__instance);
-        }
+        public static void Postfix(CauldronInterface __instance) => ShowForStation(__instance);
+    }
+
+    [HarmonyPatch(typeof(CauldronInterface), "Close")]
+    private static class CauldronClosePatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(CauldronInterface __instance) => HideForStation(__instance);
+    }
+
+    [HarmonyPatch(typeof(LabOvenCanvas), "Open")]
+    private static class LabOvenOpenPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(LabOvenCanvas __instance) => ShowForStation(__instance);
+    }
+
+    [HarmonyPatch(typeof(LabOvenCanvas), "Close")]
+    private static class LabOvenClosePatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(LabOvenCanvas __instance) => HideForStation(__instance);
+    }
+
+    [HarmonyPatch(typeof(DryingRackInterface), "Open")]
+    private static class DryingRackOpenPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(DryingRackInterface __instance) => ShowForStation(__instance);
+    }
+
+    [HarmonyPatch(typeof(DryingRackInterface), "Close")]
+    private static class DryingRackClosePatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(DryingRackInterface __instance) => HideForStation(__instance);
     }
 
     [HarmonyPatch(typeof(MushroomSpawnStationInterface), "Open")]
