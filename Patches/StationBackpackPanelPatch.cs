@@ -38,6 +38,7 @@ public static class StationBackpackPanelPatch
     {
         public RectTransform StationContainer;
         public RectTransform Root;
+        public RectTransform HeaderRoot;
         public RectTransform SlotContainer;
         public GridLayoutGroup Grid;
         public ItemSlotUI[] SlotUIs;
@@ -54,11 +55,11 @@ public static class StationBackpackPanelPatch
         public bool Initialized;
     }
 
-    private const int SlotsPerPage = 4;
+    private const int SlotsPerPage = 16;
     private const int GridRows = 4;
     private const float PanelMargin = 24f;
-    private static readonly Vector2 PanelSize = new Vector2(184f, 472f);
-    private static readonly Vector2 SlotContainerSize = new Vector2(152f, 332f);
+    private static readonly Vector2 PanelSize = new Vector2(360f, 410f);
+    private static readonly Vector2 SlotContainerSize = new Vector2(306f, 306f);
     private static readonly Vector2 SlotSize = new Vector2(72f, 72f);
     private static readonly Dictionary<int, PanelState> Panels = new Dictionary<int, PanelState>();
     private static readonly List<ItemSlot> ActiveInventorySlots = new List<ItemSlot>();
@@ -126,12 +127,12 @@ public static class StationBackpackPanelPatch
             if (panel == null)
                 return;
 
-            var backpackSlots = GetBackpackSlots();
-            panel.CurrentPage = 0;
-            PositionPanel(container, panel);
-            UpdatePanelHeader(panel, backpackSlots);
-            AssignBackpackPage(panel, backpackSlots);
             panel.Root.gameObject.SetActive(true);
+            if (panel.PagingRoot != null)
+                panel.PagingRoot.gameObject.SetActive(false);
+            StorageMenuPatch.ApplyEmbeddedBackpackBrowser(panel.Root, panel.SlotContainer, panel.Grid,
+                panel.SlotUIs, layoutView: 2);
+            var backpackSlots = GetBackpackSlots();
             RebuildQuickMove(stationSlots, backpackSlots);
         }
         catch (Exception ex)
@@ -182,7 +183,8 @@ public static class StationBackpackPanelPatch
                 if (panel?.Root == null || panel.StationContainer == null || !panel.Root.gameObject.activeSelf)
                     continue;
 
-                PositionPanel(panel.StationContainer, panel);
+                StorageMenuPatch.ApplyEmbeddedBackpackBrowser(panel.Root, panel.SlotContainer, panel.Grid,
+                    panel.SlotUIs, layoutView: 2);
             }
         }
         catch (Exception ex)
@@ -213,11 +215,12 @@ public static class StationBackpackPanelPatch
         root.gameObject.SetActive(false);
 
         panel.Root = root;
-        EnsurePanelBackground(root);
-        panel.TitleLabel = CreateText("PackRat_StationBackpackTitle", root, new Vector2(0f, 206f), 18, "BACKPACK");
-        panel.SubtitleLabel = CreateText("PackRat_StationBackpackSubtitle", root, new Vector2(0f, 176f), 12, string.Empty);
-        panel.TitleLabel.GetComponent<RectTransform>().sizeDelta = new Vector2(160f, 30f);
-        panel.SubtitleLabel.GetComponent<RectTransform>().sizeDelta = new Vector2(160f, 24f);
+        panel.HeaderRoot = CreatePanelHeader(root);
+        panel.HeaderRoot.gameObject.SetActive(false);
+        panel.TitleLabel = CreateText("PackRat_StationBackpackTitle", panel.HeaderRoot, new Vector2(0f, 10f), 16, "BACKPACK");
+        panel.SubtitleLabel = CreateText("PackRat_StationBackpackSubtitle", panel.HeaderRoot, new Vector2(0f, -11f), 11, string.Empty);
+        panel.TitleLabel.GetComponent<RectTransform>().sizeDelta = new Vector2(306f, 24f);
+        panel.SubtitleLabel.GetComponent<RectTransform>().sizeDelta = new Vector2(306f, 18f);
 
         var slotContainerObject = new GameObject("PackRat_StationBackpackSlotContainer");
         var slotContainer = slotContainerObject.AddComponent<RectTransform>();
@@ -225,20 +228,21 @@ public static class StationBackpackPanelPatch
         slotContainer.anchorMin = new Vector2(0.5f, 0.5f);
         slotContainer.anchorMax = new Vector2(0.5f, 0.5f);
         slotContainer.pivot = new Vector2(0.5f, 0.5f);
-        slotContainer.anchoredPosition = new Vector2(0f, -14f);
+        slotContainer.anchoredPosition = new Vector2(0f, -24f);
         slotContainer.sizeDelta = SlotContainerSize;
         panel.SlotContainer = slotContainer;
 
         var grid = slotContainerObject.AddComponent<GridLayoutGroup>();
-        grid.constraint = GridLayoutGroup.Constraint.FixedRowCount;
+        grid.startAxis = GridLayoutGroup.Axis.Horizontal;
+        grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
         grid.constraintCount = GridRows;
         grid.cellSize = SlotSize;
-        grid.spacing = new Vector2(8f, 8f);
+        grid.spacing = new Vector2(6f, 6f);
         grid.childAlignment = TextAnchor.UpperCenter;
         panel.Grid = grid;
 
-        panel.SlotUIs = new ItemSlotUI[SlotsPerPage];
-        for (var i = 0; i < SlotsPerPage; i++)
+        panel.SlotUIs = new ItemSlotUI[20];
+        for (var i = 0; i < panel.SlotUIs.Length; i++)
         {
             var slotObject = UnityEngine.Object.Instantiate(slotTemplate.gameObject, slotContainer);
             slotObject.name = $"PackRat_StationBackpackSlot ({i})";
@@ -283,14 +287,44 @@ public static class StationBackpackPanelPatch
         if (overlayParent != null && root.parent != overlayParent)
             root.SetParent(overlayParent, worldPositionStays: false);
 
-        root.anchorMin = new Vector2(0.5f, 0.5f);
-        root.anchorMax = new Vector2(0.5f, 0.5f);
+        root.anchorMin = Vector2.zero;
+        root.anchorMax = Vector2.one;
         root.pivot = new Vector2(0.5f, 0.5f);
-        root.sizeDelta = PanelSize;
+        root.offsetMin = Vector2.zero;
+        root.offsetMax = Vector2.zero;
         root.localRotation = Quaternion.identity;
-        root.localScale = Vector3.one * Mathf.Clamp(Configuration.Instance.StationOverlayScale, 0.5f, 1.5f);
+        root.localScale = Vector3.one;
         EnsureIgnoredByLayout(root);
         EnsureOverlaySorting(root, stationContainer);
+    }
+
+    private static RectTransform CreatePanelHeader(RectTransform root)
+    {
+        var headerGo = new GameObject("PackRat_StationBackpackHeader");
+        var header = headerGo.AddComponent<RectTransform>();
+        header.SetParent(root, worldPositionStays: false);
+        header.anchorMin = new Vector2(0f, 1f);
+        header.anchorMax = new Vector2(1f, 1f);
+        header.pivot = new Vector2(0.5f, 1f);
+        header.offsetMin = new Vector2(10f, -62f);
+        header.offsetMax = new Vector2(-10f, -8f);
+        var image = headerGo.AddComponent<Image>();
+        image.color = new Color32(35, 61, 86, 248);
+        image.raycastTarget = false;
+
+        var accentGo = new GameObject("Accent");
+        var accent = accentGo.AddComponent<RectTransform>();
+        accent.SetParent(header, worldPositionStays: false);
+        accent.anchorMin = new Vector2(0f, 0f);
+        accent.anchorMax = new Vector2(1f, 0f);
+        accent.pivot = new Vector2(0.5f, 0f);
+        accent.offsetMin = Vector2.zero;
+        accent.offsetMax = new Vector2(0f, 3f);
+        var accentImage = accentGo.AddComponent<Image>();
+        accentImage.color = new Color32(76, 173, 229, 255);
+        accentImage.raycastTarget = false;
+        header.SetAsFirstSibling();
+        return header;
     }
 
     private static void EnsurePanelBackground(RectTransform root)

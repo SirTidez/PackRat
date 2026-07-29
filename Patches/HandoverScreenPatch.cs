@@ -16,6 +16,7 @@ using ScheduleOne.Storage;
 using ScheduleOne.UI;
 using ScheduleOne.UI.Handover;
 using ScheduleOne.UI.Items;
+using S1LandVehicle = ScheduleOne.Vehicles.LandVehicle;
 using S1TMP = TMPro.TextMeshProUGUI;
 #else
 using Il2CppTMPro;
@@ -26,6 +27,7 @@ using Il2CppScheduleOne.Storage;
 using Il2CppScheduleOne.UI;
 using Il2CppScheduleOne.UI.Handover;
 using Il2CppScheduleOne.UI.Items;
+using S1LandVehicle = Il2CppScheduleOne.Vehicles.LandVehicle;
 using S1TMP = Il2CppTMPro.TextMeshProUGUI;
 #endif
 
@@ -67,12 +69,15 @@ public static class HandoverScreenPatch
         public Button PrevButton;
         public Button NextButton;
         public Button ToggleButton;
+        public Button DedicatedToggleButton;
+        public RectTransform DedicatedToggleRoot;
         public Text PageLabel;
         public Text VisualTitleLabel;
         public Text VisualMetaLabel;
         public Action PrevAction;
         public Action NextAction;
         public Action ToggleAction;
+        public S1LandVehicle NearbyVehicle;
         public Vector2 VehicleOriginalAnchoredPos;
         public Vector2 DoneButtonOriginalAnchorMin;
         public Vector2 DoneButtonOriginalAnchorMax;
@@ -83,7 +88,9 @@ public static class HandoverScreenPatch
         public int CurrentPage;
         public int SlotsPerPage;
         public bool ShowingVehicle;
+        public bool IsOpen;
         public int LastPageInputFrame;
+        public int NextVehicleProbeFrame;
         public bool Initialized;
     }
 
@@ -106,10 +113,18 @@ public static class HandoverScreenPatch
         {
             foreach (var state in States.Values)
             {
-                if (state?.BackpackContainer == null || !state.BackpackContainer.gameObject.activeSelf)
+                if (state == null)
                     continue;
 
-                ConfigureCompactBackpackLayout(FindOwningScreen(state), state);
+                var dedicatedOverlayVisible = state.DedicatedCanvas != null && state.DedicatedCanvas.gameObject.activeSelf;
+                var fallbackPanelVisible = state.BackpackContainer != null && state.BackpackContainer.gameObject.activeSelf;
+                if (!dedicatedOverlayVisible && !fallbackPanelVisible)
+                    continue;
+
+                if (state.DedicatedCard != null)
+                    UpdateDedicatedOverlayLayout(FindOwningScreen(state), state);
+                else
+                    ConfigureCompactBackpackLayout(FindOwningScreen(state), state);
                 UpdatePagingLayout(state);
             }
         }
@@ -150,19 +165,25 @@ public static class HandoverScreenPatch
             }
 
             var panel = EnsurePanel(__instance);
-            if (panel == null || panel.BackpackContainer == null)
+            if (panel == null || (panel.BackpackContainer == null && panel.DedicatedCanvas == null))
                 return;
+
+            var nearbyVehicle = ResolveNearbyVehicleStorage(panel, forceRefresh: true);
+            var hasVehicle = nearbyVehicle != null;
+            LogVehicleSelector(nearbyVehicle);
+            EnsureDedicatedVehicleToggle(__instance, panel, hasVehicle);
 
             panel.CurrentPage = 0;
             panel.SlotsPerPage = panel.SlotUIs != null ? panel.SlotUIs.Length : 0;
             panel.ShowingVehicle = false;
-            panel.BackpackContainer.gameObject.SetActive(true);
+            panel.IsOpen = true;
+            if (panel.DedicatedCanvas == null && panel.BackpackContainer != null)
+                panel.BackpackContainer.gameObject.SetActive(true);
             if (panel.PagingRoot != null)
-                panel.PagingRoot.gameObject.SetActive(true);
+                panel.PagingRoot.gameObject.SetActive(panel.DedicatedCanvas == null);
 
             UpdateBackpackHeaderTexts(panel);
 
-            var hasVehicle = HasNearbyVehicleStorage();
             ApplyVisibleStorageMode(panel, hasVehicle);
 
             if (panel.DedicatedCanvas == null && panel.BackpackContainer != null)
@@ -177,9 +198,16 @@ public static class HandoverScreenPatch
             // Re-apply header next frame so backpack title wins if the game resets the label to "Vehicle" after Open.
             MelonLoader.MelonCoroutines.Start(ReapplyHeaderNextFrame(__instance, panel));
 
-            ApplyBackpackPage(panel);
+            if (panel.DedicatedCanvas == null)
+                ApplyBackpackPage(panel);
+            else
+            {
+                UpdateDedicatedOverlayLayout(__instance, panel);
+                EnsureDedicatedVehicleToggle(__instance, panel, hasVehicle);
+                UpdateDedicatedVehicleToggle(__instance, panel, hasVehicle);
+            }
 
-            RebuildQuickMove(__instance, hasVehicle);
+            RebuildQuickMove(__instance, nearbyVehicle);
         }
         catch (Exception ex)
         {
@@ -211,6 +239,26 @@ public static class HandoverScreenPatch
         PruneDeadStates();
         if (__instance == null || !States.TryGetValue(__instance.GetInstanceID(), out var panel))
             return;
+        if (panel.IsOpen && !__instance.IsOpen)
+        {
+            ModLogger.Info("[HandoverUI] Owner screen closed outside Close(); dismissing dedicated backpack overlay.");
+            HidePanelAndRestoreVehicle(__instance);
+            return;
+        }
+        if (!panel.IsOpen)
+            return;
+
+        // The handover screen can reactivate vehicle storage after Open when a nearby vehicle
+        // exists. Keep it opt-in: our dedicated toggle is the only path that permits it to show.
+        if (panel.DedicatedCanvas != null)
+        {
+            if (!panel.ShowingVehicle && panel.VehicleContainer != null && panel.VehicleContainer.gameObject.activeSelf)
+                panel.VehicleContainer.gameObject.SetActive(false);
+
+            UpdateDedicatedVehicleToggle(__instance, panel, ResolveNearbyVehicleStorage(panel) != null);
+            return;
+        }
+
         if (panel.BackpackContainer == null || !panel.BackpackContainer.gameObject.activeSelf)
             return;
         if (panel.ShowingVehicle)
@@ -238,10 +286,13 @@ public static class HandoverScreenPatch
                 return;
 
             ClearSlotAssignments(panel);
+            panel.IsOpen = false;
             if (panel.BackpackContainer != null)
                 panel.BackpackContainer.gameObject.SetActive(false);
             if (panel.PagingRoot != null)
                 panel.PagingRoot.gameObject.SetActive(false);
+            if (panel.DedicatedToggleRoot != null)
+                panel.DedicatedToggleRoot.gameObject.SetActive(false);
             if (panel.DedicatedCanvas != null)
                 panel.DedicatedCanvas.gameObject.SetActive(false);
             if (panel.CanvasProofMarker != null)
@@ -278,6 +329,7 @@ public static class HandoverScreenPatch
             && IsComponentAlive(existing.PageLabel))
         {
             RefreshHeaderBindings(existing, screen);
+            EnsureDedicatedBackpackOverlay(screen, existing);
             return existing;
         }
 
@@ -302,10 +354,25 @@ public static class HandoverScreenPatch
         CenterBackpackContainer(state);
         state.BackpackSlotContainer = FindMatchingRectTransform(state.BackpackContainer, screen.VehicleSlotContainer);
         var slotSearchRoot = state.BackpackSlotContainer != null ? state.BackpackSlotContainer : state.BackpackContainer;
-        state.SlotUIs = slotSearchRoot.GetComponentsInChildren<ItemSlotUI>(includeInactive: false);
-        if (state.SlotUIs == null || state.SlotUIs.Length == 0)
-            state.SlotUIs = slotSearchRoot.GetComponentsInChildren<ItemSlotUI>(includeInactive: true);
-        state.SlotPrefab = state.SlotUIs != null && state.SlotUIs.Length > 0 ? state.SlotUIs[0] : null;
+        var sourceSlotUis = slotSearchRoot.GetComponentsInChildren<ItemSlotUI>(includeInactive: false);
+        if (sourceSlotUis == null || sourceSlotUis.Length == 0)
+            sourceSlotUis = slotSearchRoot.GetComponentsInChildren<ItemSlotUI>(includeInactive: true);
+
+        // Once the dedicated surface exists, its slots are the only slot views PackRat may bind.
+        // Replacing this with the vehicle hierarchy on a later Open was the reason the vehicle
+        // UI was being cleared/rebound and the dedicated browser rendered without any slots.
+        var dedicatedSlotPrefab = GetDedicatedSlotTemplate(sourceSlotUis != null && sourceSlotUis.Length > 0
+            ? sourceSlotUis[0]
+            : null);
+        if (state.DedicatedCanvas == null)
+        {
+            state.SlotUIs = sourceSlotUis;
+            state.SlotPrefab = dedicatedSlotPrefab;
+        }
+        else if (state.SlotPrefab == null)
+        {
+            state.SlotPrefab = dedicatedSlotPrefab;
+        }
         RefreshHeaderBindings(state, screen);
         EnsureCanvasProofMarker(screen, state);
         EnsureDedicatedBackpackOverlay(screen, state);
@@ -953,14 +1020,11 @@ public static class HandoverScreenPatch
             var cardGo = new GameObject("PackRat_BackpackCard");
             var card = cardGo.AddComponent<RectTransform>();
             card.SetParent(canvas.transform, worldPositionStays: false);
-            card.anchorMin = new Vector2(0.5f, 0.5f);
-            card.anchorMax = new Vector2(0.5f, 0.5f);
+            card.anchorMin = Vector2.zero;
+            card.anchorMax = Vector2.one;
             card.pivot = new Vector2(0.5f, 0.5f);
-            card.anchoredPosition = new Vector2(0f, 90f);
-            card.sizeDelta = new Vector2(360f, 410f);
-            var cardImage = cardGo.AddComponent<Image>();
-            cardImage.color = new Color32(15, 21, 28, 238);
-            cardImage.raycastTarget = false;
+            card.offsetMin = Vector2.zero;
+            card.offsetMax = Vector2.zero;
             state.DedicatedCard = card;
             state.BackpackVisualRoot = card;
 
@@ -990,6 +1054,9 @@ public static class HandoverScreenPatch
 
             state.VisualTitleLabel = EnsureVisualLabel(header, "Title", new Vector2(0f, -16f), 18, FontStyle.Bold);
             state.VisualMetaLabel = EnsureVisualLabel(header, "Meta", new Vector2(0f, -38f), 11, FontStyle.Normal);
+            // The shared browser surface now supplies the complete main-backpack header. Keep
+            // these legacy labels dormant for compatibility with the fallback branch only.
+            header.gameObject.SetActive(false);
 
             var gridGo = new GameObject("SlotGrid");
             var grid = gridGo.AddComponent<RectTransform>();
@@ -1007,29 +1074,105 @@ public static class HandoverScreenPatch
             layout.childAlignment = TextAnchor.MiddleCenter;
             state.DedicatedGrid = grid;
 
-            var slots = new List<ItemSlotUI>();
-            for (var i = 0; i < 16; i++)
-            {
-                var slotGo = UnityEngine.Object.Instantiate(state.SlotPrefab.gameObject, grid);
-                slotGo.name = $"PackRat_BackpackSlot_{i + 1}";
-#if !MONO
-                var slotUi = Utils.GetComponentSafe<ItemSlotUI>(slotGo);
-#else
-                var slotUi = slotGo.GetComponent<ItemSlotUI>();
-#endif
-                if (slotUi == null)
-                    continue;
-                slotUi.ClearSlot();
-                slotUi.gameObject.SetActive(true);
-                slots.Add(slotUi);
-            }
-
-            state.SlotUIs = slots.ToArray();
-            state.SlotsPerPage = state.SlotUIs.Length;
             canvasGo.SetActive(false);
         }
 
+        RebindDedicatedSlotProjection(state);
         UpdateDedicatedOverlayLayout(screen, state);
+    }
+
+    /// <summary>
+    /// The handover cancel action exits through the game's private OnClose path on current
+    /// builds, bypassing the public Close method. Mirror the normal cleanup there so the
+    /// detached PackRat canvas cannot outlive its owner screen.
+    /// </summary>
+    [HarmonyPatch("OnClose")]
+    [HarmonyPostfix]
+    public static void OnClose(HandoverScreen __instance)
+    {
+        HidePanelAndRestoreVehicle(__instance);
+    }
+
+    /// <summary>
+    /// Covers the escape/back route before the UI manager removes the handover owner. This is
+    /// intentionally a prefix so the dedicated canvas is gone in the same frame as the exit.
+    /// </summary>
+    [HarmonyPatch("Exit")]
+    [HarmonyPrefix]
+    public static void Exit(HandoverScreen __instance)
+    {
+        HidePanelAndRestoreVehicle(__instance);
+    }
+
+    /// <summary>
+    /// Keeps the dedicated grid as the sole owner of the handover projection. It is deliberately
+    /// rebuilt from direct children only; vehicle-slot descendants must never be assigned to the
+    /// shared PackRat browser.
+    /// </summary>
+    private static void RebindDedicatedSlotProjection(PanelState state)
+    {
+        if (state?.DedicatedGrid == null)
+            return;
+
+        var slots = new List<ItemSlotUI>();
+        var allSlotUis = state.DedicatedGrid.GetComponentsInChildren<ItemSlotUI>(includeInactive: true);
+        if (allSlotUis != null)
+        {
+            for (var i = 0; i < allSlotUis.Length; i++)
+            {
+                var slotUi = allSlotUis[i];
+                if (slotUi != null && slotUi.transform.parent == state.DedicatedGrid)
+                    slots.Add(slotUi);
+            }
+        }
+
+        while (slots.Count < 20 && state.SlotPrefab != null)
+        {
+            var slotGo = UnityEngine.Object.Instantiate(state.SlotPrefab.gameObject, state.DedicatedGrid);
+            slotGo.name = $"PackRat_BackpackSlot_{slots.Count + 1}";
+#if !MONO
+            var slotUi = Utils.GetComponentSafe<ItemSlotUI>(slotGo);
+#else
+            var slotUi = slotGo.GetComponent<ItemSlotUI>();
+#endif
+            if (slotUi == null)
+            {
+                UnityEngine.Object.Destroy(slotGo);
+                break;
+            }
+
+            slotUi.ClearSlot();
+            slotUi.gameObject.SetActive(true);
+            EnsureDedicatedSlotVisualState(slotUi);
+            slots.Add(slotUi);
+        }
+
+        for (var i = 0; i < slots.Count; i++)
+            EnsureDedicatedSlotVisualState(slots[i]);
+
+        state.SlotUIs = slots.ToArray();
+        state.SlotsPerPage = state.SlotUIs.Length;
+    }
+
+    /// <summary>
+    /// Uses Schedule I's canonical ItemSlotUI prefab for the dedicated projection. The vehicle
+    /// hierarchy is only a last-resort fallback, so a car's visibility, layout, and assignments
+    /// cannot propagate into the deal backpack.
+    /// </summary>
+    private static ItemSlotUI GetDedicatedSlotTemplate(ItemSlotUI fallback)
+    {
+        try
+        {
+            var prefab = Singleton<ItemUIManager>.Instance?.ItemSlotUIPrefab;
+            if (prefab != null)
+                return prefab;
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Debug($"[HandoverUI] Canonical ItemSlotUI prefab unavailable: {ex.Message}");
+        }
+
+        return fallback;
     }
 
     private static void UpdateDedicatedOverlayLayout(HandoverScreen screen, PanelState state)
@@ -1037,12 +1180,22 @@ public static class HandoverScreenPatch
         if (state?.DedicatedCard == null)
             return;
 
-        var config = Configuration.Instance;
-        state.DedicatedCard.anchoredPosition = new Vector2(
-            config.HandoverOverlayOffsetX,
-            90f + config.HandoverOverlayOffsetY
-        );
-        state.DedicatedCard.sizeDelta = new Vector2(360f, 410f);
+        var grid = state.DedicatedGrid;
+        var layout = grid != null ? grid.GetComponent<GridLayoutGroup>() : null;
+        if (grid == null || layout == null || state.SlotUIs == null)
+            return;
+
+        if (state.ShowingVehicle)
+        {
+            StorageMenuPatch.ApplyEmbeddedInventoryBrowser(state.DedicatedCard, grid, layout, state.SlotUIs,
+                layoutView: 3, () => GetNearbyVehicleSlots(state), "VEHICLE STORAGE");
+        }
+        else
+        {
+            StorageMenuPatch.ApplyEmbeddedBackpackBrowser(state.DedicatedCard, grid, layout, state.SlotUIs,
+                layoutView: 3);
+        }
+        var overlayScale = Mathf.Clamp(Configuration.Instance.HandoverOverlayScale, 0.5f, 1.5f);
 
         var doneRect = screen?.DoneButton?.transform as RectTransform;
         if (doneRect == null)
@@ -1061,11 +1214,157 @@ public static class HandoverScreenPatch
         doneRect.anchorMin = new Vector2(0.5f, 0.5f);
         doneRect.anchorMax = new Vector2(0.5f, 0.5f);
         doneRect.pivot = new Vector2(0.5f, 0.5f);
-        doneRect.localScale = Vector3.one * 0.82f;
+        doneRect.localScale = Vector3.one * 0.82f * overlayScale;
         doneRect.anchoredPosition = new Vector2(
-            state.DedicatedCard.anchoredPosition.x,
-            state.DedicatedCard.anchoredPosition.y - state.DedicatedCard.rect.height * 0.5f - 48f
+            grid.anchoredPosition.x,
+            grid.anchoredPosition.y - grid.rect.height * overlayScale * 0.5f -
+            48f * overlayScale
         );
+    }
+
+    /// <summary>
+    /// Places the inventory switch inside the shared browser header. It is deliberately part of
+    /// the same dedicated canvas as the slots, so a vanilla handover layout cannot hide it.
+    /// </summary>
+    private static void EnsureDedicatedVehicleToggle(HandoverScreen screen, PanelState state, bool hasVehicle)
+    {
+        if (state?.DedicatedCard == null)
+            return;
+
+        var host = FindDedicatedBrowserHeader(state);
+        if (host == null)
+            return;
+
+        if (state.DedicatedToggleRoot == null || state.DedicatedToggleRoot.parent != host)
+        {
+            var existing = host.Find("PackRat_HandoverVehicleToggle") as RectTransform;
+            if (existing != null)
+            {
+                state.DedicatedToggleRoot = existing;
+                state.DedicatedToggleButton = existing.GetComponentInChildren<Button>(includeInactive: true);
+            }
+            else
+            {
+                var rootGo = new GameObject("PackRat_HandoverVehicleToggle");
+                var root = rootGo.AddComponent<RectTransform>();
+                root.SetParent(host, worldPositionStays: false);
+                root.anchorMin = new Vector2(1f, 0.5f);
+                root.anchorMax = new Vector2(1f, 0.5f);
+                root.pivot = new Vector2(1f, 0.5f);
+                root.anchoredPosition = new Vector2(-38f, 10f);
+                root.sizeDelta = new Vector2(84f, 24f);
+                rootGo.AddComponent<LayoutElement>().ignoreLayout = true;
+                state.DedicatedToggleRoot = root;
+                state.DedicatedToggleButton = CreateToggleButton("Show Vehicle", root, Vector2.zero);
+            }
+        }
+
+        if (state.DedicatedToggleButton != null && state.ToggleAction != null)
+        {
+            EventHelper.RemoveListener(state.ToggleAction, state.DedicatedToggleButton.onClick);
+            EventHelper.AddListener(state.ToggleAction, state.DedicatedToggleButton.onClick);
+        }
+
+        UpdateDedicatedVehicleToggle(screen, state, hasVehicle);
+    }
+
+    private static void UpdateDedicatedVehicleToggle(HandoverScreen screen, PanelState state, bool hasVehicle)
+    {
+        if (state?.DedicatedToggleRoot == null)
+            return;
+
+        var header = FindDedicatedBrowserHeader(state);
+        if (header != null && state.DedicatedToggleRoot.parent != header)
+        {
+            state.DedicatedToggleRoot.SetParent(header, worldPositionStays: false);
+        }
+
+        state.DedicatedToggleRoot.anchorMin = new Vector2(1f, 0.5f);
+        state.DedicatedToggleRoot.anchorMax = new Vector2(1f, 0.5f);
+        state.DedicatedToggleRoot.pivot = new Vector2(1f, 0.5f);
+        state.DedicatedToggleRoot.anchoredPosition = new Vector2(-38f, 10f);
+        state.DedicatedToggleRoot.sizeDelta = new Vector2(84f, 24f);
+        state.DedicatedToggleRoot.localScale = Vector3.one;
+        // Keep the control visible even while vehicle state is unavailable. That leaves an
+        // explicit, disabled receipt rather than silently making the selector disappear.
+        state.DedicatedToggleRoot.gameObject.SetActive(true);
+        if (state.DedicatedToggleButton == null)
+            return;
+
+        state.DedicatedToggleButton.interactable = hasVehicle;
+        ConfigureToggleButton(state.DedicatedToggleButton,
+            !hasVehicle ? "NO VEHICLE" : state.ShowingVehicle ? "BACKPACK" : "VEHICLE", Vector2.zero);
+
+        var buttonRect = state.DedicatedToggleButton.transform as RectTransform;
+        if (buttonRect != null)
+        {
+            buttonRect.anchorMin = new Vector2(0.5f, 0.5f);
+            buttonRect.anchorMax = new Vector2(0.5f, 0.5f);
+            buttonRect.pivot = new Vector2(0.5f, 0.5f);
+            buttonRect.anchoredPosition = Vector2.zero;
+            buttonRect.sizeDelta = new Vector2(84f, 24f);
+        }
+
+        var label = state.DedicatedToggleButton.GetComponentInChildren<Text>(includeInactive: true);
+        if (label != null)
+        {
+            label.fontSize = 10;
+            label.fontStyle = FontStyle.Bold;
+        }
+
+        var image = state.DedicatedToggleButton.GetComponent<Image>();
+        if (image != null)
+            image.color = hasVehicle ? new Color32(35, 104, 145, 255) : new Color32(54, 61, 69, 220);
+
+        ReserveDedicatedHeaderToggleSpace(state);
+        state.DedicatedToggleRoot.SetAsLastSibling();
+    }
+
+    private static RectTransform FindDedicatedBrowserHeader(PanelState state)
+    {
+        var visualRoot = state?.DedicatedGrid?.Find("PackRat_BackpackVisual") as RectTransform;
+        return visualRoot?.Find("Header") as RectTransform;
+    }
+
+    private static void ReserveDedicatedHeaderToggleSpace(PanelState state)
+    {
+        var header = FindDedicatedBrowserHeader(state);
+        if (header == null)
+            return;
+
+        var title = header.Find("Title") as RectTransform;
+        if (title != null)
+            title.offsetMax = new Vector2(-126f, title.offsetMax.y);
+
+        var meta = header.Find("Meta") as RectTransform;
+        if (meta != null)
+            meta.offsetMax = new Vector2(-126f, meta.offsetMax.y);
+    }
+
+    /// <summary>
+    /// Handover slot prefabs are often cloned from a hidden vehicle surface. Do not inherit a
+    /// hidden CanvasGroup into PackRat's dedicated canvas; the slot itself remains a native
+    /// ItemSlotUI and still owns its rendering and transfer behavior.
+    /// </summary>
+    private static void EnsureDedicatedSlotVisualState(ItemSlotUI slotUi)
+    {
+        if (slotUi == null)
+            return;
+
+        var canvasGroups = slotUi.GetComponentsInChildren<CanvasGroup>(includeInactive: true);
+        if (canvasGroups == null)
+            return;
+
+        for (var i = 0; i < canvasGroups.Length; i++)
+        {
+            var group = canvasGroups[i];
+            if (group == null)
+                continue;
+
+            group.alpha = 1f;
+            group.interactable = true;
+            group.blocksRaycasts = true;
+        }
     }
 
     private static void RegisterItemUiRaycaster(GraphicRaycaster raycaster)
@@ -1549,7 +1848,7 @@ public static class HandoverScreenPatch
         if (state.ToggleAction == null)
             state.ToggleAction = () =>
             {
-                var hasVehicle = HasNearbyVehicleStorage();
+                var hasVehicle = ResolveNearbyVehicleStorage(state, forceRefresh: true) != null;
                 if (!hasVehicle)
                     state.ShowingVehicle = false;
                 else
@@ -1562,9 +1861,16 @@ public static class HandoverScreenPatch
                     MelonLoader.MelonCoroutines.Start(ReapplyHeaderNextFrame(screen, state));
 
                 if (!state.ShowingVehicle)
-                    ApplyBackpackPage(state);
+                {
+                    if (state.DedicatedCanvas != null)
+                        UpdateDedicatedOverlayLayout(screen, state);
+                    else
+                        ApplyBackpackPage(state);
+                }
                 else
                     UpdatePagerControls(state, GetTotalPages(state), hasVehicle);
+
+                UpdateDedicatedVehicleToggle(screen, state, hasVehicle);
             };
 
         if (state.PrevButton != null)
@@ -1940,7 +2246,7 @@ public static class HandoverScreenPatch
         FitBackpackVisualToSlots(state);
         UpdatePagingLayout(state);
 
-        UpdatePagerControls(state, totalPages, HasNearbyVehicleStorage());
+        UpdatePagerControls(state, totalPages, ResolveNearbyVehicleStorage(state) != null);
     }
 
     private static void UpdatePagerControls(PanelState state, int totalPages, bool hasVehicle)
@@ -2018,7 +2324,7 @@ public static class HandoverScreenPatch
         }
     }
 
-    private static void RebuildQuickMove(HandoverScreen screen, bool hasVehicle)
+    private static void RebuildQuickMove(HandoverScreen screen, S1LandVehicle nearbyVehicle)
     {
         if (screen == null)
             return;
@@ -2035,9 +2341,9 @@ public static class HandoverScreenPatch
         if (allSlots == null)
             return;
 
-        if (hasVehicle && Player.Local?.LastDrivenVehicle?.Storage?.ItemSlots != null)
+        if (nearbyVehicle?.Storage?.ItemSlots != null)
         {
-            foreach (var slot in Player.Local.LastDrivenVehicle.Storage.ItemSlots.AsEnumerable())
+            foreach (var slot in nearbyVehicle.Storage.ItemSlots.AsEnumerable())
             {
                 if (slot != null)
                     allSlots.Add(slot);
@@ -2351,6 +2657,17 @@ public static class HandoverScreenPatch
         var targetTitle = showingVehicle ? VehicleHeaderTitle : backpackTitle;
         var targetSubtitle = showingVehicle ? VehicleHeaderSubtitle : backpackSubtitle;
 
+        // The dedicated browser card is the active inventory surface for both backpack and
+        // vehicle modes. The legacy header routine treats BackpackVisualRoot as backpack-only;
+        // applying that rule here would deactivate the entire vehicle projection.
+        if (panel.DedicatedCanvas != null)
+        {
+            SetHeaderPairActive(panel.SourceTitleLabel, panel.SourceSubtitleLabel, false);
+            SetHeaderPairActive(panel.ClonedTitleLabel, panel.ClonedSubtitleLabel, false);
+            HideOverlayHeader(panel);
+            return;
+        }
+
         UpdateBackpackHeaderTexts(panel);
         HideOverlayHeader(panel);
         SetBackpackVisualVisible(panel, !showingVehicle);
@@ -2404,16 +2721,20 @@ public static class HandoverScreenPatch
         {
             var screen = FindOwningScreen(state);
             UpdateDedicatedOverlayLayout(screen, state);
-            state.DedicatedCanvas.gameObject.SetActive(!showVehicle);
+            // Both inventories use the same dedicated PackRat surface. Never reactivate the
+            // vanilla vehicle hierarchy here: it belongs to the animated handover owner and
+            // can otherwise reflow or obscure the deal UI.
+            state.DedicatedCanvas.gameObject.SetActive(true);
             if (state.BackpackContainer != null)
                 state.BackpackContainer.gameObject.SetActive(false);
             if (state.VehicleContainer != null)
             {
                 state.VehicleContainer.anchoredPosition = state.VehicleOriginalAnchoredPos;
-                state.VehicleContainer.gameObject.SetActive(showVehicle);
+                state.VehicleContainer.gameObject.SetActive(false);
             }
             if (state.PagingRoot != null)
-                state.PagingRoot.gameObject.SetActive(!showVehicle);
+                state.PagingRoot.gameObject.SetActive(false);
+            UpdateDedicatedVehicleToggle(screen, state, hasVehicle);
             return;
         }
 
@@ -2724,17 +3045,92 @@ public static class HandoverScreenPatch
         return null;
     }
 
-    private static bool HasNearbyVehicleStorage()
+    /// <summary>
+    /// Resolves a usable vehicle for the handover selector. The last driven vehicle is preferred,
+    /// then nearby player-owned vehicles are considered as a recovery path when game state has not
+    /// refreshed LastDrivenVehicle yet.
+    /// </summary>
+    private static S1LandVehicle ResolveNearbyVehicleStorage(PanelState state, bool forceRefresh = false)
+    {
+        if (state != null && IsUsableNearbyVehicle(state.NearbyVehicle, out _))
+            return state.NearbyVehicle;
+
+        if (!forceRefresh && state != null && Time.frameCount < state.NextVehicleProbeFrame)
+            return null;
+
+        if (state != null)
+            state.NextVehicleProbeFrame = Time.frameCount + 30;
+
+        var player = Player.Local;
+        if (player == null)
+            return null;
+
+        var lastDriven = player.LastDrivenVehicle;
+        if (IsUsableNearbyVehicle(lastDriven, out _))
+        {
+            if (state != null)
+                state.NearbyVehicle = lastDriven;
+            return lastDriven;
+        }
+
+        S1LandVehicle closest = null;
+        var closestDistance = float.MaxValue;
+        var vehicles = Utils.FindObjectsOfTypeSafe<S1LandVehicle>();
+        for (var i = 0; i < vehicles.Length; i++)
+        {
+            var vehicle = vehicles[i];
+            if (!IsUsableNearbyVehicle(vehicle, out var distance) || distance >= closestDistance)
+                continue;
+
+            closest = vehicle;
+            closestDistance = distance;
+        }
+
+        if (state != null)
+            state.NearbyVehicle = closest;
+        return closest;
+    }
+
+    private static List<ItemSlot> GetNearbyVehicleSlots(PanelState state)
+    {
+        var result = new List<ItemSlot>();
+        var vehicle = ResolveNearbyVehicleStorage(state, forceRefresh: true);
+        if (vehicle?.Storage?.ItemSlots == null)
+            return result;
+
+        foreach (var slot in vehicle.Storage.ItemSlots.AsEnumerable())
+        {
+            if (slot != null)
+                result.Add(slot);
+        }
+
+        return result;
+    }
+
+    private static bool IsUsableNearbyVehicle(S1LandVehicle vehicle, out float distance)
+    {
+        distance = float.MaxValue;
+        var player = Player.Local;
+        // The owner flag can arrive a frame after the client receives LastDrivenVehicle.
+        // The player-selected vehicle is therefore valid immediately; fallback discoveries
+        // must still be explicitly player-owned.
+        if (player == null || vehicle == null || vehicle.Storage == null ||
+            (!vehicle.IsPlayerOwned && vehicle != player.LastDrivenVehicle))
+            return false;
+
+        distance = Vector3.Distance(vehicle.transform.position, player.transform.position);
+        return distance <= VehicleMaxDistance;
+    }
+
+    private static void LogVehicleSelector(S1LandVehicle vehicle)
     {
         var player = Player.Local;
-        if (player == null || player.LastDrivenVehicle == null)
-            return false;
-
-        var storage = player.LastDrivenVehicle.Storage;
-        if (storage == null)
-            return false;
-
-        return Vector3.Distance(player.LastDrivenVehicle.transform.position, player.transform.position) < VehicleMaxDistance;
+        var lastDriven = player != null ? player.LastDrivenVehicle : null;
+        var lastDrivenDistance = IsUsableNearbyVehicle(lastDriven, out var distance) ? distance : -1f;
+        var selectedName = vehicle != null ? vehicle.gameObject.name : "none";
+        var selectedDistance = IsUsableNearbyVehicle(vehicle, out distance) ? distance : -1f;
+        ModLogger.Info($"[HandoverUI] Vehicle selector: lastDriven={(lastDriven != null ? lastDriven.gameObject.name : "none")}, " +
+            $"lastDrivenDistance={lastDrivenDistance:0.0}, selected={selectedName}, selectedDistance={selectedDistance:0.0}.");
     }
 
     private static int GetTotalPages(PanelState state)
@@ -2752,10 +3148,14 @@ public static class HandoverScreenPatch
         if (!States.TryGetValue(screen.GetInstanceID(), out var state))
             return;
 
+        state.IsOpen = false;
+
         if (state.BackpackContainer != null)
             state.BackpackContainer.gameObject.SetActive(false);
         if (state.PagingRoot != null)
             state.PagingRoot.gameObject.SetActive(false);
+        if (state.DedicatedToggleRoot != null)
+            state.DedicatedToggleRoot.gameObject.SetActive(false);
         if (state.DedicatedCanvas != null)
             state.DedicatedCanvas.gameObject.SetActive(false);
         if (state.CanvasProofMarker != null)
