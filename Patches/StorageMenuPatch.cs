@@ -3725,7 +3725,8 @@ public static class StorageMenuPatch
     /// <summary>
     /// Commits the selected display ordering to the local backpack's backing slots. The browser's
     /// normal sort remains a harmless projection; this action is the explicit opt-in that makes
-    /// the same order persist through saves and multiplayer snapshots.
+    /// the same order persist through saves and multiplayer snapshots. All and Recent do not
+    /// provide a stable physical sort key, so they intentionally fall back to Name.
     /// </summary>
     private static void OrganizeStandaloneBackpack(StandaloneBackpackState state)
     {
@@ -3735,6 +3736,7 @@ public static class StorageMenuPatch
 
         try
         {
+            var organizationSortMode = GetEffectiveOrganizationSortMode(state.SortMode);
             var movableSlots = new List<ItemSlot>();
             var protectedSlotCount = 0;
             for (var i = 0; i < backpackSlots.Count; i++)
@@ -3757,7 +3759,7 @@ public static class StorageMenuPatch
                 return;
 
             orderedSourceSlots.Sort((left, right) => CompareStandaloneBackpackSlots(left, right, state,
-                state.SortMode, state.SortDirection, backpackSlots));
+                organizationSortMode, state.SortDirection, backpackSlots));
 
             var targetAssignments = new Dictionary<ItemSlot, ItemInstance>();
             for (var i = 0; i < movableSlots.Count; i++)
@@ -3775,7 +3777,7 @@ public static class StorageMenuPatch
             if (changedSlots.Count == 0)
             {
                 ModLogger.Info($"[BackpackUI] Organize skipped: the backpack is already ordered by "
-                    + $"{GetSortModeLabel(state.SortMode)} ({GetSortDirectionLabel(state.SortDirection)}).");
+                    + $"{GetSortModeLabel(organizationSortMode)} ({GetSortDirectionLabel(state.SortDirection)}).");
                 return;
             }
 
@@ -3799,7 +3801,7 @@ public static class StorageMenuPatch
 
             state.CurrentPage = 0;
             ModLogger.Info($"[BackpackUI] Organized {orderedSourceSlots.Count} backpack item stacks by "
-                + $"{GetSortModeLabel(state.SortMode)} ({GetSortDirectionLabel(state.SortDirection)}); "
+                + $"{GetSortModeLabel(organizationSortMode)} ({GetSortDirectionLabel(state.SortDirection)}); "
                 + $"changedSlots={changedSlots.Count}, protectedSlots={protectedSlotCount}.");
             RefreshStandaloneFilterView(state);
         }
@@ -3812,7 +3814,14 @@ public static class StorageMenuPatch
     private static bool CanOrganizeStandaloneBackpack(StandaloneBackpackState state, List<ItemSlot> backpackSlots)
     {
         return state != null && state.IsBackpackInventory && backpackSlots != null && backpackSlots.Count > 1 &&
-            state.SortMode != StandaloneBackpackSortMode.SlotOrder && state.SortMode != StandaloneBackpackSortMode.Recent;
+            CountUsedStandaloneSlots(backpackSlots) > 0;
+    }
+
+    private static StandaloneBackpackSortMode GetEffectiveOrganizationSortMode(StandaloneBackpackSortMode sortMode)
+    {
+        return sortMode == StandaloneBackpackSortMode.SlotOrder || sortMode == StandaloneBackpackSortMode.Recent
+            ? StandaloneBackpackSortMode.Name
+            : sortMode;
     }
 
     private static bool ShouldKeepStandaloneSlotFixed(ItemSlot slot)
