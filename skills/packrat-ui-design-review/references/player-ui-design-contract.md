@@ -46,7 +46,9 @@ and the project runtime contract.
   closes or changes state.
 - Use motion to explain a surface opening, a modal taking focus, a dropdown appearing, or a
   selected tab changing. Keep search, filters, sort, paging, and inventory-slot projection
-  immediate; do not animate item positions or drag-and-drop behavior owned by the game.
+  immediate; do not animate item positions or drag-and-drop behavior owned by the game. A manual
+  page change may instead use one short clipped directional wipe overlay to reveal its new slot
+  projection, without changing any slot object's geometry.
 - Keep motion restrained: short ease-out entry (0.12-0.20 s), short exit (0.10-0.14 s), no
   continuous decorative loops, and an explicit setting that snaps transitions off for players
   who prefer no UI animation.

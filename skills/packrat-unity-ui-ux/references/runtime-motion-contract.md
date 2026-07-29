@@ -34,6 +34,12 @@ storage menu lifecycle or interfere with inventory drag and drop.
   state. On focus, fade or color-shift the search border over at most 0.10 s. Search results,
   filters, sort, and pagination update immediately with no per-slot fly-in or rearrangement
   animation.
+- Manual pagination may add a 0.13-0.16 s directional wipe above the fixed grid: cover the grid
+  before assigning the next/previous projection, then slide the clipped card-colour wipe left for
+  Next or right for Previous to reveal the new slots. The wipe is a non-raycastable presentation
+  overlay with an optional blue edge; it must never move, clone, reparent, or animate individual
+  `ItemSlotUI` objects. Skip it for query/filter/sort refreshes, active drag state, or reduced
+  motion.
 - Dropdown: fade/scale its presentation root in over 0.10-0.12 s. It remains click-blocking for
   the full visible interval; close it immediately when the backpack closes or an item is chosen.
 - Settings rows and toggles: one 0.08-0.12 s color/knob transition after a confirmed setting

@@ -54,6 +54,7 @@ The helper will use `MelonCoroutines`, `Time.unscaledDeltaTime`, `CanvasGroup`,
 | Header controls | Hover/press | Use game `Button` color state; optional 0.08 s presentation scale on a non-layout wrapper | 0.08 s | Labels/icons remain non-raycast targets; no controller navigation delay. |
 | Search field | Select/deselect | Blue focus-border alpha or color shift | 0.10 s | Text focus has priority over the backpack hotkey exactly as it does now. |
 | Filter/sort dropdown | Open/close/select | Root alpha 0→1 and scale 0.98→1; reverse on close | 0.10–0.12 s | It blocks its own clicks while visible; selection applies instantly and its close cannot survive menu close. |
+| Pagination | Manual next/previous page | A clipped card-colour overlay starts over the grid, then wipes left for Next or right for Previous, revealing the newly assigned page with a blue edge | 0.13–0.16 s | The overlay is non-raycastable and never transforms slot UI. Skip it for search/filter/sort refreshes, drag state, disabled motion, or reduced motion. |
 | Settings modal | Cog click | Blocker fade, then card alpha/scale 0.94→1 and 10 px upward settle | 0.12 s + 0.18 s card | Blocker activates before card animation. |
 | Settings close | Close button/cog | Card alpha/scale to 0.96 and down 6 px, then blocker fade and deactivate | 0.12 s | Modal remains raycast-blocking until completion; rapid reopen cancels the stale close. |
 | Settings tabs | Tab selection | Activate the new page immediately; animate only a separate underline/selected-state alpha | 0.10–0.14 s | Never change tab bounds or delay active-page rebuild, preserving the fixed desktop-tab overlap. |
@@ -64,8 +65,10 @@ The helper will use `MelonCoroutines`, `Time.unscaledDeltaTime`, `CanvasGroup`,
 
 1. Add preferences, configuration defaults, and the cancellable motion helper with a pure
    no-motion code path. Add diagnostic logs only for unexpected cancellation/state errors.
-2. Animate standalone backpack entry plus search focus and dropdown presentation. Verify closing
-   through Done, Escape, and the backpack hotkey always releases the game immediately.
+2. Animate standalone backpack entry plus search focus and dropdown presentation. Add the
+   direction-aware grid page wipe: establish it before reassigning slots, then reveal it only
+   after the grid rebuild. Verify closing through Done, Escape, and the backpack hotkey always
+   releases the game immediately.
 3. Add the settings blocker/card lifecycle and rapid open/close cancellation handling.
 4. Add tab indicator, toggle, and page/result feedback without changing layout-owned geometry.
 5. Add the two Settings General toggles and verify MelonPreferences persistence in both runtimes.
@@ -77,7 +80,7 @@ The helper will use `MelonCoroutines`, `Time.unscaledDeltaTime`, `CanvasGroup`,
 - Motion is visible but never exceeds 0.20 s for a primary UI transition.
 - The backpack never traps the cursor, camera, player, blur, or overlay during rapid input.
 - Search typing, filtering, sort, paging, and item drag/drop have no additional latency and no
-  animated reordering of slots.
+  animated reordering of slots. Manual pagination may use only the short clipped wipe reveal.
 - A cancelled close cannot deactivate a freshly reopened settings modal or dropdown.
 - `UI ANIMATIONS` off produces the exact final visual state on the same frame; reduced motion
   avoids positional/scale movement.
