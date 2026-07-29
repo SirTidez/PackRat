@@ -3723,10 +3723,9 @@ public static class StorageMenuPatch
     }
 
     /// <summary>
-    /// Commits the selected display ordering to the local backpack's backing slots. The browser's
-    /// normal sort remains a harmless projection; this action is the explicit opt-in that makes
-    /// the same order persist through saves and multiplayer snapshots. All and Recent do not
-    /// provide a stable physical sort key, so they intentionally fall back to Name.
+    /// Commits a predictable organization layout to the local backpack's backing slots. The
+    /// browser's display tabs remain a harmless projection; this action explicitly persists
+    /// Type, Name, Quality, and Quantity ordering through saves and multiplayer snapshots.
     /// </summary>
     private static void OrganizeStandaloneBackpack(StandaloneBackpackState state)
     {
@@ -3736,7 +3735,6 @@ public static class StorageMenuPatch
 
         try
         {
-            var organizationSortMode = GetEffectiveOrganizationSortMode(state.SortMode);
             var movableSlots = new List<ItemSlot>();
             var protectedSlotCount = 0;
             for (var i = 0; i < backpackSlots.Count; i++)
@@ -3758,8 +3756,7 @@ public static class StorageMenuPatch
             if (orderedSourceSlots.Count == 0)
                 return;
 
-            orderedSourceSlots.Sort((left, right) => CompareStandaloneBackpackSlots(left, right, state,
-                organizationSortMode, state.SortDirection, backpackSlots));
+            orderedSourceSlots.Sort((left, right) => CompareStandaloneOrganizationSlots(left, right, backpackSlots));
 
             var targetAssignments = new Dictionary<ItemSlot, ItemInstance>();
             for (var i = 0; i < movableSlots.Count; i++)
@@ -3777,7 +3774,7 @@ public static class StorageMenuPatch
             if (changedSlots.Count == 0)
             {
                 ModLogger.Info($"[BackpackUI] Organize skipped: the backpack is already ordered by "
-                    + $"{GetSortModeLabel(organizationSortMode)} ({GetSortDirectionLabel(state.SortDirection)}).");
+                    + "Type, Name, Quality, and Quantity.");
                 return;
             }
 
@@ -3801,7 +3798,7 @@ public static class StorageMenuPatch
 
             state.CurrentPage = 0;
             ModLogger.Info($"[BackpackUI] Organized {orderedSourceSlots.Count} backpack item stacks by "
-                + $"{GetSortModeLabel(organizationSortMode)} ({GetSortDirectionLabel(state.SortDirection)}); "
+                + "Type, Name, Quality, and Quantity; "
                 + $"changedSlots={changedSlots.Count}, protectedSlots={protectedSlotCount}.");
             RefreshStandaloneFilterView(state);
         }
@@ -3817,11 +3814,30 @@ public static class StorageMenuPatch
             CountUsedStandaloneSlots(backpackSlots) > 0;
     }
 
-    private static StandaloneBackpackSortMode GetEffectiveOrganizationSortMode(StandaloneBackpackSortMode sortMode)
+    /// <summary>
+    /// Defines PackRat's persistent storage layout. Categories take priority so related drug
+    /// products stay together; names then identify the product, and higher quality / larger
+    /// stacks are kept first within otherwise equivalent entries.
+    /// </summary>
+    private static int CompareStandaloneOrganizationSlots(ItemSlot left, ItemSlot right, List<ItemSlot> originalSlots)
     {
-        return sortMode == StandaloneBackpackSortMode.SlotOrder || sortMode == StandaloneBackpackSortMode.Recent
-            ? StandaloneBackpackSortMode.Name
-            : sortMode;
+        var comparison = string.Compare(GetSlotType(left), GetSlotType(right), StringComparison.OrdinalIgnoreCase);
+        if (comparison != 0)
+            return comparison;
+
+        comparison = string.Compare(GetSlotName(left), GetSlotName(right), StringComparison.OrdinalIgnoreCase);
+        if (comparison != 0)
+            return comparison;
+
+        var qualityComparison = GetQualitySortRank(GetSlotQuality(right)).CompareTo(GetQualitySortRank(GetSlotQuality(left)));
+        if (qualityComparison != 0)
+            return qualityComparison;
+
+        var quantityComparison = GetSlotQuantity(right).CompareTo(GetSlotQuantity(left));
+        if (quantityComparison != 0)
+            return quantityComparison;
+
+        return originalSlots.IndexOf(left).CompareTo(originalSlots.IndexOf(right));
     }
 
     private static bool ShouldKeepStandaloneSlotFixed(ItemSlot slot)
