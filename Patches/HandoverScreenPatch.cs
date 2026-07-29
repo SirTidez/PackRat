@@ -1078,7 +1078,13 @@ public static class HandoverScreenPatch
         }
 
         RebindDedicatedSlotProjection(state);
-        UpdateDedicatedOverlayLayout(screen, state);
+
+        // The dedicated canvas begins disabled so it cannot flash during scene setup. Do not
+        // bind the shared browser while that owner is hidden: its presentation state is then
+        // cached as "already shown" and its cloned ItemSlotUI children never receive a valid
+        // active hierarchy. Open/ApplyVisibleStorageMode activates this owner before binding.
+        if (state.DedicatedCanvas != null && state.DedicatedCanvas.gameObject.activeInHierarchy)
+            UpdateDedicatedOverlayLayout(screen, state);
     }
 
     /// <summary>
@@ -2719,12 +2725,21 @@ public static class HandoverScreenPatch
 
         if (state.DedicatedCanvas != null)
         {
+            // The shared browser binds and activates its native ItemSlotUI children. Do that only
+            // after its owner canvas is active; otherwise Unity reports the slots inactive and
+            // the deal projection can remain visually empty after the handover first initializes.
+            state.DedicatedCanvas.gameObject.SetActive(true);
+            if (state.DedicatedCard != null)
+                state.DedicatedCard.gameObject.SetActive(true);
+            if (state.DedicatedGrid != null)
+                state.DedicatedGrid.gameObject.SetActive(true);
+            RestoreDedicatedBrowserVisibility(state);
             var screen = FindOwningScreen(state);
             UpdateDedicatedOverlayLayout(screen, state);
+            LogDedicatedProjectionState(state, "visible-bind");
             // Both inventories use the same dedicated PackRat surface. Never reactivate the
             // vanilla vehicle hierarchy here: it belongs to the animated handover owner and
             // can otherwise reflow or obscure the deal UI.
-            state.DedicatedCanvas.gameObject.SetActive(true);
             if (state.BackpackContainer != null)
                 state.BackpackContainer.gameObject.SetActive(false);
             if (state.VehicleContainer != null)
@@ -2769,6 +2784,62 @@ public static class HandoverScreenPatch
 
         if (state.PagingRoot != null)
             state.PagingRoot.gameObject.SetActive(true);
+    }
+
+    /// <summary>
+    /// The shared backpack browser applies its open animation while the handover screen is
+    /// initially hidden. A retained CanvasGroup alpha of zero would keep the later active canvas
+    /// invisible, so the owner explicitly restores PackRat-only groups before rebinding slots.
+    /// </summary>
+    private static void RestoreDedicatedBrowserVisibility(PanelState state)
+    {
+        if (state?.DedicatedGrid == null)
+            return;
+
+        var groups = state.DedicatedGrid.GetComponentsInChildren<CanvasGroup>(includeInactive: true);
+        if (groups == null)
+            return;
+
+        for (var index = 0; index < groups.Length; index++)
+        {
+            var group = groups[index];
+            if (group == null)
+                continue;
+
+            group.alpha = 1f;
+            group.interactable = true;
+            group.blocksRaycasts = true;
+        }
+    }
+
+    /// <summary>
+    /// Emits the ownership and active-state receipt needed to distinguish a missing slot bind
+    /// from a hidden dedicated canvas. This runs only when the handover surface is made visible.
+    /// </summary>
+    private static void LogDedicatedProjectionState(PanelState state, string phase)
+    {
+        if (state == null)
+            return;
+
+        var totalSlots = state.SlotUIs?.Length ?? 0;
+        var activeSlots = 0;
+        if (state.SlotUIs != null)
+        {
+            for (var index = 0; index < state.SlotUIs.Length; index++)
+            {
+                var slotUi = state.SlotUIs[index];
+                if (slotUi != null && slotUi.gameObject.activeInHierarchy)
+                    activeSlots++;
+            }
+        }
+
+        ModLogger.Info(
+            $"[HandoverUI] Dedicated projection {phase}: " +
+            $"canvas={state.DedicatedCanvas?.gameObject.activeInHierarchy}, " +
+            $"card={state.DedicatedCard?.gameObject.activeInHierarchy}, " +
+            $"grid={state.DedicatedGrid?.gameObject.activeInHierarchy}, " +
+            $"slots={activeSlots}/{totalSlots}."
+        );
     }
 
     private static Vector2 GetHandoverBackpackPosition(PanelState state)
