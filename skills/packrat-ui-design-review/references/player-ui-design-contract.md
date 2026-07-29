@@ -44,6 +44,12 @@ and the project runtime contract.
 - Prefer small code-driven tweens for fade, scale, and position rather than Animator-driven UI
   animation. Give every transition a deterministic end state and cancel/replace it when the UI
   closes or changes state.
+- Use motion to explain a surface opening, a modal taking focus, a dropdown appearing, or a
+  selected tab changing. Keep search, filters, sort, paging, and inventory-slot projection
+  immediate; do not animate item positions or drag-and-drop behavior owned by the game.
+- Keep motion restrained: short ease-out entry (0.12-0.20 s), short exit (0.10-0.14 s), no
+  continuous decorative loops, and an explicit setting that snaps transitions off for players
+  who prefer no UI animation.
 - Use a blocking transitional curtain only for actual asynchronous or multi-stage work. It should
   provide immediate feedback, block conflicting input, report meaningful stage/progress if work is
   perceptible, and disappear only when all required work is complete.
@@ -64,3 +70,4 @@ and the project runtime contract.
 - [Controller-owned custom tabs](https://www.youtube.com/watch?v=211t6r12XPQ)
 - [Adaptive grid decisions](https://www.youtube.com/watch?v=CGsEJToeXmA)
 - [Transition/loading feedback](https://www.youtube.com/watch?v=iXWFTgFNRdM)
+- [Procedural Unity UI animation](https://www.youtube.com/watch?v=YqMpVCPX2ls)

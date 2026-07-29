@@ -6,7 +6,8 @@ description: Build, repair, and validate PackRat's player-facing Schedule I back
 # PackRat Unity UI/UX
 
 Use the game-owned storage menu and its existing input lifecycle. Read
-`references/runtime-layout-contract.md` before changing a visible panel.
+`references/runtime-layout-contract.md` before changing a visible panel. Read
+`references/runtime-motion-contract.md` before adding or changing visible UI motion.
 
 ## Workflow
 
@@ -16,7 +17,9 @@ Use the game-owned storage menu and its existing input lifecycle. Read
    groups; backpack cells by the grid; text by its control child.
 4. Bind listeners once, refresh only projected visible data, and clean up state on close or scene
    rebuild.
-5. Test at the target display scale: open, search, filter, settings navigation, Escape, hotkey,
+5. Treat animation as presentation-only: it may not own game-menu activation, input release,
+   inventory-slot layout, or the close lifecycle.
+6. Test at the target display scale: open, search, filter, settings navigation, Escape, hotkey,
    Done, reopen, scene transition, and client reconnect.
 
 ## Required Rules
@@ -32,6 +35,11 @@ Use the game-owned storage menu and its existing input lifecycle. Read
 - Treat search-input focus as higher priority than the backpack hotkey. Never toggle the backpack
   while an active input field is consuming text.
 - Keep backing inventory order immutable; render a filtered/sorted projection into slots.
+- Use a single cancellable, unscaled-time coroutine per animated presentation root. Preserve
+  baseline transform and CanvasGroup state, and snap to the final state when UI Animations is off.
+- Do not add LeanTween, DOTween, an Animator controller, or persistent motion to PackRat's
+  injected UI. Keep close paths immediate at the game owner; only an internal modal may complete
+  a brief exit transition before deactivation.
 
 ## Runtime Compatibility
 
@@ -43,3 +51,4 @@ Use the game-owned storage menu and its existing input lifecycle. Read
 ## References
 
 - `references/runtime-layout-contract.md`
+- `references/runtime-motion-contract.md`
