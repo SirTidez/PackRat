@@ -27,6 +27,7 @@ public class Configuration
     private readonly MelonPreferences_Entry<bool> _backpackSyncDebugLoggingEntry;
     private readonly MelonPreferences_Entry<bool> _enableUiAnimationsEntry;
     private readonly MelonPreferences_Entry<bool> _reduceUiMotionEntry;
+    private readonly MelonPreferences_Entry<bool> _protectFavoritesFromOrganizationEntry;
     private readonly MelonPreferences_Entry<float> _backpackOverlayOffsetXEntry;
     private readonly MelonPreferences_Entry<float> _backpackOverlayOffsetYEntry;
     private readonly MelonPreferences_Entry<float> _backpackOverlayScaleEntry;
@@ -85,6 +86,11 @@ public class Configuration
             "ReduceUiMotion",
             false,
             "Use fade-only PackRat backpack UI transitions"
+        );
+        _protectFavoritesFromOrganizationEntry = _category.CreateEntry(
+            "ProtectFavoritesFromOrganization",
+            true,
+            "Keep favorited backpack items fixed when using PackRat's organize action"
         );
         _backpackOverlayOffsetXEntry = _category.CreateEntry(
             "BackpackOverlayOffsetX",
@@ -191,6 +197,7 @@ public class Configuration
     public bool BackpackSyncDebugLogging { get; set; }
     public bool EnableUiAnimations { get; set; }
     public bool ReduceUiMotion { get; set; }
+    public bool ProtectFavoritesFromOrganization { get; set; }
     public float BackpackOverlayOffsetX { get; set; }
     public float BackpackOverlayOffsetY { get; set; }
     public float BackpackOverlayScale { get; set; }
@@ -238,6 +245,7 @@ public class Configuration
         BackpackSyncDebugLogging = _backpackSyncDebugLoggingEntry.Value;
         EnableUiAnimations = _enableUiAnimationsEntry.Value;
         ReduceUiMotion = _reduceUiMotionEntry.Value;
+        ProtectFavoritesFromOrganization = _protectFavoritesFromOrganizationEntry.Value;
         BackpackOverlayOffsetX = _backpackOverlayOffsetXEntry.Value;
         BackpackOverlayOffsetY = _backpackOverlayOffsetYEntry.Value;
         BackpackOverlayScale = ClampOverlayScale(_backpackOverlayScaleEntry.Value);
@@ -271,6 +279,7 @@ public class Configuration
         _backpackSyncDebugLoggingEntry.Value = BackpackSyncDebugLogging;
         _enableUiAnimationsEntry.Value = EnableUiAnimations;
         _reduceUiMotionEntry.Value = ReduceUiMotion;
+        _protectFavoritesFromOrganizationEntry.Value = ProtectFavoritesFromOrganization;
         _backpackOverlayOffsetXEntry.Value = BackpackOverlayOffsetX;
         _backpackOverlayOffsetYEntry.Value = BackpackOverlayOffsetY;
         _backpackOverlayScaleEntry.Value = ClampOverlayScale(BackpackOverlayScale);
@@ -374,6 +383,7 @@ public class Configuration
         sb.AppendLine($"BackpackSyncDebugLogging = {BackpackSyncDebugLogging.ToString().ToLowerInvariant()}");
         sb.AppendLine($"EnableUiAnimations = {EnableUiAnimations.ToString().ToLowerInvariant()}");
         sb.AppendLine($"ReduceUiMotion = {ReduceUiMotion.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"ProtectFavoritesFromOrganization = {ProtectFavoritesFromOrganization.ToString().ToLowerInvariant()}");
         return sb.ToString();
     }
 

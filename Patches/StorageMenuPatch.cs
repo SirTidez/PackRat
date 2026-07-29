@@ -195,14 +195,17 @@ public static class StorageMenuPatch
         public Button TypeFilterButton;
         public Button QualityFilterButton;
         public Button SortDirectionButton;
+        public Button OrganizeButton;
         public Button ClearFiltersButton;
         public Text TypeFilterLabel;
         public Text QualityFilterLabel;
         public Text SortDirectionLabel;
+        public Text OrganizeLabel;
         public Text ClearFiltersLabel;
         public Action TypeFilterAction;
         public Action QualityFilterAction;
         public Action SortDirectionAction;
+        public Action OrganizeAction;
         public Action ClearFiltersAction;
         public Button SettingsButton;
         public Text SettingsLabel;
@@ -269,6 +272,7 @@ public static class StorageMenuPatch
         /// </summary>
         public Func<List<ItemSlot>> SlotProvider;
         public string DisplayTitle;
+        public bool IsBackpackInventory;
         public string SearchTerm;
         public string TypeFilter;
         public string QualityFilter;
@@ -945,6 +949,7 @@ public static class StorageMenuPatch
 
         state.SlotProvider = surface.SlotProvider;
         state.DisplayTitle = surface.DisplayTitle;
+        state.IsBackpackInventory = surface.SlotProvider == null;
         state.RefreshAction = () => ApplyStandaloneBackpackSurface(surface);
         state.IsOpen = true;
         CaptureStandaloneRecentBaseline(state, backpackSlots);
@@ -960,7 +965,8 @@ public static class StorageMenuPatch
             : backpackSlots.Count, 1, StandaloneBackpackSlotsPerPage);
         var gridSize = ConfigureStandaloneBackpackGrid(surface, gridSlotCount);
         UpdateStandaloneBackpackPresentationAnchor(surface, state);
-        EnsureStandaloneBackpackVisuals(surface, state, backpackSlots.Count, displaySlots.Count, totalPages);
+        EnsureStandaloneBackpackVisuals(surface, state, backpackSlots.Count, CountUsedStandaloneSlots(backpackSlots),
+            displaySlots.Count, totalPages);
         var revealPageWipe = BeginStandalonePageWipe(surface, state);
 
         // First remove every previous layout child, then populate the compact projection in a
@@ -1267,7 +1273,7 @@ public static class StorageMenuPatch
     }
 
     private static void EnsureStandaloneBackpackVisuals(StandaloneBackpackSurface surface,
-        StandaloneBackpackState state, int slotCount, int filteredSlotCount, int totalPages)
+        StandaloneBackpackState state, int slotCount, int usedSlotCount, int filteredSlotCount, int totalPages)
     {
         if (surface?.SlotContainer == null || state == null)
             return;
@@ -1376,7 +1382,7 @@ public static class StorageMenuPatch
             var filterActive = HasStandaloneFilters(state);
             var filterSummary = filterActive ? $" • {filteredSlotCount} MATCHES" : string.Empty;
             state.VisualMetaLabel.text =
-                $"{slotCount} SLOTS{filterSummary}  •  PAGE {state.CurrentPage + 1}/{Mathf.Max(1, totalPages)}";
+                $"{usedSlotCount}/{slotCount} USED{filterSummary}  •  PAGE {state.CurrentPage + 1}/{Mathf.Max(1, totalPages)}";
         }
     }
 
@@ -1767,12 +1773,54 @@ public static class StorageMenuPatch
         if (header == null || state == null || state.TypeFilterButton != null)
             return;
 
-        state.TypeFilterButton = CreateStandaloneHeaderButton(header, "TypeFilter", 0f, 0.25f, out state.TypeFilterLabel);
-        state.QualityFilterButton = CreateStandaloneHeaderButton(header, "QualityFilter", 0.25f, 0.5f,
+        state.TypeFilterButton = CreateStandaloneHeaderButton(header, "TypeFilter", 0f, 0.2f, out state.TypeFilterLabel);
+        state.QualityFilterButton = CreateStandaloneHeaderButton(header, "QualityFilter", 0.2f, 0.4f,
             out state.QualityFilterLabel);
-        state.SortDirectionButton = CreateStandaloneHeaderButton(header, "SortDirection", 0.5f, 0.75f,
+        state.SortDirectionButton = CreateStandaloneHeaderButton(header, "SortDirection", 0.4f, 0.6f,
             out state.SortDirectionLabel);
-        state.ClearFiltersButton = CreateStandaloneHeaderButton(header, "Clear", 0.75f, 1f, out state.ClearFiltersLabel);
+        state.OrganizeButton = CreateStandaloneHeaderButton(header, "Organize", 0.6f, 0.8f, out state.OrganizeLabel);
+        state.ClearFiltersButton = CreateStandaloneHeaderButton(header, "Clear", 0.8f, 1f, out state.ClearFiltersLabel);
+    }
+
+    /// <summary>
+    /// Keeps the header rail responsive when the shared browser is projecting an alternate
+    /// inventory. Only the PackRat backpack can be physically reorganized, so the vehicle view
+    /// uses four equal controls while the backpack gets a fifth Organize control.
+    /// </summary>
+    private static void ConfigureStandaloneHeaderControls(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        var showOrganize = state.IsBackpackInventory;
+        if (state.OrganizeButton != null)
+            state.OrganizeButton.gameObject.SetActive(showOrganize);
+
+        var buttonCount = showOrganize ? 5 : 4;
+        var nextIndex = 0;
+        SetStandaloneHeaderButtonBounds(state.TypeFilterButton, nextIndex++, buttonCount);
+        SetStandaloneHeaderButtonBounds(state.QualityFilterButton, nextIndex++, buttonCount);
+        SetStandaloneHeaderButtonBounds(state.SortDirectionButton, nextIndex++, buttonCount);
+        if (showOrganize)
+            SetStandaloneHeaderButtonBounds(state.OrganizeButton, nextIndex++, buttonCount);
+        SetStandaloneHeaderButtonBounds(state.ClearFiltersButton, nextIndex, buttonCount);
+    }
+
+    private static void SetStandaloneHeaderButtonBounds(Button button, int index, int buttonCount)
+    {
+        if (button == null || buttonCount <= 0)
+            return;
+
+        var rect = button.GetComponent<RectTransform>();
+        if (rect == null)
+            return;
+
+        var minX = index / (float)buttonCount;
+        var maxX = (index + 1) / (float)buttonCount;
+        rect.anchorMin = new Vector2(minX, 0f);
+        rect.anchorMax = new Vector2(maxX, 0f);
+        rect.offsetMin = new Vector2(StandaloneHeaderControlInset, 59f);
+        rect.offsetMax = new Vector2(-StandaloneHeaderControlInset, 80f);
     }
 
     private static Button CreateStandaloneHeaderButton(RectTransform parent, string name, float minX, float maxX, out Text label)
@@ -1975,6 +2023,8 @@ public static class StorageMenuPatch
             {
                 ShowStandaloneDropdown(state, StandaloneBackpackDropdown.SortDirection);
             };
+        if (state.OrganizeAction == null)
+            state.OrganizeAction = () => OrganizeStandaloneBackpack(state);
         if (state.ClearFiltersAction == null)
             state.ClearFiltersAction = () =>
             {
@@ -1994,6 +2044,7 @@ public static class StorageMenuPatch
         RebindHeaderButton(state.TypeFilterButton, state.TypeFilterAction);
         RebindHeaderButton(state.QualityFilterButton, state.QualityFilterAction);
         RebindHeaderButton(state.SortDirectionButton, state.SortDirectionAction);
+        RebindHeaderButton(state.OrganizeButton, state.OrganizeAction);
         RebindHeaderButton(state.ClearFiltersButton, state.ClearFiltersAction);
         UpdateStandaloneFilterLabels(state);
     }
@@ -2040,11 +2091,16 @@ public static class StorageMenuPatch
                 : "ORDER: DESC";
         if (state.ClearFiltersLabel != null)
             state.ClearFiltersLabel.text = "CLEAR";
+        if (state.OrganizeLabel != null)
+            state.OrganizeLabel.text = "ORGANIZE";
 
         if (state.TypeFilterButton != null)
             state.TypeFilterButton.interactable = typeOptions.Count > 0;
         if (state.QualityFilterButton != null)
             state.QualityFilterButton.interactable = qualityOptions.Count > 0;
+        if (state.OrganizeButton != null)
+            state.OrganizeButton.interactable = CanOrganizeStandaloneBackpack(state, backpackSlots);
+        ConfigureStandaloneHeaderControls(state);
         UpdateStandaloneSortTabs(state);
     }
 
@@ -2917,6 +2973,11 @@ public static class StorageMenuPatch
                 SnapStandaloneMotionState(state);
             PersistStandaloneSettings(state);
         });
+        AddStandaloneSettingsToggleRow(state, "PROTECT FAVORITES", config.ProtectFavoritesFromOrganization, value =>
+        {
+            config.ProtectFavoritesFromOrganization = value;
+            PersistStandaloneSettings(state);
+        });
     }
 
     private static void BuildStandaloneTierSettings(StandaloneBackpackState state)
@@ -3659,6 +3720,116 @@ public static class StorageMenuPatch
         ModLogger.Info($"[BackpackUI] Sort order changed: {GetSortDirectionLabel(previousSortDirection)} -> "
             + $"{GetSortDirectionLabel(sortDirection)}.");
         RefreshStandaloneFilterView(state);
+    }
+
+    /// <summary>
+    /// Commits the selected display ordering to the local backpack's backing slots. The browser's
+    /// normal sort remains a harmless projection; this action is the explicit opt-in that makes
+    /// the same order persist through saves and multiplayer snapshots.
+    /// </summary>
+    private static void OrganizeStandaloneBackpack(StandaloneBackpackState state)
+    {
+        var backpackSlots = GetStandaloneSourceSlots(state);
+        if (!CanOrganizeStandaloneBackpack(state, backpackSlots))
+            return;
+
+        try
+        {
+            var movableSlots = new List<ItemSlot>();
+            var protectedSlotCount = 0;
+            for (var i = 0; i < backpackSlots.Count; i++)
+            {
+                var slot = backpackSlots[i];
+                if (slot == null)
+                    continue;
+
+                if (ShouldKeepStandaloneSlotFixed(slot))
+                {
+                    protectedSlotCount++;
+                    continue;
+                }
+
+                movableSlots.Add(slot);
+            }
+
+            var orderedSourceSlots = movableSlots.Where(slot => slot.ItemInstance != null).ToList();
+            if (orderedSourceSlots.Count == 0)
+                return;
+
+            orderedSourceSlots.Sort((left, right) => CompareStandaloneBackpackSlots(left, right, state,
+                state.SortMode, state.SortDirection, backpackSlots));
+
+            var targetAssignments = new Dictionary<ItemSlot, ItemInstance>();
+            for (var i = 0; i < movableSlots.Count; i++)
+                targetAssignments[movableSlots[i]] = i < orderedSourceSlots.Count
+                    ? orderedSourceSlots[i].ItemInstance
+                    : null;
+
+            var changedSlots = new List<ItemSlot>();
+            foreach (var pair in targetAssignments)
+            {
+                if (!AreSameStandaloneItemInstance(pair.Key.ItemInstance, pair.Value))
+                    changedSlots.Add(pair.Key);
+            }
+
+            if (changedSlots.Count == 0)
+            {
+                ModLogger.Info($"[BackpackUI] Organize skipped: the backpack is already ordered by "
+                    + $"{GetSortModeLabel(state.SortMode)} ({GetSortDirectionLabel(state.SortDirection)}).");
+                return;
+            }
+
+            // Clear every changed destination before assigning an item to any of them. This avoids
+            // transient duplicate references when two occupied slots swap and keeps ItemSlot's
+            // own owner/network notifications in the normal game path.
+            for (var i = 0; i < changedSlots.Count; i++)
+            {
+                var slot = changedSlots[i];
+                if (slot.ItemInstance != null)
+                    slot.ClearStoredInstance();
+            }
+
+            for (var i = 0; i < changedSlots.Count; i++)
+            {
+                var slot = changedSlots[i];
+                var item = targetAssignments[slot];
+                if (item != null)
+                    slot.SetStoredItem(item);
+            }
+
+            state.CurrentPage = 0;
+            ModLogger.Info($"[BackpackUI] Organized {orderedSourceSlots.Count} backpack item stacks by "
+                + $"{GetSortModeLabel(state.SortMode)} ({GetSortDirectionLabel(state.SortDirection)}); "
+                + $"changedSlots={changedSlots.Count}, protectedSlots={protectedSlotCount}.");
+            RefreshStandaloneFilterView(state);
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("StorageMenuPatch.OrganizeStandaloneBackpack", ex);
+        }
+    }
+
+    private static bool CanOrganizeStandaloneBackpack(StandaloneBackpackState state, List<ItemSlot> backpackSlots)
+    {
+        return state != null && state.IsBackpackInventory && backpackSlots != null && backpackSlots.Count > 1 &&
+            state.SortMode != StandaloneBackpackSortMode.SlotOrder && state.SortMode != StandaloneBackpackSortMode.Recent;
+    }
+
+    private static bool ShouldKeepStandaloneSlotFixed(ItemSlot slot)
+    {
+        if (slot == null)
+            return true;
+
+        if (slot.IsLocked || slot.IsAddLocked || slot.IsRemovalLocked)
+            return true;
+
+        return Configuration.Instance.ProtectFavoritesFromOrganization &&
+            BackpackFavorites.IsFavorite(GetSlotDefinitionId(slot));
+    }
+
+    private static bool AreSameStandaloneItemInstance(ItemInstance left, ItemInstance right)
+    {
+        return ReferenceEquals(left, right) || (left != null && left.Equals(right));
     }
 
     private static void ConfigureStandaloneDropdownOption(StandaloneBackpackState state, int index,
@@ -5018,6 +5189,21 @@ public static class StorageMenuPatch
                 state.SortDirection, backpackSlots));
 
         return displaySlots;
+    }
+
+    private static int CountUsedStandaloneSlots(List<ItemSlot> slots)
+    {
+        if (slots == null)
+            return 0;
+
+        var usedSlotCount = 0;
+        for (var i = 0; i < slots.Count; i++)
+        {
+            if (slots[i]?.ItemInstance != null)
+                usedSlotCount++;
+        }
+
+        return usedSlotCount;
     }
 
     private static bool HasStandaloneFilters(StandaloneBackpackState state)
