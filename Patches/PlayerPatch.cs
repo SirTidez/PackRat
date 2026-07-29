@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using HarmonyLib;
 using PackRat.Extensions;
 using PackRat.Helpers;
@@ -64,29 +65,35 @@ public static class PlayerPatch
         var contents = new ItemSet(backpackStorage.ItemSlots).GetJSON();
 
         var tierIndex = -1;
+        var favoriteDefinitionIds = new List<string>();
         if (__instance.IsOwner && PlayerBackpack.Instance != null)
         {
             tierIndex = PlayerBackpack.Instance.EquippedTierIndex;
+            favoriteDefinitionIds = BackpackFavorites.GetSavedFavoriteIds();
         }
         else if (BackpackStateSyncManager.TryGetLatestSnapshotForPlayer(__instance, out var syncedData) && syncedData != null)
         {
             var syncedTierIndex = GetStoredTierIndex(syncedData);
             if (string.IsNullOrEmpty(syncedData.Contents) && syncedTierIndex < 0
-                && TryReadExistingData(__instance, parentFolderPath, out var existingContents, out var existingTierIndex))
+                && TryReadExistingData(__instance, parentFolderPath, out var existingContents, out var existingTierIndex,
+                    out var existingFavoriteDefinitionIds))
             {
                 contents = existingContents;
                 tierIndex = existingTierIndex;
+                favoriteDefinitionIds = existingFavoriteDefinitionIds;
             }
             else
             {
                 if (!string.IsNullOrEmpty(syncedData.Contents))
                     contents = syncedData.Contents;
                 tierIndex = syncedTierIndex;
+                favoriteDefinitionIds = syncedData.FavoriteDefinitionIds ?? new List<string>();
             }
         }
         else
         {
-            TryReadExistingData(__instance, parentFolderPath, out var existingContents, out tierIndex);
+            TryReadExistingData(__instance, parentFolderPath, out var existingContents, out tierIndex,
+                out favoriteDefinitionIds);
             if (!string.IsNullOrEmpty(existingContents))
                 contents = existingContents;
         }
@@ -95,7 +102,8 @@ public static class PlayerPatch
         {
             Contents = contents,
             EquippedTierIndex = tierIndex,
-            HighestPurchasedTierIndex = tierIndex
+            HighestPurchasedTierIndex = tierIndex,
+            FavoriteDefinitionIds = favoriteDefinitionIds
         };
         var json = JsonHelper.SerializeObject(data);
 
@@ -107,10 +115,12 @@ public static class PlayerPatch
 #endif
     }
 
-    private static bool TryReadExistingData(Player player, string parentFolderPath, out string contents, out int tierIndex)
+    private static bool TryReadExistingData(Player player, string parentFolderPath, out string contents, out int tierIndex,
+        out List<string> favoriteDefinitionIds)
     {
         contents = null;
         tierIndex = -1;
+        favoriteDefinitionIds = new List<string>();
         try
         {
             if (player == null || string.IsNullOrEmpty(parentFolderPath))
@@ -125,6 +135,7 @@ public static class PlayerPatch
             {
                 contents = data.Contents;
                 tierIndex = GetStoredTierIndex(data);
+                favoriteDefinitionIds = data.FavoriteDefinitionIds ?? new List<string>();
                 return true;
             }
         }
@@ -161,7 +172,10 @@ public static class PlayerPatch
             }
 
             if (__instance.IsOwner)
+            {
                 ApplyTierToLocalBackpack(__instance, tierIndex);
+                BackpackFavorites.SetFavorites(saveData?.FavoriteDefinitionIds);
+            }
 
             if (!ItemSet.TryDeserialize(contents, out var itemSet))
             {
@@ -211,11 +225,13 @@ public static class PlayerPatch
             var backpackStorage = __instance.GetBackpackStorage();
             var contents = backpackData;
             var tierIndex = -1;
+            List<string> favoriteDefinitionIds = null;
 
             if (hostSnapshot != null)
             {
                 contents = hostSnapshot.Contents ?? string.Empty;
                 tierIndex = GetStoredTierIndex(hostSnapshot);
+                favoriteDefinitionIds = hostSnapshot.FavoriteDefinitionIds;
                 ModLogger.Info("Loading backpack data from host snapshot request.");
             }
             else
@@ -225,10 +241,12 @@ public static class PlayerPatch
                 {
                     contents = saveData.Contents;
                     tierIndex = GetStoredTierIndex(saveData);
+                    favoriteDefinitionIds = saveData.FavoriteDefinitionIds;
                 }
             }
 
             ApplyTierToLocalBackpack(__instance, tierIndex);
+            BackpackFavorites.SetFavorites(favoriteDefinitionIds);
 
             if (!ItemSet.TryDeserialize(contents, out var itemSet))
             {

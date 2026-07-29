@@ -5,6 +5,7 @@ using PackRat.Config;
 using PackRat.Extensions;
 using PackRat.Helpers;
 using PackRat.Networking;
+using PackRat.Storage;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -51,7 +52,9 @@ public static class StorageMenuPatch
         Name,
         Quantity,
         Quality,
-        Type
+        Type,
+        Favorites,
+        Recent
     }
 
     private enum StandaloneBackpackSortDirection
@@ -65,7 +68,6 @@ public static class StorageMenuPatch
         None,
         Type,
         Quality,
-        Sort,
         SortDirection
     }
 
@@ -82,6 +84,24 @@ public static class StorageMenuPatch
         public Action SelectAction;
         public bool ShowQualityStar;
         public Color QualityStarColor;
+    }
+
+    private sealed class StandaloneBackpackFavoriteControl
+    {
+        public ItemSlotUI SlotUi;
+        public ItemSlot BoundSlot;
+        public Button Button;
+        public Image Background;
+        public Text Label;
+        public Action ToggleAction;
+    }
+
+    private sealed class StandaloneBackpackSortTab
+    {
+        public StandaloneBackpackSortMode SortMode;
+        public Button Button;
+        public Text Label;
+        public Action SelectAction;
     }
 
     private sealed class BackpackPanelState
@@ -109,6 +129,9 @@ public static class StorageMenuPatch
         public RectTransform PresentationRoot;
         public RectTransform VisualRoot;
         public RectTransform HeaderRoot;
+        public RectTransform SortTabsRoot;
+        public RectTransform SlotsPanelRoot;
+        public Image HeaderAccent;
         public RectTransform DropdownRoot;
         public RectTransform SettingsRoot;
         public RectTransform SettingsCard;
@@ -128,17 +151,14 @@ public static class StorageMenuPatch
         public Action<string> SearchAction;
         public Button TypeFilterButton;
         public Button QualityFilterButton;
-        public Button SortButton;
         public Button SortDirectionButton;
         public Button ClearFiltersButton;
         public Text TypeFilterLabel;
         public Text QualityFilterLabel;
-        public Text SortLabel;
         public Text SortDirectionLabel;
         public Text ClearFiltersLabel;
         public Action TypeFilterAction;
         public Action QualityFilterAction;
-        public Action SortAction;
         public Action SortDirectionAction;
         public Action ClearFiltersAction;
         public Button SettingsButton;
@@ -159,6 +179,12 @@ public static class StorageMenuPatch
         public readonly List<Image> DropdownOptionQualityStars = new List<Image>();
         public readonly List<Action> DropdownOptionActions = new List<Action>();
         public readonly List<StandaloneBackpackDropdownOption> DropdownOptions = new List<StandaloneBackpackDropdownOption>();
+        public readonly List<StandaloneBackpackSortTab> SortTabs = new List<StandaloneBackpackSortTab>();
+        public readonly List<StandaloneBackpackFavoriteControl> FavoriteSlotControls =
+            new List<StandaloneBackpackFavoriteControl>();
+        public readonly Dictionary<string, float> RecentItemTimestamps = new Dictionary<string, float>();
+        public readonly Dictionary<string, float> OpenItemQuantities = new Dictionary<string, float>();
+        public bool RecentBaselineCaptured;
         public Sprite QualityStarSprite;
         public CanvasGroup VisualCanvasGroup;
         public CanvasGroup SettingsRootCanvasGroup;
@@ -203,11 +229,11 @@ public static class StorageMenuPatch
     private const int SearchMetadataMinimumTermLength = 2;
     private const float StandaloneGridVerticalOffset = 118f;
     private const float StandaloneCardPadding = 14f;
-    private const float StandaloneHeaderHeight = 116f;
+    private const float StandaloneHeaderHeight = 138f;
     private const float StandaloneCloseGap = 24f;
     private const float StandaloneHeaderControlInset = 3f;
-    private const float StandaloneHeaderSearchBottom = 6f;
-    private const float StandaloneHeaderSearchTop = 32f;
+    private const float StandaloneHeaderSearchBottom = 30f;
+    private const float StandaloneHeaderSearchTop = 54f;
     private const float BackpackOpenDuration = 0.16f;
     private const float SettingsBlockerDuration = 0.12f;
     private const float SettingsCardDuration = 0.18f;
@@ -342,7 +368,10 @@ public static class StorageMenuPatch
     public static void CloseMenu(StorageMenu __instance)
     {
         if (IsStandaloneBackpackOpen(__instance))
+        {
+            RecordStandaloneRecentChanges(__instance);
             BackpackStateSyncManager.CompleteLocalBackpackEdit();
+        }
 
         HideBackpackSidePanel(__instance);
         HideStandaloneBackpackPaging(__instance);
@@ -441,6 +470,165 @@ public static class StorageMenuPatch
     }
 
     /// <summary>
+    /// Adds a small, PackRat-owned favorite toggle to a standalone backpack slot. It occupies
+    /// only the top-right corner, leaving the game's item drag/drop surface untouched.
+    /// </summary>
+    private static void ConfigureStandaloneFavoriteControl(StorageMenu menu, StandaloneBackpackState state,
+        ItemSlotUI slotUi, ItemSlot slot)
+    {
+        if (menu == null || state == null || slotUi == null)
+            return;
+
+        var definitionId = GetSlotDefinitionId(slot);
+        var control = GetStandaloneFavoriteControl(state, slotUi);
+        if (control == null)
+        {
+            control = CreateStandaloneFavoriteControl(menu, state, slotUi);
+            if (control == null)
+                return;
+        }
+
+        control.BoundSlot = slot;
+        control.Button.gameObject.SetActive(!string.IsNullOrWhiteSpace(definitionId));
+        if (string.IsNullOrWhiteSpace(definitionId))
+            return;
+
+        var favorited = BackpackFavorites.IsFavorite(definitionId);
+        // The Image remains the tiny button hit target, but must not introduce a square backing
+        // behind the star. The favorite state is communicated entirely by the star color/fill.
+        control.Background.color = Color.clear;
+        control.Label.color = favorited
+            ? new Color32(255, 201, 53, 255)
+            : new Color32(146, 168, 181, 230);
+        control.Label.text = favorited ? "★" : "☆";
+    }
+
+    private static StandaloneBackpackFavoriteControl GetStandaloneFavoriteControl(StandaloneBackpackState state,
+        ItemSlotUI slotUi)
+    {
+        for (var i = state.FavoriteSlotControls.Count - 1; i >= 0; i--)
+        {
+            var control = state.FavoriteSlotControls[i];
+            if (control == null || control.SlotUi == null || control.Button == null)
+            {
+                state.FavoriteSlotControls.RemoveAt(i);
+                continue;
+            }
+
+            if (control.SlotUi == slotUi)
+                return control;
+        }
+
+        return null;
+    }
+
+    private static StandaloneBackpackFavoriteControl CreateStandaloneFavoriteControl(StorageMenu menu,
+        StandaloneBackpackState state, ItemSlotUI slotUi)
+    {
+        var slotRect = Utils.GetComponentSafe<RectTransform>(slotUi.gameObject);
+        if (slotRect == null)
+            return null;
+
+        var favoriteGo = new GameObject("PackRat_FavoriteToggle");
+        var favoriteRect = favoriteGo.AddComponent<RectTransform>();
+        favoriteRect.SetParent(slotRect, worldPositionStays: false);
+        favoriteRect.anchorMin = new Vector2(1f, 1f);
+        favoriteRect.anchorMax = new Vector2(1f, 1f);
+        favoriteRect.pivot = new Vector2(1f, 1f);
+        favoriteRect.anchoredPosition = new Vector2(-3f, -3f);
+        favoriteRect.sizeDelta = new Vector2(17f, 17f);
+
+        var background = favoriteGo.AddComponent<Image>();
+        background.raycastTarget = true;
+        var button = favoriteGo.AddComponent<Button>();
+        button.targetGraphic = background;
+        var label = CreateSearchText(favoriteRect, "Star", new Color32(146, 168, 181, 230));
+        label.text = "☆";
+        label.fontSize = 13;
+        label.fontStyle = FontStyle.Bold;
+        label.alignment = TextAnchor.MiddleCenter;
+
+        var control = new StandaloneBackpackFavoriteControl
+        {
+            SlotUi = slotUi,
+            Button = button,
+            Background = background,
+            Label = label
+        };
+        control.ToggleAction = () =>
+        {
+            var definitionId = GetSlotDefinitionId(control.BoundSlot);
+            if (string.IsNullOrWhiteSpace(definitionId))
+                return;
+
+            var isFavorite = BackpackFavorites.Toggle(definitionId);
+            ModLogger.Info($"[BackpackUI] Favorite {(isFavorite ? "added" : "removed")}: {definitionId}.");
+            if (state.IsOpen)
+                ApplyStandaloneBackpackMenu(menu);
+        };
+        EventHelper.AddListener(control.ToggleAction, button.onClick);
+        state.FavoriteSlotControls.Add(control);
+        return control;
+    }
+
+    private static void CaptureStandaloneRecentBaseline(StandaloneBackpackState state, List<ItemSlot> backpackSlots)
+    {
+        if (state == null || state.RecentBaselineCaptured)
+            return;
+
+        state.OpenItemQuantities.Clear();
+        AddStandaloneItemQuantities(state.OpenItemQuantities, backpackSlots);
+        state.RecentBaselineCaptured = true;
+    }
+
+    private static void RecordStandaloneRecentChanges(StorageMenu menu)
+    {
+        if (menu == null || !StandaloneBackpackPanels.TryGetValue(menu.GetInstanceID(), out var state) ||
+            !state.RecentBaselineCaptured)
+            return;
+
+        UpdateStandaloneRecentChanges(state);
+        state.OpenItemQuantities.Clear();
+        state.RecentBaselineCaptured = false;
+    }
+
+    private static void UpdateStandaloneRecentChanges(StandaloneBackpackState state)
+    {
+        if (state == null || !state.RecentBaselineCaptured)
+            return;
+
+        var currentQuantities = new Dictionary<string, float>();
+        AddStandaloneItemQuantities(currentQuantities, GetBackpackSlots());
+        foreach (var pair in currentQuantities)
+        {
+            state.OpenItemQuantities.TryGetValue(pair.Key, out var openingQuantity);
+            if (!Mathf.Approximately(openingQuantity, pair.Value))
+                state.RecentItemTimestamps[pair.Key] = Time.unscaledTime;
+        }
+
+        state.OpenItemQuantities.Clear();
+        foreach (var pair in currentQuantities)
+            state.OpenItemQuantities[pair.Key] = pair.Value;
+    }
+
+    private static void AddStandaloneItemQuantities(Dictionary<string, float> quantities, List<ItemSlot> slots)
+    {
+        if (quantities == null || slots == null)
+            return;
+
+        for (var i = 0; i < slots.Count; i++)
+        {
+            var slot = slots[i];
+            var definitionId = GetSlotDefinitionId(slot);
+            if (string.IsNullOrWhiteSpace(definitionId))
+                continue;
+
+            quantities.TryGetValue(definitionId, out var quantity);
+            quantities[definitionId] = quantity + GetSlotQuantity(slot);
+        }
+    }
+
+    /// <summary>
     /// Keeps the standalone backpack menu at a fixed, readable grid size. Large bags are paged
     /// instead of increasing the grid row count, which previously pushed the close button and
     /// content beyond smaller or scaled displays.
@@ -456,6 +644,7 @@ public static class StorageMenuPatch
             return;
 
         state.IsOpen = true;
+        CaptureStandaloneRecentBaseline(state, backpackSlots);
         var displaySlots = GetDisplayBackpackSlots(backpackSlots, state);
         var totalPages = Mathf.Max(1, Mathf.CeilToInt(displaySlots.Count / (float)StandaloneBackpackSlotsPerPage));
         state.CurrentPage = Mathf.Clamp(state.CurrentPage, 0, totalPages - 1);
@@ -495,6 +684,7 @@ public static class StorageMenuPatch
             {
                 slotUi.AssignSlot(displaySlots[slotIndex]);
                 slotUi.gameObject.SetActive(true);
+                ConfigureStandaloneFavoriteControl(menu, state, slotUi, displaySlots[slotIndex]);
             }
         }
 
@@ -597,6 +787,7 @@ public static class StorageMenuPatch
             var accentImage = accentGo.AddComponent<Image>();
             accentImage.color = new Color32(76, 173, 229, 255);
             accentImage.raycastTarget = false;
+            state.HeaderAccent = accentImage;
 
             state.VisualTitleLabel = CreateBackpackVisualLabel(header, "Title", 18, FontStyle.Bold,
                 TextAnchor.MiddleLeft, new Color32(244, 247, 250, 255), new Vector2(12f, 12f), new Vector2(-12f, -10f));
@@ -634,6 +825,8 @@ public static class StorageMenuPatch
         }
 
         CreateStandaloneDropdown(state.HeaderRoot, state);
+        CreateStandaloneSortTabs(state.HeaderRoot, state, menu);
+        EnsureStandaloneSlotsPanel(menu.SlotContainer, state);
         CreateStandaloneSettingsButton(state.HeaderRoot, state, menu);
         EnsureStandaloneSettingsPanel(menu, state);
 
@@ -1037,12 +1230,12 @@ public static class StorageMenuPatch
         if (header == null || state == null || state.TypeFilterButton != null)
             return;
 
-        state.TypeFilterButton = CreateStandaloneHeaderButton(header, "TypeFilter", 0f, 0.2f, out state.TypeFilterLabel);
-        state.QualityFilterButton = CreateStandaloneHeaderButton(header, "QualityFilter", 0.2f, 0.4f, out state.QualityFilterLabel);
-        state.SortButton = CreateStandaloneHeaderButton(header, "Sort", 0.4f, 0.6f, out state.SortLabel);
-        state.SortDirectionButton = CreateStandaloneHeaderButton(header, "SortDirection", 0.6f, 0.8f,
+        state.TypeFilterButton = CreateStandaloneHeaderButton(header, "TypeFilter", 0f, 0.25f, out state.TypeFilterLabel);
+        state.QualityFilterButton = CreateStandaloneHeaderButton(header, "QualityFilter", 0.25f, 0.5f,
+            out state.QualityFilterLabel);
+        state.SortDirectionButton = CreateStandaloneHeaderButton(header, "SortDirection", 0.5f, 0.75f,
             out state.SortDirectionLabel);
-        state.ClearFiltersButton = CreateStandaloneHeaderButton(header, "Clear", 0.8f, 1f, out state.ClearFiltersLabel);
+        state.ClearFiltersButton = CreateStandaloneHeaderButton(header, "Clear", 0.75f, 1f, out state.ClearFiltersLabel);
     }
 
     private static Button CreateStandaloneHeaderButton(RectTransform parent, string name, float minX, float maxX, out Text label)
@@ -1053,8 +1246,8 @@ public static class StorageMenuPatch
         rect.anchorMin = new Vector2(minX, 0f);
         rect.anchorMax = new Vector2(maxX, 0f);
         rect.pivot = new Vector2(0.5f, 0f);
-        rect.offsetMin = new Vector2(StandaloneHeaderControlInset, 37f);
-        rect.offsetMax = new Vector2(-StandaloneHeaderControlInset, 58f);
+        rect.offsetMin = new Vector2(StandaloneHeaderControlInset, 59f);
+        rect.offsetMax = new Vector2(-StandaloneHeaderControlInset, 80f);
 
         var image = buttonGo.AddComponent<Image>();
         image.color = new Color32(18, 30, 40, 245);
@@ -1067,6 +1260,164 @@ public static class StorageMenuPatch
         label.fontStyle = FontStyle.Bold;
         label.alignment = TextAnchor.MiddleCenter;
         return button;
+    }
+
+    /// <summary>
+    /// Adds the available sort modes as direct desktop-style tabs. This replaces the old sort
+    /// dropdown so players can see the current ordering and switch in one click.
+    /// </summary>
+    private static void CreateStandaloneSortTabs(RectTransform header, StandaloneBackpackState state,
+        StorageMenu menu)
+    {
+        if (header == null || state == null)
+            return;
+
+        if (state.SortTabsRoot == null)
+        {
+            var rootGo = new GameObject("SortTabs");
+            var root = rootGo.AddComponent<RectTransform>();
+            root.SetParent(header, worldPositionStays: false);
+            root.anchorMin = new Vector2(0f, 0f);
+            root.anchorMax = new Vector2(1f, 0f);
+            root.pivot = new Vector2(0.5f, 0f);
+            // The tab faces stop at the accent's upper edge (three logical pixels above the
+            // header baseline). This makes the accent a single shared rule beneath the tabs,
+            // rather than a separately positioned screen-space element.
+            root.offsetMin = new Vector2(StandaloneHeaderControlInset, 3f);
+            root.offsetMax = new Vector2(-StandaloneHeaderControlInset, 27f);
+            state.SortTabsRoot = root;
+        }
+        else if (state.SortTabsRoot.parent != header)
+        {
+            state.SortTabsRoot.SetParent(header, worldPositionStays: false);
+        }
+
+        var layout = Utils.GetOrAddComponentSafe<HorizontalLayoutGroup>(state.SortTabsRoot.gameObject);
+        if (layout != null)
+        {
+            layout.padding = new RectOffset(0, 0, 0, 0);
+            layout.spacing = 4f;
+            layout.childAlignment = TextAnchor.LowerCenter;
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = true;
+            layout.childForceExpandHeight = true;
+        }
+
+        if (state.SortTabs.Count == 0)
+        {
+            AddStandaloneSortTab(state, menu, StandaloneBackpackSortMode.SlotOrder);
+            AddStandaloneSortTab(state, menu, StandaloneBackpackSortMode.Favorites);
+            AddStandaloneSortTab(state, menu, StandaloneBackpackSortMode.Name);
+            AddStandaloneSortTab(state, menu, StandaloneBackpackSortMode.Quantity);
+            AddStandaloneSortTab(state, menu, StandaloneBackpackSortMode.Quality);
+            AddStandaloneSortTab(state, menu, StandaloneBackpackSortMode.Type);
+            AddStandaloneSortTab(state, menu, StandaloneBackpackSortMode.Recent);
+        }
+
+        UpdateStandaloneSortTabs(state);
+        state.SortTabsRoot.SetAsLastSibling();
+    }
+
+    private static void AddStandaloneSortTab(StandaloneBackpackState state, StorageMenu menu,
+        StandaloneBackpackSortMode sortMode)
+    {
+        var tab = new StandaloneBackpackSortTab { SortMode = sortMode };
+        tab.Button = CreateStandaloneActionButton(state.SortTabsRoot, "Sort" + GetSortModeLabel(sortMode),
+            Vector2.zero, Vector2.zero, Vector2.zero, Vector2.zero, GetSortModeLabel(sortMode), 8, out tab.Label);
+        ApplyDesktopTabPresentation(tab.Button.targetGraphic as Image);
+        // Button's built-in ColorTint was restoring every tab to its original black image color
+        // after UpdateStandaloneSortTab applied the selected state. The tab strip owns its visual
+        // state directly, so leave click handling enabled but disable that competing tint.
+        tab.Button.transition = Selectable.Transition.None;
+        tab.Label.fontSize = 8;
+        tab.Label.fontStyle = FontStyle.Bold;
+        tab.Label.alignment = TextAnchor.MiddleCenter;
+        var layoutElement = tab.Button.gameObject.AddComponent<LayoutElement>();
+        layoutElement.minHeight = 24f;
+        layoutElement.preferredHeight = 24f;
+        layoutElement.flexibleWidth = 1f;
+        tab.SelectAction = () => SetStandaloneSortMode(menu, state, sortMode);
+        EventHelper.AddListener(tab.SelectAction, tab.Button.onClick);
+        state.SortTabs.Add(tab);
+    }
+
+    /// <summary>
+    /// Adds a dark surface behind the game-owned slots. The only active-color boundary is the
+    /// shared header accent, avoiding a competing outline around the grid.
+    /// </summary>
+    private static void EnsureStandaloneSlotsPanel(RectTransform slotContainer, StandaloneBackpackState state)
+    {
+        if (slotContainer == null || state == null)
+            return;
+
+        if (state.SlotsPanelRoot == null)
+        {
+            var rootGo = new GameObject("SlotsPanel");
+            var root = rootGo.AddComponent<RectTransform>();
+            root.SetParent(slotContainer, worldPositionStays: false);
+            root.anchorMin = Vector2.zero;
+            root.anchorMax = Vector2.one;
+            root.offsetMin = Vector2.zero;
+            root.offsetMax = Vector2.zero;
+            rootGo.AddComponent<LayoutElement>().ignoreLayout = true;
+            var panel = rootGo.AddComponent<Image>();
+            panel.color = new Color32(10, 24, 33, 248);
+            panel.raycastTarget = false;
+            ApplyRoundedButtonPresentation(panel);
+            state.SlotsPanelRoot = root;
+        }
+        else if (state.SlotsPanelRoot.parent != slotContainer)
+        {
+            state.SlotsPanelRoot.SetParent(slotContainer, worldPositionStays: false);
+        }
+
+        // VisualRoot remains the first child and owns the dark card surface. The panel is just
+        // above it but below the game's live ItemSlotUI instances.
+        state.SlotsPanelRoot.SetSiblingIndex(Mathf.Min(1, slotContainer.childCount - 1));
+    }
+
+    private static void UpdateStandaloneSortTabs(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        var selectedColor = new Color32(48, 128, 170, 255);
+        for (var i = 0; i < state.SortTabs.Count; i++)
+        {
+            var tab = state.SortTabs[i];
+            if (tab?.Button == null)
+                continue;
+
+            var selected = tab.SortMode == state.SortMode;
+            UpdateStandaloneSortTab(tab.Button, selected);
+            if (tab.Label != null)
+                tab.Label.color = selected ? Color.white : new Color32(190, 212, 225, 255);
+        }
+        if (state.HeaderAccent != null)
+            state.HeaderAccent.color = selectedColor;
+    }
+
+    private static void UpdateStandaloneSortTab(Button button, bool selected)
+    {
+        var selectedColor = new Color32(48, 128, 170, 255);
+        var selectedHoverColor = new Color32(64, 153, 196, 255);
+        var normalColor = new Color32(20, 35, 47, 255);
+        var normalHoverColor = new Color32(35, 65, 84, 255);
+        var colors = button.colors;
+        colors.normalColor = selected ? selectedColor : normalColor;
+        colors.highlightedColor = selected ? selectedHoverColor : normalHoverColor;
+        colors.pressedColor = selected ? new Color32(36, 103, 137, 255) : new Color32(16, 31, 42, 255);
+        colors.selectedColor = selectedColor;
+        colors.disabledColor = new Color32(58, 70, 78, 150);
+        colors.colorMultiplier = 1f;
+        button.colors = colors;
+
+        var image = button.targetGraphic as Image;
+        if (image != null)
+            image.color = selected ? selectedColor : normalColor;
+        // The HorizontalLayoutGroup owns visual order and position. Unlike the overlapping
+        // settings tabs, these tabs must keep their semantic left-to-right order when selected.
     }
 
     private static void BindStandaloneFilterControls(StandaloneBackpackState state, StorageMenu menu)
@@ -1083,11 +1434,6 @@ public static class StorageMenuPatch
             state.QualityFilterAction = () =>
             {
                 ShowStandaloneDropdown(menu, state, StandaloneBackpackDropdown.Quality);
-            };
-        if (state.SortAction == null)
-            state.SortAction = () =>
-            {
-                ShowStandaloneDropdown(menu, state, StandaloneBackpackDropdown.Sort);
             };
         if (state.SortDirectionAction == null)
             state.SortDirectionAction = () =>
@@ -1112,7 +1458,6 @@ public static class StorageMenuPatch
         // RemoveListener keeps this idempotent rather than stacking callbacks on each layout pass.
         RebindHeaderButton(state.TypeFilterButton, state.TypeFilterAction);
         RebindHeaderButton(state.QualityFilterButton, state.QualityFilterAction);
-        RebindHeaderButton(state.SortButton, state.SortAction);
         RebindHeaderButton(state.SortDirectionButton, state.SortDirectionAction);
         RebindHeaderButton(state.ClearFiltersButton, state.ClearFiltersAction);
         UpdateStandaloneFilterLabels(state);
@@ -1154,8 +1499,6 @@ public static class StorageMenuPatch
         if (state.QualityFilterLabel != null)
             state.QualityFilterLabel.text = qualityOptions.Count == 0 ? "QUALITY: --" :
                 (string.IsNullOrEmpty(state.QualityFilter) ? "QUALITY: ALL" : "QUALITY: " + state.QualityFilter.ToUpperInvariant());
-        if (state.SortLabel != null)
-            state.SortLabel.text = "SORT: " + GetSortModeLabel(state.SortMode);
         if (state.SortDirectionLabel != null)
             state.SortDirectionLabel.text = state.SortDirection == StandaloneBackpackSortDirection.Ascending
                 ? "ORDER: ASC"
@@ -1167,6 +1510,7 @@ public static class StorageMenuPatch
             state.TypeFilterButton.interactable = typeOptions.Count > 0;
         if (state.QualityFilterButton != null)
             state.QualityFilterButton.interactable = qualityOptions.Count > 0;
+        UpdateStandaloneSortTabs(state);
     }
 
     private static void CreateStandaloneSettingsButton(RectTransform header, StandaloneBackpackState state, StorageMenu menu)
@@ -2556,13 +2900,6 @@ public static class StorageMenuPatch
                 }
                 break;
             }
-            case StandaloneBackpackDropdown.Sort:
-                AddStandaloneDropdownOption(options, "SLOT ORDER", () => SetStandaloneSortMode(menu, state, StandaloneBackpackSortMode.SlotOrder));
-                AddStandaloneDropdownOption(options, "NAME", () => SetStandaloneSortMode(menu, state, StandaloneBackpackSortMode.Name));
-                AddStandaloneDropdownOption(options, "QUANTITY", () => SetStandaloneSortMode(menu, state, StandaloneBackpackSortMode.Quantity));
-                AddStandaloneDropdownOption(options, "QUALITY", () => SetStandaloneSortMode(menu, state, StandaloneBackpackSortMode.Quality));
-                AddStandaloneDropdownOption(options, "TYPE", () => SetStandaloneSortMode(menu, state, StandaloneBackpackSortMode.Type));
-                break;
             case StandaloneBackpackDropdown.SortDirection:
                 AddStandaloneDropdownOption(options, "ASCENDING", () => SetStandaloneSortDirection(menu, state,
                     StandaloneBackpackSortDirection.Ascending));
@@ -2720,10 +3057,6 @@ public static class StorageMenuPatch
             case StandaloneBackpackDropdown.Quality:
                 return optionIndex == 0 ? string.IsNullOrEmpty(state.QualityFilter) :
                     string.Equals(label, state.QualityFilter, StringComparison.OrdinalIgnoreCase);
-            case StandaloneBackpackDropdown.Sort:
-                return string.Equals(label, GetSortModeLabel(state.SortMode), StringComparison.OrdinalIgnoreCase)
-                    || (state.SortMode == StandaloneBackpackSortMode.SlotOrder && label == "SLOT ORDER")
-                    || (state.SortMode == StandaloneBackpackSortMode.Quantity && label == "QUANTITY");
             case StandaloneBackpackDropdown.SortDirection:
                 if (label == "ASCENDING")
                     return state.SortDirection == StandaloneBackpackSortDirection.Ascending;
@@ -2854,8 +3187,12 @@ public static class StorageMenuPatch
                 return "QUALITY";
             case StandaloneBackpackSortMode.Type:
                 return "TYPE";
+            case StandaloneBackpackSortMode.Favorites:
+                return "FAV";
+            case StandaloneBackpackSortMode.Recent:
+                return "RECENT";
             default:
-                return "SLOTS";
+                return "ALL";
         }
     }
 
@@ -3023,6 +3360,9 @@ public static class StorageMenuPatch
             state.QualityFilter = string.Empty;
             state.SortMode = StandaloneBackpackSortMode.SlotOrder;
             state.SortDirection = StandaloneBackpackSortDirection.Ascending;
+            state.RecentItemTimestamps.Clear();
+            state.OpenItemQuantities.Clear();
+            state.RecentBaselineCaptured = false;
             state.SettingsOpen = false;
             state.SettingsClosing = false;
             state.VisualPresented = false;
@@ -3710,12 +4050,21 @@ public static class StorageMenuPatch
             if (!string.IsNullOrWhiteSpace(state?.QualityFilter) &&
                 !string.Equals(GetSlotQuality(slot), state.QualityFilter, StringComparison.OrdinalIgnoreCase))
                 continue;
+            if (state?.SortMode == StandaloneBackpackSortMode.Favorites &&
+                !BackpackFavorites.IsFavorite(GetSlotDefinitionId(slot)))
+                continue;
+            // Recent is deliberately a history-backed view, not a fallback ordering. Until this
+            // backpack session observes a changed item, there is no truthful recent result to
+            // display, so leave the projection empty.
+            if (state?.SortMode == StandaloneBackpackSortMode.Recent &&
+                !HasStandaloneRecentHistory(state, slot))
+                continue;
 
             displaySlots.Add(slot);
         }
 
         if (state != null && state.SortMode != StandaloneBackpackSortMode.SlotOrder)
-            displaySlots.Sort((left, right) => CompareStandaloneBackpackSlots(left, right, state.SortMode,
+            displaySlots.Sort((left, right) => CompareStandaloneBackpackSlots(left, right, state, state.SortMode,
                 state.SortDirection, backpackSlots));
 
         return displaySlots;
@@ -3725,11 +4074,23 @@ public static class StorageMenuPatch
     {
         return state != null && (!string.IsNullOrWhiteSpace(state.SearchTerm)
             || !string.IsNullOrWhiteSpace(state.TypeFilter)
-            || !string.IsNullOrWhiteSpace(state.QualityFilter));
+            || !string.IsNullOrWhiteSpace(state.QualityFilter)
+            || state.SortMode == StandaloneBackpackSortMode.Favorites
+            || state.SortMode == StandaloneBackpackSortMode.Recent);
     }
 
-    private static int CompareStandaloneBackpackSlots(ItemSlot left, ItemSlot right, StandaloneBackpackSortMode sortMode,
-        StandaloneBackpackSortDirection sortDirection, List<ItemSlot> originalSlots)
+    private static bool HasStandaloneRecentHistory(StandaloneBackpackState state, ItemSlot slot)
+    {
+        if (state == null || state.RecentItemTimestamps.Count == 0)
+            return false;
+
+        var definitionId = GetSlotDefinitionId(slot);
+        return !string.IsNullOrWhiteSpace(definitionId) &&
+            state.RecentItemTimestamps.TryGetValue(definitionId, out var changedAt) && changedAt > 0f;
+    }
+
+    private static int CompareStandaloneBackpackSlots(ItemSlot left, ItemSlot right, StandaloneBackpackState state,
+        StandaloneBackpackSortMode sortMode, StandaloneBackpackSortDirection sortDirection, List<ItemSlot> originalSlots)
     {
         string leftValue;
         string rightValue;
@@ -3763,6 +4124,33 @@ public static class StorageMenuPatch
                 leftValue = GetSlotType(left);
                 rightValue = GetSlotType(right);
                 break;
+            case StandaloneBackpackSortMode.Favorites:
+                var leftFavorite = BackpackFavorites.IsFavorite(GetSlotDefinitionId(left));
+                var rightFavorite = BackpackFavorites.IsFavorite(GetSlotDefinitionId(right));
+                var favoriteComparison = rightFavorite.CompareTo(leftFavorite);
+                return favoriteComparison != 0
+                    ? favoriteComparison
+                    : originalSlots.IndexOf(left).CompareTo(originalSlots.IndexOf(right));
+            case StandaloneBackpackSortMode.Recent:
+                var leftRecentTime = 0f;
+                var rightRecentTime = 0f;
+                if (state != null)
+                {
+                    state.RecentItemTimestamps.TryGetValue(GetSlotDefinitionId(left), out leftRecentTime);
+                    state.RecentItemTimestamps.TryGetValue(GetSlotDefinitionId(right), out rightRecentTime);
+                }
+                if (leftRecentTime <= 0f || rightRecentTime <= 0f)
+                {
+                    if (!Mathf.Approximately(leftRecentTime, rightRecentTime))
+                        return leftRecentTime <= 0f ? 1 : -1;
+
+                    return originalSlots.IndexOf(left).CompareTo(originalSlots.IndexOf(right));
+                }
+
+                var recentComparison = leftRecentTime.CompareTo(rightRecentTime);
+                return recentComparison != 0
+                    ? ApplyStandaloneSortDirection(recentComparison, sortDirection)
+                    : originalSlots.IndexOf(left).CompareTo(originalSlots.IndexOf(right));
             default:
                 return originalSlots.IndexOf(left).CompareTo(originalSlots.IndexOf(right));
         }
@@ -3810,6 +4198,20 @@ public static class StorageMenuPatch
     private static string GetSlotName(ItemSlot slot)
     {
         return slot?.ItemInstance?.Definition?.Name ?? string.Empty;
+    }
+
+    private static string GetSlotDefinitionId(ItemSlot slot)
+    {
+        var definition = slot?.ItemInstance?.Definition;
+        var definitionId = definition?.ID;
+        if (!string.IsNullOrWhiteSpace(definitionId))
+            return definitionId;
+
+        // Some equippable definitions (including current firearm definitions) do not expose an
+        // ID through the item-instance wrapper. Their player-facing definition name is stable
+        // across saves and gives them the same definition-level favorite behavior as products.
+        var definitionName = definition?.Name;
+        return string.IsNullOrWhiteSpace(definitionName) ? string.Empty : "name:" + definitionName.Trim();
     }
 
     private static string GetSlotType(ItemSlot slot)
@@ -3910,6 +4312,7 @@ public static class StorageMenuPatch
                 return false;
 
             UpdateStandaloneSearchFocusState(state);
+            UpdateStandaloneRecentChanges(state);
             if (!state.SettingsOpen || !state.AwaitingToggleKey)
                 return false;
 

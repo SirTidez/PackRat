@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace PackRat.Storage;
 
 /// <summary>
@@ -17,4 +19,10 @@ public sealed class BackpackSaveData
     /// this value is treated as the equipped tier on load.
     /// </summary>
     public int HighestPurchasedTierIndex { get; set; } = -1;
+
+    /// <summary>
+    /// Definition IDs marked as favorites by this player. Missing data from older saves is
+    /// intentionally treated as an empty collection.
+    /// </summary>
+    public List<string> FavoriteDefinitionIds { get; set; } = new List<string>();
 }

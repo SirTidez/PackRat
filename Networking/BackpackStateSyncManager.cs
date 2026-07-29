@@ -430,7 +430,8 @@ public static class BackpackStateSyncManager
             {
                 Contents = contents,
                 EquippedTierIndex = tierIndex,
-                HighestPurchasedTierIndex = tierIndex
+                HighestPurchasedTierIndex = tierIndex,
+                FavoriteDefinitionIds = BackpackFavorites.GetSavedFavoriteIds()
             };
             return true;
         }
@@ -1025,6 +1026,7 @@ public static class BackpackStateSyncManager
             }
 
             itemSet.LoadTo(backpackStorage.ItemSlots);
+            BackpackFavorites.SetFavorites(snapshot.FavoriteDefinitionIds);
 
             DebugLog($"Backpack pull: applied snapshot from {source}.");
             return true;
@@ -1054,7 +1056,12 @@ public static class BackpackStateSyncManager
         if (snapshot == null)
             return string.Empty;
 
-        return $"{GetStoredTierIndex(snapshot)}|{snapshot.Contents ?? string.Empty}";
+        var favoriteFingerprint = snapshot.FavoriteDefinitionIds == null
+            ? string.Empty
+            : string.Join(",", snapshot.FavoriteDefinitionIds
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .OrderBy(id => id, StringComparer.OrdinalIgnoreCase));
+        return $"{GetStoredTierIndex(snapshot)}|{snapshot.Contents ?? string.Empty}|{favoriteFingerprint}";
     }
 
     private static string ResolveLivePlayerKey(string playerKey)
