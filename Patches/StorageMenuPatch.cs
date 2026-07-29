@@ -78,6 +78,13 @@ public static class StorageMenuPatch
         Layout
     }
 
+    private enum StandaloneBackpackLayoutView
+    {
+        Backpack,
+        Station,
+        Deal
+    }
+
     private sealed class StandaloneBackpackDropdownOption
     {
         public string Label;
@@ -171,6 +178,7 @@ public static class StorageMenuPatch
         public bool AwaitingToggleKey;
         public int SettingsTierIndex;
         public StandaloneBackpackSettingsPage SettingsPage;
+        public StandaloneBackpackLayoutView LayoutView;
         public bool SearchListenerBound;
         public bool SearchFocusPresented;
         public StandaloneBackpackDropdown ActiveDropdown;
@@ -196,6 +204,8 @@ public static class StorageMenuPatch
         public bool VisualPresented;
         public bool PresentationRootRestCaptured;
         public Vector2 PresentationRootRestPosition;
+        public bool PresentationRootRestScaleCaptured;
+        public Vector3 PresentationRootRestScale;
         public bool SettingsClosing;
         public bool SettingsCardRestCaptured;
         public Vector2 SettingsCardRestPosition;
@@ -227,13 +237,15 @@ public static class StorageMenuPatch
     private const int StandaloneBackpackSlotsPerPage = 20;
     private const int StandaloneBackpackGridRows = 4;
     private const int SearchMetadataMinimumTermLength = 2;
-    private const float StandaloneGridVerticalOffset = 118f;
     private const float StandaloneCardPadding = 14f;
     private const float StandaloneHeaderHeight = 138f;
     private const float StandaloneCloseGap = 24f;
     private const float StandaloneHeaderControlInset = 3f;
     private const float StandaloneHeaderSearchBottom = 30f;
     private const float StandaloneHeaderSearchTop = 54f;
+    private const float MinimumOverlayScale = 0.5f;
+    private const float MaximumOverlayScale = 1.5f;
+    private const float OverlayScaleStep = 0.05f;
     private const float BackpackOpenDuration = 0.16f;
     private const float SettingsBlockerDuration = 0.12f;
     private const float SettingsCardDuration = 0.18f;
@@ -654,6 +666,7 @@ public static class StorageMenuPatch
         // Keep its geometry fixed while a filter only changes the slots populated within it.
         var gridSlotCount = Mathf.Clamp(backpackSlots.Count, 1, StandaloneBackpackSlotsPerPage);
         var gridSize = ConfigureStandaloneBackpackGrid(menu, gridSlotCount);
+        UpdateStandaloneBackpackPresentationAnchor(menu, state);
         EnsureStandaloneBackpackVisuals(menu, state, backpackSlots.Count, displaySlots.Count, totalPages);
         var revealPageWipe = BeginStandalonePageWipe(menu, state);
 
@@ -695,9 +708,13 @@ public static class StorageMenuPatch
             RevealStandalonePageWipe(state);
 
         menu.Container.localPosition = Vector3.zero;
+        var backpackScale = GetStandaloneBackpackScale();
+        menu.CloseButtonContainer.localScale = Vector3.one * backpackScale;
         menu.CloseButtonContainer.anchoredPosition = new Vector2(
-            0f,
-            StandaloneGridVerticalOffset - (gridSize.y * 0.5f) - menu.CloseButtonContainer.sizeDelta.y - StandaloneCloseGap
+            menu.SlotContainer.anchoredPosition.x,
+            menu.SlotContainer.anchoredPosition.y - (gridSize.y * backpackScale * 0.5f) -
+            (menu.CloseButtonContainer.sizeDelta.y * backpackScale) -
+            StandaloneCloseGap
         );
         PositionStandalonePaging(menu, state);
         UpdateStandalonePager(state, totalPages);
@@ -709,8 +726,9 @@ public static class StorageMenuPatch
     }
 
     /// <summary>
-    /// Gives the hotkey-opened backpack a fixed four-row grid with a known center anchor.
-    /// The grid owns its cell geometry; the surrounding card is sized from these same bounds.
+    /// Gives the hotkey-opened backpack a fixed four-row grid. Its anchor is derived from the
+    /// surrounding card bounds, so the grid/header card is centered independently of the Done
+    /// button and pagination controls that remain elsewhere in the menu hierarchy.
     /// </summary>
     private static Vector2 ConfigureStandaloneBackpackGrid(StorageMenu menu, int visibleSlotCount)
     {
@@ -738,8 +756,60 @@ public static class StorageMenuPatch
         slotContainer.anchorMax = new Vector2(0.5f, 0.5f);
         slotContainer.pivot = new Vector2(0.5f, 0.5f);
         slotContainer.sizeDelta = gridSize;
-        slotContainer.anchoredPosition = new Vector2(0f, StandaloneGridVerticalOffset);
+        slotContainer.anchoredPosition = GetStandaloneBackpackCardAnchor();
+        slotContainer.localScale = Vector3.one * GetStandaloneBackpackScale();
         return gridSize;
+    }
+
+    /// <summary>
+    /// Returns the slot-grid anchor that centers the visual card, not the complete storage-menu
+    /// hierarchy. The card extends <see cref="StandaloneHeaderHeight"/> above the grid but uses
+    /// equal padding above and below it, so its center is exactly half the header height above the
+    /// grid center. Compensating for that geometry keeps the card centered at every grid size.
+    /// </summary>
+    private static Vector2 GetStandaloneBackpackCardAnchor()
+    {
+        var config = Configuration.Instance;
+        var scale = GetStandaloneBackpackScale();
+        return new Vector2(
+            config.BackpackOverlayOffsetX,
+            config.BackpackOverlayOffsetY - (StandaloneHeaderHeight * scale * 0.5f)
+        );
+    }
+
+    private static float GetStandaloneBackpackScale()
+    {
+        return Mathf.Clamp(Configuration.Instance.BackpackOverlayScale, MinimumOverlayScale, MaximumOverlayScale);
+    }
+
+    /// <summary>
+    /// Updates the presentation motion's resting position after a live layout adjustment. Without
+    /// this, disabling motion or an in-flight open tween could restore the previous anchor.
+    /// </summary>
+    private static void UpdateStandaloneBackpackPresentationAnchor(StorageMenu menu, StandaloneBackpackState state)
+    {
+        if (menu?.SlotContainer == null || state == null)
+            return;
+
+        var root = menu.SlotContainer;
+        var positionChanged = !state.PresentationRootRestCaptured ||
+            (state.PresentationRootRestPosition - root.anchoredPosition).sqrMagnitude > 0.01f;
+        var scaleChanged = !state.PresentationRootRestScaleCaptured ||
+            (state.PresentationRootRestScale - root.localScale).sqrMagnitude > 0.0001f;
+
+        state.PresentationRoot = root;
+        state.PresentationRootRestPosition = root.anchoredPosition;
+        state.PresentationRootRestCaptured = true;
+        state.PresentationRootRestScale = root.localScale;
+        state.PresentationRootRestScaleCaptured = true;
+
+        if ((!positionChanged && !scaleChanged) || !state.VisualPresented)
+            return;
+
+        ++state.BackpackOpenMotionGeneration;
+        if (state.VisualCanvasGroup != null)
+            state.VisualCanvasGroup.alpha = 1f;
+        root.localScale = state.PresentationRootRestScale;
     }
 
     private static void EnsureStandaloneBackpackVisuals(StorageMenu menu, StandaloneBackpackState state, int slotCount,
@@ -884,17 +954,20 @@ public static class StorageMenuPatch
 
         state.PresentationRootRestPosition = root.anchoredPosition;
         state.PresentationRootRestCaptured = true;
+        state.PresentationRootRestScale = root.localScale;
+        state.PresentationRootRestScaleCaptured = true;
         var restingPosition = state.PresentationRootRestPosition;
+        var restingScale = state.PresentationRootRestScale;
         state.VisualCanvasGroup.alpha = 0f;
-        root.localScale = Configuration.Instance.ReduceUiMotion ? Vector3.one : new Vector3(0.96f, 0.96f, 1f);
+        root.localScale = Configuration.Instance.ReduceUiMotion ? restingScale : GetStandaloneOpenMotionScale(restingScale);
         root.anchoredPosition = Configuration.Instance.ReduceUiMotion
             ? restingPosition
             : restingPosition + new Vector2(0f, -8f);
-        MelonCoroutines.Start(RunStandaloneBackpackOpenMotion(state, generation, restingPosition));
+        MelonCoroutines.Start(RunStandaloneBackpackOpenMotion(state, generation, restingPosition, restingScale));
     }
 
     private static IEnumerator RunStandaloneBackpackOpenMotion(StandaloneBackpackState state, int generation,
-        Vector2 restingPosition)
+        Vector2 restingPosition, Vector3 restingScale)
     {
         var elapsed = 0f;
         while (state != null && state.BackpackOpenMotionGeneration == generation && elapsed < BackpackOpenDuration)
@@ -906,7 +979,7 @@ public static class StorageMenuPatch
             var root = state.PresentationRoot ?? state.VisualRoot;
             if (root != null && !Configuration.Instance.ReduceUiMotion)
             {
-                root.localScale = Vector3.Lerp(new Vector3(0.96f, 0.96f, 1f), Vector3.one, t);
+                root.localScale = Vector3.Lerp(GetStandaloneOpenMotionScale(restingScale), restingScale, t);
                 root.anchoredPosition = Vector2.Lerp(restingPosition + new Vector2(0f, -8f), restingPosition, t);
             }
             yield return null;
@@ -924,9 +997,16 @@ public static class StorageMenuPatch
 
         if (state.VisualCanvasGroup != null)
             state.VisualCanvasGroup.alpha = 1f;
-        root.localScale = Vector3.one;
+        root.localScale = state.PresentationRootRestScaleCaptured
+            ? state.PresentationRootRestScale
+            : Vector3.one;
         if (state.PresentationRootRestCaptured)
             root.anchoredPosition = state.PresentationRootRestPosition;
+    }
+
+    private static Vector3 GetStandaloneOpenMotionScale(Vector3 restingScale)
+    {
+        return new Vector3(restingScale.x * 0.96f, restingScale.y * 0.96f, restingScale.z);
     }
 
     private static void PlayStandaloneSearchFocus(StandaloneBackpackState state, bool focused)
@@ -2437,71 +2517,152 @@ public static class StorageMenuPatch
 
     private static void BuildStandaloneLayoutSettings(StorageMenu menu, StandaloneBackpackState state)
     {
+        var view = state.LayoutView;
+        AddStandaloneSettingsRow(state, "LAYOUT VIEW", GetStandaloneLayoutViewLabel(view), "<", () =>
+        {
+            state.LayoutView = OffsetStandaloneLayoutView(state.LayoutView, -1);
+            RefreshStandaloneSettingsPane(menu, state);
+        }, ">", () =>
+        {
+            state.LayoutView = OffsetStandaloneLayoutView(state.LayoutView, 1);
+            RefreshStandaloneSettingsPane(menu, state);
+        });
+        AddStandaloneSettingsRow(state, "POSITION X", FormatStandaloneOffset(GetStandaloneLayoutOffsetX(view)), "-10", () =>
+        {
+            SetStandaloneLayoutOffsetX(view, GetStandaloneLayoutOffsetX(view) - 10f);
+            PersistStandaloneSettings(menu, state);
+        }, "+10", () =>
+        {
+            SetStandaloneLayoutOffsetX(view, GetStandaloneLayoutOffsetX(view) + 10f);
+            PersistStandaloneSettings(menu, state);
+        });
+        AddStandaloneSettingsRow(state, "POSITION Y", FormatStandaloneOffset(GetStandaloneLayoutOffsetY(view)), "-10", () =>
+        {
+            SetStandaloneLayoutOffsetY(view, GetStandaloneLayoutOffsetY(view) - 10f);
+            PersistStandaloneSettings(menu, state);
+        }, "+10", () =>
+        {
+            SetStandaloneLayoutOffsetY(view, GetStandaloneLayoutOffsetY(view) + 10f);
+            PersistStandaloneSettings(menu, state);
+        });
+        AddStandaloneSettingsRow(state, "UI SCALE", FormatStandaloneScale(GetStandaloneLayoutScale(view)), "-5%", () =>
+        {
+            SetStandaloneLayoutScale(view, GetStandaloneLayoutScale(view) - OverlayScaleStep);
+            PersistStandaloneSettings(menu, state);
+        }, "+5%", () =>
+        {
+            SetStandaloneLayoutScale(view, GetStandaloneLayoutScale(view) + OverlayScaleStep);
+            PersistStandaloneSettings(menu, state);
+        });
+        AddStandaloneSettingsRow(state, "RESET VIEW", string.Empty, "RESET", () =>
+        {
+            SetStandaloneLayoutOffsetX(view, 0f);
+            SetStandaloneLayoutOffsetY(view, 0f);
+            SetStandaloneLayoutScale(view, 1f);
+            PersistStandaloneSettings(menu, state);
+        });
+    }
+
+    private static StandaloneBackpackLayoutView OffsetStandaloneLayoutView(StandaloneBackpackLayoutView view, int offset)
+    {
+        const int count = 3;
+        var value = ((int)view + offset) % count;
+        return (StandaloneBackpackLayoutView)(value < 0 ? value + count : value);
+    }
+
+    private static string GetStandaloneLayoutViewLabel(StandaloneBackpackLayoutView view)
+    {
+        return view switch
+        {
+            StandaloneBackpackLayoutView.Station => "STATION",
+            StandaloneBackpackLayoutView.Deal => "DEAL",
+            _ => "BACKPACK"
+        };
+    }
+
+    private static float GetStandaloneLayoutOffsetX(StandaloneBackpackLayoutView view)
+    {
         var config = Configuration.Instance;
-        AddStandaloneSettingsRow(state, "STORAGE X", FormatStandaloneOffset(config.StorageOverlayOffsetX), "-10", () =>
+        return view switch
         {
-            config.StorageOverlayOffsetX -= 10f;
-            PersistStandaloneSettings(menu, state);
-        }, "+10", () =>
+            StandaloneBackpackLayoutView.Station => config.StationOverlayOffsetX,
+            StandaloneBackpackLayoutView.Deal => config.HandoverOverlayOffsetX,
+            _ => config.BackpackOverlayOffsetX
+        };
+    }
+
+    private static void SetStandaloneLayoutOffsetX(StandaloneBackpackLayoutView view, float value)
+    {
+        var config = Configuration.Instance;
+        switch (view)
         {
-            config.StorageOverlayOffsetX += 10f;
-            PersistStandaloneSettings(menu, state);
-        });
-        AddStandaloneSettingsRow(state, "STORAGE Y", FormatStandaloneOffset(config.StorageOverlayOffsetY), "-10", () =>
+            case StandaloneBackpackLayoutView.Station:
+                config.StationOverlayOffsetX = value;
+                break;
+            case StandaloneBackpackLayoutView.Deal:
+                config.HandoverOverlayOffsetX = value;
+                break;
+            default:
+                config.BackpackOverlayOffsetX = value;
+                break;
+        }
+    }
+
+    private static float GetStandaloneLayoutOffsetY(StandaloneBackpackLayoutView view)
+    {
+        var config = Configuration.Instance;
+        return view switch
         {
-            config.StorageOverlayOffsetY -= 10f;
-            PersistStandaloneSettings(menu, state);
-        }, "+10", () =>
+            StandaloneBackpackLayoutView.Station => config.StationOverlayOffsetY,
+            StandaloneBackpackLayoutView.Deal => config.HandoverOverlayOffsetY,
+            _ => config.BackpackOverlayOffsetY
+        };
+    }
+
+    private static void SetStandaloneLayoutOffsetY(StandaloneBackpackLayoutView view, float value)
+    {
+        var config = Configuration.Instance;
+        switch (view)
         {
-            config.StorageOverlayOffsetY += 10f;
-            PersistStandaloneSettings(menu, state);
-        });
-        AddStandaloneSettingsRow(state, "STATION X", FormatStandaloneOffset(config.StationOverlayOffsetX), "-10", () =>
+            case StandaloneBackpackLayoutView.Station:
+                config.StationOverlayOffsetY = value;
+                break;
+            case StandaloneBackpackLayoutView.Deal:
+                config.HandoverOverlayOffsetY = value;
+                break;
+            default:
+                config.BackpackOverlayOffsetY = value;
+                break;
+        }
+    }
+
+    private static float GetStandaloneLayoutScale(StandaloneBackpackLayoutView view)
+    {
+        var config = Configuration.Instance;
+        return view switch
         {
-            config.StationOverlayOffsetX -= 10f;
-            PersistStandaloneSettings(menu, state);
-        }, "+10", () =>
+            StandaloneBackpackLayoutView.Station => config.StationOverlayScale,
+            StandaloneBackpackLayoutView.Deal => config.HandoverOverlayScale,
+            _ => config.BackpackOverlayScale
+        };
+    }
+
+    private static void SetStandaloneLayoutScale(StandaloneBackpackLayoutView view, float value)
+    {
+        value = Mathf.Clamp(value, MinimumOverlayScale, MaximumOverlayScale);
+        var config = Configuration.Instance;
+        switch (view)
         {
-            config.StationOverlayOffsetX += 10f;
-            PersistStandaloneSettings(menu, state);
-        });
-        AddStandaloneSettingsRow(state, "STATION Y", FormatStandaloneOffset(config.StationOverlayOffsetY), "-10", () =>
-        {
-            config.StationOverlayOffsetY -= 10f;
-            PersistStandaloneSettings(menu, state);
-        }, "+10", () =>
-        {
-            config.StationOverlayOffsetY += 10f;
-            PersistStandaloneSettings(menu, state);
-        });
-        AddStandaloneSettingsRow(state, "DEAL X", FormatStandaloneOffset(config.HandoverOverlayOffsetX), "-10", () =>
-        {
-            config.HandoverOverlayOffsetX -= 10f;
-            PersistStandaloneSettings(menu, state);
-        }, "+10", () =>
-        {
-            config.HandoverOverlayOffsetX += 10f;
-            PersistStandaloneSettings(menu, state);
-        });
-        AddStandaloneSettingsRow(state, "DEAL Y", FormatStandaloneOffset(config.HandoverOverlayOffsetY), "-10", () =>
-        {
-            config.HandoverOverlayOffsetY -= 10f;
-            PersistStandaloneSettings(menu, state);
-        }, "+10", () =>
-        {
-            config.HandoverOverlayOffsetY += 10f;
-            PersistStandaloneSettings(menu, state);
-        });
-        AddStandaloneSettingsRow(state, "RESET LAYOUT", "", "RESET", () =>
-        {
-            config.StorageOverlayOffsetX = 0f;
-            config.StorageOverlayOffsetY = 0f;
-            config.StationOverlayOffsetX = 0f;
-            config.StationOverlayOffsetY = 0f;
-            config.HandoverOverlayOffsetX = 0f;
-            config.HandoverOverlayOffsetY = 0f;
-            PersistStandaloneSettings(menu, state);
-        });
+            case StandaloneBackpackLayoutView.Station:
+                config.StationOverlayScale = value;
+                break;
+            case StandaloneBackpackLayoutView.Deal:
+                config.HandoverOverlayScale = value;
+                break;
+            default:
+                config.BackpackOverlayScale = value;
+                break;
+        }
     }
 
     private static void AddStandaloneSettingsRow(StandaloneBackpackState state, string labelText, string valueText,
@@ -2772,6 +2933,11 @@ public static class StorageMenuPatch
         return value.ToString("+0;-0;0");
     }
 
+    private static string FormatStandaloneScale(float value)
+    {
+        return Mathf.RoundToInt(Mathf.Clamp(value, MinimumOverlayScale, MaximumOverlayScale) * 100f) + "%";
+    }
+
     private static void PersistStandaloneSettings(StorageMenu menu, StandaloneBackpackState state,
         bool applyCurrentTier = false, bool syncSessionSettings = false)
     {
@@ -2783,6 +2949,8 @@ public static class StorageMenuPatch
 
         ModLogger.Info("[BackpackUI] Settings saved to MelonPreferences.");
         RefreshStandaloneSettingsPane(menu, state);
+        StationBackpackPanelPatch.RefreshActiveLayouts();
+        HandoverScreenPatch.RefreshActiveLayouts();
         if (state?.IsOpen == true)
             ApplyStandaloneBackpackMenu(menu);
     }
@@ -3222,6 +3390,11 @@ public static class StorageMenuPatch
         if (menu == null)
             return;
 
+        if (menu.SlotContainer != null)
+            menu.SlotContainer.localScale = Vector3.one;
+        if (menu.CloseButtonContainer != null)
+            menu.CloseButtonContainer.localScale = Vector3.one;
+
         if (menu.TitleLabel != null)
             menu.TitleLabel.gameObject.SetActive(true);
         if (menu.SubtitleLabel != null)
@@ -3240,6 +3413,8 @@ public static class StorageMenuPatch
                 state.SettingsRoot.gameObject.SetActive(false);
             if (state.VisualRoot != null)
                 state.VisualRoot.gameObject.SetActive(false);
+            if (state.PagingRoot != null)
+                state.PagingRoot.localScale = Vector3.one;
         }
     }
 
@@ -3312,7 +3487,9 @@ public static class StorageMenuPatch
         if (menu?.CloseButtonContainer == null || state?.PagingRoot == null)
             return;
 
-        state.PagingRoot.anchoredPosition = menu.CloseButtonContainer.anchoredPosition + new Vector2(0f, -32f);
+        var scale = GetStandaloneBackpackScale();
+        state.PagingRoot.localScale = Vector3.one * scale;
+        state.PagingRoot.anchoredPosition = menu.CloseButtonContainer.anchoredPosition + new Vector2(0f, -32f * scale);
         state.PagingRoot.gameObject.SetActive(true);
     }
 

@@ -97,6 +97,28 @@ public static class HandoverScreenPatch
     private static readonly Dictionary<int, PanelState> States = new Dictionary<int, PanelState>();
     private const int HeaderReapplyFrameCount = 3;
 
+    /// <summary>
+    /// Reapplies the handover backpack layout after a live preference change.
+    /// </summary>
+    public static void RefreshActiveLayouts()
+    {
+        try
+        {
+            foreach (var state in States.Values)
+            {
+                if (state?.BackpackContainer == null || !state.BackpackContainer.gameObject.activeSelf)
+                    continue;
+
+                ConfigureCompactBackpackLayout(FindOwningScreen(state), state);
+                UpdatePagingLayout(state);
+            }
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("HandoverScreenPatch.RefreshActiveLayouts", ex);
+        }
+    }
+
     [HarmonyPatch("Start")]
     [HarmonyPostfix]
     public static void Start(HandoverScreen __instance)
@@ -1068,9 +1090,10 @@ public static class HandoverScreenPatch
     private static void ConfigureCompactBackpackLayout(HandoverScreen screen, PanelState state)
     {
         var config = Configuration.Instance;
+        var overlayScale = Mathf.Clamp(config.HandoverOverlayScale, 0.5f, 1.5f);
         var contentPosition = new Vector2(
             config.HandoverOverlayOffsetX,
-            BackpackContentCenterY + config.HandoverOverlayOffsetY
+            BackpackContentCenterY * overlayScale + config.HandoverOverlayOffsetY
         );
 
         var screenRoot = screen?.Container?.transform as RectTransform;
@@ -1086,7 +1109,7 @@ public static class HandoverScreenPatch
             state.BackpackVisualRoot.anchorMax = new Vector2(0.5f, 0.5f);
             state.BackpackVisualRoot.pivot = new Vector2(0.5f, 0.5f);
             state.BackpackVisualRoot.anchoredPosition = contentPosition;
-            state.BackpackVisualRoot.localScale = Vector3.one;
+            state.BackpackVisualRoot.localScale = Vector3.one * overlayScale;
         }
 
         if (state?.BackpackSlotContainer != null)
@@ -1118,8 +1141,8 @@ public static class HandoverScreenPatch
         doneRect.anchorMin = new Vector2(0.5f, 0.5f);
         doneRect.anchorMax = new Vector2(0.5f, 0.5f);
         doneRect.pivot = new Vector2(0.5f, 0.5f);
-        doneRect.anchoredPosition = new Vector2(contentPosition.x, -120f + config.HandoverOverlayOffsetY);
-        doneRect.localScale = Vector3.one * BackpackGridScale;
+        doneRect.anchoredPosition = new Vector2(contentPosition.x, -120f * overlayScale + config.HandoverOverlayOffsetY);
+        doneRect.localScale = Vector3.one * BackpackGridScale * overlayScale;
     }
 
     private static void RestoreDoneButtonLayout(HandoverScreen screen, PanelState state)
@@ -1161,10 +1184,10 @@ public static class HandoverScreenPatch
         var config = Configuration.Instance;
         root.anchoredPosition = new Vector2(
             config.HandoverOverlayOffsetX,
-            BackpackContentCenterY + config.HandoverOverlayOffsetY
+            BackpackContentCenterY * Mathf.Clamp(config.HandoverOverlayScale, 0.5f, 1.5f) + config.HandoverOverlayOffsetY
         );
         root.sizeDelta = BackpackCardSize;
-        root.localScale = Vector3.one;
+        root.localScale = Vector3.one * Mathf.Clamp(config.HandoverOverlayScale, 0.5f, 1.5f);
         root.SetAsFirstSibling();
 
         var layout = root.GetComponent<LayoutElement>();

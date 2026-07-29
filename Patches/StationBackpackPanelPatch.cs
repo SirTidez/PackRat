@@ -36,6 +36,7 @@ public static class StationBackpackPanelPatch
 {
     private sealed class PanelState
     {
+        public RectTransform StationContainer;
         public RectTransform Root;
         public RectTransform SlotContainer;
         public GridLayoutGroup Grid;
@@ -169,6 +170,27 @@ public static class StationBackpackPanelPatch
         ActiveBackpackSlots.Clear();
     }
 
+    /// <summary>
+    /// Reapplies the station panel's position and scale after a live preference change.
+    /// </summary>
+    public static void RefreshActiveLayouts()
+    {
+        try
+        {
+            foreach (var panel in Panels.Values)
+            {
+                if (panel?.Root == null || panel.StationContainer == null || !panel.Root.gameObject.activeSelf)
+                    continue;
+
+                PositionPanel(panel.StationContainer, panel);
+            }
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("StationBackpackPanelPatch.RefreshActiveLayouts", ex);
+        }
+    }
+
     private static PanelState EnsurePanel(Component stationCanvas, RectTransform stationContainer, ItemSlotUI slotTemplate)
     {
         var id = stationCanvas.GetInstanceID();
@@ -177,12 +199,14 @@ public static class StationBackpackPanelPatch
             && existing.Root != null
             && existing.SlotUIs != null)
         {
+            existing.StationContainer = stationContainer;
             ConfigureRoot(stationContainer, existing.Root);
             EnsurePager(existing);
             return existing;
         }
 
         var panel = existing ?? new PanelState();
+        panel.StationContainer = stationContainer;
         var rootObject = new GameObject("PackRat_StationBackpackPanel");
         var root = rootObject.AddComponent<RectTransform>();
         ConfigureRoot(stationContainer, root);
@@ -241,8 +265,9 @@ public static class StationBackpackPanelPatch
 
         ConfigureRoot(stationContainer, panel.Root);
         var config = Configuration.Instance;
+        var scale = Mathf.Clamp(config.StationOverlayScale, 0.5f, 1.5f);
         var desired = new Vector2(
-            stationContainer.anchoredPosition.x - stationContainer.rect.width * 0.5f - panel.Root.rect.width * 0.5f - PanelMargin
+            stationContainer.anchoredPosition.x - stationContainer.rect.width * 0.5f - panel.Root.rect.width * scale * 0.5f - PanelMargin
                 + config.StationOverlayOffsetX,
             stationContainer.anchoredPosition.y + config.StationOverlayOffsetY
         );
@@ -263,7 +288,7 @@ public static class StationBackpackPanelPatch
         root.pivot = new Vector2(0.5f, 0.5f);
         root.sizeDelta = PanelSize;
         root.localRotation = Quaternion.identity;
-        root.localScale = Vector3.one;
+        root.localScale = Vector3.one * Mathf.Clamp(Configuration.Instance.StationOverlayScale, 0.5f, 1.5f);
         EnsureIgnoredByLayout(root);
         EnsureOverlaySorting(root, stationContainer);
     }
@@ -293,8 +318,8 @@ public static class StationBackpackPanelPatch
         if (rectTransform == null || parent == null)
             return desired;
 
-        var halfWidth = Mathf.Max(0f, parent.rect.width * 0.5f - rectTransform.rect.width * 0.5f - margin);
-        var halfHeight = Mathf.Max(0f, parent.rect.height * 0.5f - rectTransform.rect.height * 0.5f - margin);
+        var halfWidth = Mathf.Max(0f, parent.rect.width * 0.5f - rectTransform.rect.width * rectTransform.localScale.x * 0.5f - margin);
+        var halfHeight = Mathf.Max(0f, parent.rect.height * 0.5f - rectTransform.rect.height * rectTransform.localScale.y * 0.5f - margin);
         return new Vector2(
             Mathf.Clamp(desired.x, -halfWidth, halfWidth),
             Mathf.Clamp(desired.y, -halfHeight, halfHeight)
