@@ -1,0 +1,4 @@
+interface:
+  display_name: "PackRat Unity UI UX"
+  short_description: "Build stable Schedule I backpack UI"
+  default_prompt: "Build or repair PackRat Unity UI with stable layout, lifecycle, and runtime compatibility."

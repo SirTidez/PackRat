@@ -47,6 +47,61 @@ public static class ConfigSyncManager
         }
     }
 
+    /// <summary>
+    /// Returns whether the local player may change host-authoritative backpack settings. Offline
+    /// play is treated as local-hosted so the in-game settings panel remains usable.
+    /// </summary>
+    public static bool CanEditSessionSettings()
+    {
+        try
+        {
+            return Lobby.Instance == null || !Lobby.Instance.IsInLobby || Lobby.Instance.IsHost;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Gets the local player's current session role for the in-game settings UI. A player outside
+    /// a multiplayer lobby is reported as local, while lobby members are distinguished as host or
+    /// client without relying on runtime-specific FishNet objects.
+    /// </summary>
+    public static string GetSessionStatusLabel()
+    {
+        try
+        {
+            if (Lobby.Instance == null || !Lobby.Instance.IsInLobby)
+                return "LOCAL";
+
+            return Lobby.Instance.IsHost ? "HOST" : "CLIENT";
+        }
+        catch
+        {
+            return "LOCAL";
+        }
+    }
+
+    /// <summary>
+    /// Pushes the current host settings after an in-game configuration change. Clients remain
+    /// read-only for these session settings and keep the host-provided values.
+    /// </summary>
+    public static void SyncCurrentConfigToClients()
+    {
+        try
+        {
+            if (Lobby.Instance == null || !Lobby.Instance.IsInLobby || !Lobby.Instance.IsHost)
+                return;
+
+            SyncToClients();
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("ConfigSyncManager.SyncCurrentConfigToClients", ex);
+        }
+    }
+
     private static void SyncToClients()
     {
         var payload = new StringBuilder();

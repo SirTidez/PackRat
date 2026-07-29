@@ -1,0 +1,4 @@
+interface:
+  display_name: "PackRat UI Design Review"
+  short_description: "Review player-facing backpack UI"
+  default_prompt: "Review PackRat UI changes for visual hierarchy, adaptive layout, interaction states, and transition clarity."

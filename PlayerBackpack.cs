@@ -187,6 +187,11 @@ public class PlayerBackpack : MonoBehaviour
 
     private void Update()
     {
+        // Capture a replacement hotkey from the backpack settings pane before this frame's
+        // normal toggle processing can close the menu with the old binding.
+        if (IsOpen && Patches.StorageMenuPatch.HandleStandaloneBackpackSettingsInput())
+            return;
+
         // Throttle tier check to every N frames to avoid per-frame config/array access (reduces hitches).
         var keyDown = Input.GetKeyDown(Configuration.Instance.ToggleKey);
         if (keyDown || (Time.frameCount % TierCheckIntervalFrames == 0))

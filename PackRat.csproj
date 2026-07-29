@@ -61,6 +61,7 @@
         <EmbeddedResource Include="assets\duffelbag.png"/>
         <EmbeddedResource Include="assets\tacticalpack.png"/>
         <EmbeddedResource Include="assets\hikingbackpack.png"/>
+        <EmbeddedResource Include="assets\settings-cog-ui.png"/>
     </ItemGroup>
 
     <!-- Events -->
