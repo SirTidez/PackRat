@@ -25,6 +25,8 @@ public class Configuration
     private readonly MelonPreferences_Entry<KeyCode> _toggleKeyEntry;
     private readonly MelonPreferences_Entry<bool> _enableSearchEntry;
     private readonly MelonPreferences_Entry<bool> _backpackSyncDebugLoggingEntry;
+    private readonly MelonPreferences_Entry<bool> _enableUiAnimationsEntry;
+    private readonly MelonPreferences_Entry<bool> _reduceUiMotionEntry;
     private readonly MelonPreferences_Entry<float> _storageOverlayOffsetXEntry;
     private readonly MelonPreferences_Entry<float> _storageOverlayOffsetYEntry;
     private readonly MelonPreferences_Entry<float> _stationOverlayOffsetXEntry;
@@ -66,6 +68,16 @@ public class Configuration
             "BackpackSyncDebugLogging",
             false,
             "Enable verbose backpack sync debug logging (host/client save sync diagnostics)"
+        );
+        _enableUiAnimationsEntry = _category.CreateEntry(
+            "EnableUiAnimations",
+            true,
+            "Enable PackRat backpack UI transitions"
+        );
+        _reduceUiMotionEntry = _category.CreateEntry(
+            "ReduceUiMotion",
+            false,
+            "Use fade-only PackRat backpack UI transitions"
         );
         _storageOverlayOffsetXEntry = _category.CreateEntry(
             "StorageOverlayOffsetX",
@@ -135,6 +147,8 @@ public class Configuration
     public KeyCode ToggleKey { get; set; }
     public bool EnableSearch { get; set; }
     public bool BackpackSyncDebugLogging { get; set; }
+    public bool EnableUiAnimations { get; set; }
+    public bool ReduceUiMotion { get; set; }
     public float StorageOverlayOffsetX { get; set; }
     public float StorageOverlayOffsetY { get; set; }
     public float StationOverlayOffsetX { get; set; }
@@ -172,6 +186,8 @@ public class Configuration
         ToggleKey = _toggleKeyEntry.Value;
         EnableSearch = _enableSearchEntry.Value;
         BackpackSyncDebugLogging = _backpackSyncDebugLoggingEntry.Value;
+        EnableUiAnimations = _enableUiAnimationsEntry.Value;
+        ReduceUiMotion = _reduceUiMotionEntry.Value;
         StorageOverlayOffsetX = _storageOverlayOffsetXEntry.Value;
         StorageOverlayOffsetY = _storageOverlayOffsetYEntry.Value;
         StationOverlayOffsetX = _stationOverlayOffsetXEntry.Value;
@@ -196,6 +212,8 @@ public class Configuration
         _toggleKeyEntry.Value = ToggleKey;
         _enableSearchEntry.Value = EnableSearch;
         _backpackSyncDebugLoggingEntry.Value = BackpackSyncDebugLogging;
+        _enableUiAnimationsEntry.Value = EnableUiAnimations;
+        _reduceUiMotionEntry.Value = ReduceUiMotion;
         _storageOverlayOffsetXEntry.Value = StorageOverlayOffsetX;
         _storageOverlayOffsetYEntry.Value = StorageOverlayOffsetY;
         _stationOverlayOffsetXEntry.Value = StationOverlayOffsetX;
@@ -258,6 +276,8 @@ public class Configuration
             sb.AppendLine($"Tier{i}_Price = {Math.Max(0f, TierPrices[i]).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
 
         sb.AppendLine($"BackpackSyncDebugLogging = {BackpackSyncDebugLogging.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"EnableUiAnimations = {EnableUiAnimations.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"ReduceUiMotion = {ReduceUiMotion.ToString().ToLowerInvariant()}");
         return sb.ToString();
     }
 }

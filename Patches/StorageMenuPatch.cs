@@ -1,4 +1,6 @@
+using System.Collections;
 using HarmonyLib;
+using MelonLoader;
 using PackRat.Config;
 using PackRat.Extensions;
 using PackRat.Helpers;
@@ -52,12 +54,19 @@ public static class StorageMenuPatch
         Type
     }
 
+    private enum StandaloneBackpackSortDirection
+    {
+        Ascending,
+        Descending
+    }
+
     private enum StandaloneBackpackDropdown
     {
         None,
         Type,
         Quality,
-        Sort
+        Sort,
+        SortDirection
     }
 
     private enum StandaloneBackpackSettingsPage
@@ -97,33 +106,40 @@ public static class StorageMenuPatch
 
     private sealed class StandaloneBackpackState
     {
+        public RectTransform PresentationRoot;
         public RectTransform VisualRoot;
         public RectTransform HeaderRoot;
         public RectTransform DropdownRoot;
         public RectTransform SettingsRoot;
         public RectTransform SettingsCard;
+        public RectTransform SettingsTabsRoot;
         public RectTransform SettingsContentRoot;
         public RectTransform SettingsGeneralPage;
         public RectTransform SettingsTiersPage;
         public RectTransform SettingsLayoutPage;
         public Text SettingsSessionStatusValue;
+        public Image SettingsTabIndicator;
         public Text VisualTitleLabel;
         public Text VisualMetaLabel;
         public InputField SearchInput;
+        public Image SearchBackground;
         public Text SearchText;
         public Text SearchPlaceholder;
         public Action<string> SearchAction;
         public Button TypeFilterButton;
         public Button QualityFilterButton;
         public Button SortButton;
+        public Button SortDirectionButton;
         public Button ClearFiltersButton;
         public Text TypeFilterLabel;
         public Text QualityFilterLabel;
         public Text SortLabel;
+        public Text SortDirectionLabel;
         public Text ClearFiltersLabel;
         public Action TypeFilterAction;
         public Action QualityFilterAction;
         public Action SortAction;
+        public Action SortDirectionAction;
         public Action ClearFiltersAction;
         public Button SettingsButton;
         public Text SettingsLabel;
@@ -136,6 +152,7 @@ public static class StorageMenuPatch
         public int SettingsTierIndex;
         public StandaloneBackpackSettingsPage SettingsPage;
         public bool SearchListenerBound;
+        public bool SearchFocusPresented;
         public StandaloneBackpackDropdown ActiveDropdown;
         public readonly List<Button> DropdownOptionButtons = new List<Button>();
         public readonly List<Text> DropdownOptionLabels = new List<Text>();
@@ -143,6 +160,28 @@ public static class StorageMenuPatch
         public readonly List<Action> DropdownOptionActions = new List<Action>();
         public readonly List<StandaloneBackpackDropdownOption> DropdownOptions = new List<StandaloneBackpackDropdownOption>();
         public Sprite QualityStarSprite;
+        public CanvasGroup VisualCanvasGroup;
+        public CanvasGroup SettingsRootCanvasGroup;
+        public CanvasGroup SettingsCardCanvasGroup;
+        public CanvasGroup DropdownCanvasGroup;
+        public RectTransform PageWipeRoot;
+        public RectTransform PageWipeBlock;
+        public Image PageWipeEdge;
+        public bool VisualPresented;
+        public bool PresentationRootRestCaptured;
+        public Vector2 PresentationRootRestPosition;
+        public bool SettingsClosing;
+        public bool SettingsCardRestCaptured;
+        public Vector2 SettingsCardRestPosition;
+        public Color SearchBackgroundBaseColor;
+        public int BackpackOpenMotionGeneration;
+        public int SettingsMotionGeneration;
+        public int DropdownMotionGeneration;
+        public int SearchFocusMotionGeneration;
+        public int TabMotionGeneration;
+        public int PageWipeMotionGeneration;
+        public int LastPresentedSettingsPage = -1;
+        public int PendingPageWipeDirection;
         public RectTransform PagingRoot;
         public Button PrevButton;
         public Button NextButton;
@@ -156,6 +195,7 @@ public static class StorageMenuPatch
         public string TypeFilter;
         public string QualityFilter;
         public StandaloneBackpackSortMode SortMode;
+        public StandaloneBackpackSortDirection SortDirection;
     }
 
     private const int StandaloneBackpackSlotsPerPage = 20;
@@ -168,6 +208,14 @@ public static class StorageMenuPatch
     private const float StandaloneHeaderControlInset = 3f;
     private const float StandaloneHeaderSearchBottom = 6f;
     private const float StandaloneHeaderSearchTop = 32f;
+    private const float BackpackOpenDuration = 0.16f;
+    private const float SettingsBlockerDuration = 0.12f;
+    private const float SettingsCardDuration = 0.18f;
+    private const float SettingsCloseDuration = 0.12f;
+    private const float DropdownOpenDuration = 0.12f;
+    private const float SearchFocusDuration = 0.10f;
+    private const float TabIndicatorDuration = 0.12f;
+    private const float PageWipeDuration = 0.14f;
     private const int PillSpriteSize = 32;
     private const int PillSpriteBorder = 8;
     private const float PillSpriteCornerRadius = 7f;
@@ -418,6 +466,7 @@ public static class StorageMenuPatch
         var gridSlotCount = Mathf.Clamp(backpackSlots.Count, 1, StandaloneBackpackSlotsPerPage);
         var gridSize = ConfigureStandaloneBackpackGrid(menu, gridSlotCount);
         EnsureStandaloneBackpackVisuals(menu, state, backpackSlots.Count, displaySlots.Count, totalPages);
+        var revealPageWipe = BeginStandalonePageWipe(menu, state);
 
         // First remove every previous layout child, then populate the compact projection in a
         // second pass. Updating active and inactive GridLayoutGroup children together leaves
@@ -452,6 +501,8 @@ public static class StorageMenuPatch
         CaptureStandaloneQualityStarSprite(menu, state);
         Canvas.ForceUpdateCanvases();
         LayoutRebuilder.ForceRebuildLayoutImmediate(menu.SlotContainer);
+        if (revealPageWipe)
+            RevealStandalonePageWipe(state);
 
         menu.Container.localPosition = Vector3.zero;
         menu.CloseButtonContainer.anchoredPosition = new Vector2(
@@ -506,6 +557,8 @@ public static class StorageMenuPatch
     {
         if (menu?.SlotContainer == null || state == null)
             return;
+
+        state.PresentationRoot = menu.SlotContainer;
 
         if (state.VisualRoot == null)
         {
@@ -594,6 +647,7 @@ public static class StorageMenuPatch
             menu.SubtitleLabel.gameObject.SetActive(false);
 
         state.VisualRoot.gameObject.SetActive(true);
+        PresentStandaloneBackpackVisual(state);
         var title = PlayerBackpack.Instance?.CurrentTier?.Name ?? PlayerBackpack.StorageName;
         if (state.VisualTitleLabel != null)
             state.VisualTitleLabel.text = title.ToUpperInvariant();
@@ -604,6 +658,260 @@ public static class StorageMenuPatch
             state.VisualMetaLabel.text =
                 $"{slotCount} SLOTS{filterSummary}  •  PAGE {state.CurrentPage + 1}/{Mathf.Max(1, totalPages)}";
         }
+    }
+
+    /// <summary>
+    /// Plays only presentation motion on PackRat-owned roots. The storage menu and its inventory
+    /// slots remain fully game-owned, so a close path never waits on this cosmetic transition.
+    /// </summary>
+    private static void PresentStandaloneBackpackVisual(StandaloneBackpackState state)
+    {
+        var root = state?.PresentationRoot ?? state?.VisualRoot;
+        if (root == null)
+            return;
+
+        state.VisualCanvasGroup ??= Utils.GetOrAddComponentSafe<CanvasGroup>(root.gameObject);
+        if (state.VisualCanvasGroup == null)
+            return;
+
+        if (state.VisualPresented)
+        {
+            if (!Configuration.Instance.EnableUiAnimations)
+                SnapStandaloneBackpackVisual(state);
+            return;
+        }
+
+        state.VisualPresented = true;
+        var generation = ++state.BackpackOpenMotionGeneration;
+        if (!Configuration.Instance.EnableUiAnimations)
+        {
+            SnapStandaloneBackpackVisual(state);
+            return;
+        }
+
+        state.PresentationRootRestPosition = root.anchoredPosition;
+        state.PresentationRootRestCaptured = true;
+        var restingPosition = state.PresentationRootRestPosition;
+        state.VisualCanvasGroup.alpha = 0f;
+        root.localScale = Configuration.Instance.ReduceUiMotion ? Vector3.one : new Vector3(0.96f, 0.96f, 1f);
+        root.anchoredPosition = Configuration.Instance.ReduceUiMotion
+            ? restingPosition
+            : restingPosition + new Vector2(0f, -8f);
+        MelonCoroutines.Start(RunStandaloneBackpackOpenMotion(state, generation, restingPosition));
+    }
+
+    private static IEnumerator RunStandaloneBackpackOpenMotion(StandaloneBackpackState state, int generation,
+        Vector2 restingPosition)
+    {
+        var elapsed = 0f;
+        while (state != null && state.BackpackOpenMotionGeneration == generation && elapsed < BackpackOpenDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            var t = EaseOutCubic(Mathf.Clamp01(elapsed / BackpackOpenDuration));
+            if (state.VisualCanvasGroup != null)
+                state.VisualCanvasGroup.alpha = t;
+            var root = state.PresentationRoot ?? state.VisualRoot;
+            if (root != null && !Configuration.Instance.ReduceUiMotion)
+            {
+                root.localScale = Vector3.Lerp(new Vector3(0.96f, 0.96f, 1f), Vector3.one, t);
+                root.anchoredPosition = Vector2.Lerp(restingPosition + new Vector2(0f, -8f), restingPosition, t);
+            }
+            yield return null;
+        }
+
+        if (state != null && state.BackpackOpenMotionGeneration == generation)
+            SnapStandaloneBackpackVisual(state);
+    }
+
+    private static void SnapStandaloneBackpackVisual(StandaloneBackpackState state)
+    {
+        var root = state?.PresentationRoot ?? state?.VisualRoot;
+        if (root == null)
+            return;
+
+        if (state.VisualCanvasGroup != null)
+            state.VisualCanvasGroup.alpha = 1f;
+        root.localScale = Vector3.one;
+        if (state.PresentationRootRestCaptured)
+            root.anchoredPosition = state.PresentationRootRestPosition;
+    }
+
+    private static void PlayStandaloneSearchFocus(StandaloneBackpackState state, bool focused)
+    {
+        if (state?.SearchBackground == null)
+            return;
+
+        var target = focused ? (Color)new Color32(24, 74, 102, 250) : state.SearchBackgroundBaseColor;
+        var generation = ++state.SearchFocusMotionGeneration;
+        if (!Configuration.Instance.EnableUiAnimations)
+        {
+            state.SearchBackground.color = target;
+            return;
+        }
+
+        MelonCoroutines.Start(RunSearchFocusMotion(state, generation, state.SearchBackground.color, target));
+    }
+
+    private static IEnumerator RunSearchFocusMotion(StandaloneBackpackState state, int generation, Color from, Color to)
+    {
+        var elapsed = 0f;
+        while (state != null && state.SearchFocusMotionGeneration == generation && elapsed < SearchFocusDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            if (state.SearchBackground != null)
+                state.SearchBackground.color = Color.Lerp(from, to, EaseOutCubic(Mathf.Clamp01(elapsed / SearchFocusDuration)));
+            yield return null;
+        }
+
+        if (state != null && state.SearchFocusMotionGeneration == generation && state.SearchBackground != null)
+            state.SearchBackground.color = to;
+    }
+
+    private static bool BeginStandalonePageWipe(StorageMenu menu, StandaloneBackpackState state)
+    {
+        if (state == null || state.PendingPageWipeDirection == 0)
+        {
+            HideStandalonePageWipe(state);
+            return false;
+        }
+
+        if (!Configuration.Instance.EnableUiAnimations || Configuration.Instance.ReduceUiMotion ||
+            menu?.SlotContainer == null)
+        {
+            state.PendingPageWipeDirection = 0;
+            HideStandalonePageWipe(state);
+            return false;
+        }
+
+        EnsureStandalonePageWipe(menu, state);
+        if (state.PageWipeRoot == null || state.PageWipeBlock == null)
+        {
+            state.PendingPageWipeDirection = 0;
+            return false;
+        }
+
+        Canvas.ForceUpdateCanvases();
+        var size = menu.SlotContainer.rect.size;
+        if (size.x <= 0f || size.y <= 0f)
+        {
+            state.PendingPageWipeDirection = 0;
+            return false;
+        }
+
+        state.PageWipeRoot.gameObject.SetActive(true);
+        state.PageWipeRoot.SetAsLastSibling();
+        state.PageWipeBlock.sizeDelta = size;
+        state.PageWipeBlock.anchoredPosition = Vector2.zero;
+        ConfigureStandalonePageWipeEdge(state, state.PendingPageWipeDirection);
+        ++state.PageWipeMotionGeneration;
+        return true;
+    }
+
+    private static void EnsureStandalonePageWipe(StorageMenu menu, StandaloneBackpackState state)
+    {
+        if (menu?.SlotContainer == null || state == null || state.PageWipeRoot != null)
+            return;
+
+        var rootGo = new GameObject("PackRat_BackpackPageWipe");
+        var root = rootGo.AddComponent<RectTransform>();
+        root.SetParent(menu.SlotContainer, worldPositionStays: false);
+        root.anchorMin = Vector2.zero;
+        root.anchorMax = Vector2.one;
+        root.offsetMin = Vector2.zero;
+        root.offsetMax = Vector2.zero;
+        rootGo.AddComponent<RectMask2D>();
+        var layoutElement = rootGo.AddComponent<LayoutElement>();
+        layoutElement.ignoreLayout = true;
+
+        var wipeGo = new GameObject("WipeBlock");
+        var wipe = wipeGo.AddComponent<RectTransform>();
+        wipe.SetParent(root, worldPositionStays: false);
+        wipe.anchorMin = new Vector2(0.5f, 0.5f);
+        wipe.anchorMax = new Vector2(0.5f, 0.5f);
+        wipe.pivot = new Vector2(0.5f, 0.5f);
+        var wipeImage = wipeGo.AddComponent<Image>();
+        wipeImage.color = new Color32(15, 21, 28, 252);
+        wipeImage.raycastTarget = false;
+
+        var edgeGo = new GameObject("LeadingEdge");
+        var edge = edgeGo.AddComponent<RectTransform>();
+        edge.SetParent(wipe, worldPositionStays: false);
+        var edgeImage = edgeGo.AddComponent<Image>();
+        edgeImage.color = new Color32(76, 173, 229, 245);
+        edgeImage.raycastTarget = false;
+
+        state.PageWipeRoot = root;
+        state.PageWipeBlock = wipe;
+        state.PageWipeEdge = edgeImage;
+        root.gameObject.SetActive(false);
+    }
+
+    private static void ConfigureStandalonePageWipeEdge(StandaloneBackpackState state, int direction)
+    {
+        if (state?.PageWipeEdge == null)
+            return;
+
+        var edge = state.PageWipeEdge.GetComponent<RectTransform>();
+        if (edge == null)
+            return;
+
+        var next = direction > 0;
+        edge.anchorMin = next ? new Vector2(1f, 0f) : Vector2.zero;
+        edge.anchorMax = next ? new Vector2(1f, 1f) : new Vector2(0f, 1f);
+        edge.pivot = next ? new Vector2(1f, 0.5f) : new Vector2(0f, 0.5f);
+        edge.anchoredPosition = Vector2.zero;
+        edge.sizeDelta = new Vector2(3f, 0f);
+    }
+
+    private static void RevealStandalonePageWipe(StandaloneBackpackState state)
+    {
+        if (state?.PageWipeRoot == null || state.PageWipeBlock == null)
+            return;
+
+        var direction = state.PendingPageWipeDirection;
+        state.PendingPageWipeDirection = 0;
+        if (direction == 0 || !Configuration.Instance.EnableUiAnimations || Configuration.Instance.ReduceUiMotion)
+        {
+            HideStandalonePageWipe(state);
+            return;
+        }
+
+        var width = Mathf.Max(1f, state.PageWipeRoot.rect.width);
+        var generation = state.PageWipeMotionGeneration;
+        MelonCoroutines.Start(RunStandalonePageWipe(state, generation, direction > 0 ? -width : width));
+    }
+
+    private static IEnumerator RunStandalonePageWipe(StandaloneBackpackState state, int generation, float targetX)
+    {
+        var elapsed = 0f;
+        while (state != null && state.PageWipeMotionGeneration == generation && elapsed < PageWipeDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            if (state.PageWipeBlock != null)
+                state.PageWipeBlock.anchoredPosition = new Vector2(
+                    Mathf.Lerp(0f, targetX, EaseOutCubic(Mathf.Clamp01(elapsed / PageWipeDuration))), 0f);
+            yield return null;
+        }
+
+        if (state != null && state.PageWipeMotionGeneration == generation)
+            HideStandalonePageWipe(state);
+    }
+
+    private static void HideStandalonePageWipe(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        ++state.PageWipeMotionGeneration;
+        state.PendingPageWipeDirection = 0;
+        if (state.PageWipeRoot != null)
+            state.PageWipeRoot.gameObject.SetActive(false);
+    }
+
+    private static float EaseOutCubic(float value)
+    {
+        var inverse = 1f - Mathf.Clamp01(value);
+        return 1f - inverse * inverse * inverse;
     }
 
     private static void ConfigureStandaloneHeaderLabels(StandaloneBackpackState state)
@@ -670,6 +978,8 @@ public static class StorageMenuPatch
         input.textComponent = text;
         input.placeholder = placeholder;
         state.SearchInput = input;
+        state.SearchBackground = background;
+        state.SearchBackgroundBaseColor = background.color;
         state.SearchText = text;
         state.SearchPlaceholder = placeholder;
         state.SearchTerm = string.Empty;
@@ -727,10 +1037,12 @@ public static class StorageMenuPatch
         if (header == null || state == null || state.TypeFilterButton != null)
             return;
 
-        state.TypeFilterButton = CreateStandaloneHeaderButton(header, "TypeFilter", 0f, 0.25f, out state.TypeFilterLabel);
-        state.QualityFilterButton = CreateStandaloneHeaderButton(header, "QualityFilter", 0.25f, 0.5f, out state.QualityFilterLabel);
-        state.SortButton = CreateStandaloneHeaderButton(header, "Sort", 0.5f, 0.75f, out state.SortLabel);
-        state.ClearFiltersButton = CreateStandaloneHeaderButton(header, "Clear", 0.75f, 1f, out state.ClearFiltersLabel);
+        state.TypeFilterButton = CreateStandaloneHeaderButton(header, "TypeFilter", 0f, 0.2f, out state.TypeFilterLabel);
+        state.QualityFilterButton = CreateStandaloneHeaderButton(header, "QualityFilter", 0.2f, 0.4f, out state.QualityFilterLabel);
+        state.SortButton = CreateStandaloneHeaderButton(header, "Sort", 0.4f, 0.6f, out state.SortLabel);
+        state.SortDirectionButton = CreateStandaloneHeaderButton(header, "SortDirection", 0.6f, 0.8f,
+            out state.SortDirectionLabel);
+        state.ClearFiltersButton = CreateStandaloneHeaderButton(header, "Clear", 0.8f, 1f, out state.ClearFiltersLabel);
     }
 
     private static Button CreateStandaloneHeaderButton(RectTransform parent, string name, float minX, float maxX, out Text label)
@@ -777,6 +1089,11 @@ public static class StorageMenuPatch
             {
                 ShowStandaloneDropdown(menu, state, StandaloneBackpackDropdown.Sort);
             };
+        if (state.SortDirectionAction == null)
+            state.SortDirectionAction = () =>
+            {
+                ShowStandaloneDropdown(menu, state, StandaloneBackpackDropdown.SortDirection);
+            };
         if (state.ClearFiltersAction == null)
             state.ClearFiltersAction = () =>
             {
@@ -784,6 +1101,7 @@ public static class StorageMenuPatch
                 state.TypeFilter = string.Empty;
                 state.QualityFilter = string.Empty;
                 state.SortMode = StandaloneBackpackSortMode.SlotOrder;
+                state.SortDirection = StandaloneBackpackSortDirection.Ascending;
                 state.SearchInput?.SetTextWithoutNotify(string.Empty);
                 HideStandaloneDropdown(state);
                 RefreshStandaloneFilterView(menu, state);
@@ -795,6 +1113,7 @@ public static class StorageMenuPatch
         RebindHeaderButton(state.TypeFilterButton, state.TypeFilterAction);
         RebindHeaderButton(state.QualityFilterButton, state.QualityFilterAction);
         RebindHeaderButton(state.SortButton, state.SortAction);
+        RebindHeaderButton(state.SortDirectionButton, state.SortDirectionAction);
         RebindHeaderButton(state.ClearFiltersButton, state.ClearFiltersAction);
         UpdateStandaloneFilterLabels(state);
     }
@@ -837,6 +1156,10 @@ public static class StorageMenuPatch
                 (string.IsNullOrEmpty(state.QualityFilter) ? "QUALITY: ALL" : "QUALITY: " + state.QualityFilter.ToUpperInvariant());
         if (state.SortLabel != null)
             state.SortLabel.text = "SORT: " + GetSortModeLabel(state.SortMode);
+        if (state.SortDirectionLabel != null)
+            state.SortDirectionLabel.text = state.SortDirection == StandaloneBackpackSortDirection.Ascending
+                ? "ORDER: ASC"
+                : "ORDER: DESC";
         if (state.ClearFiltersLabel != null)
             state.ClearFiltersLabel.text = "CLEAR";
 
@@ -1152,6 +1475,7 @@ public static class StorageMenuPatch
             }
             Utils.AddComponentSafe<GraphicRaycaster>(settingsGo);
             state.SettingsRoot = root;
+            state.SettingsRootCanvasGroup = Utils.GetOrAddComponentSafe<CanvasGroup>(settingsGo);
 
             var cardGo = new GameObject("SettingsCard");
             var card = cardGo.AddComponent<RectTransform>();
@@ -1164,6 +1488,9 @@ public static class StorageMenuPatch
             cardImage.color = new Color32(10, 23, 31, 252);
             ApplyRoundedButtonPresentation(cardImage);
             state.SettingsCard = card;
+            state.SettingsCardCanvasGroup = Utils.GetOrAddComponentSafe<CanvasGroup>(cardGo);
+            state.SettingsCardRestPosition = card.anchoredPosition;
+            state.SettingsCardRestCaptured = true;
 
             var header = CreateStandaloneSettingsRegion(card, "Header", new Vector2(0f, 1f), new Vector2(1f, 1f),
                 new Vector2(10f, -44f), new Vector2(-10f, -10f));
@@ -1216,6 +1543,7 @@ public static class StorageMenuPatch
 
             var tabs = CreateStandaloneSettingsRegion(card, "Tabs", new Vector2(0f, 1f), new Vector2(1f, 1f),
                 new Vector2(10f, -115f), new Vector2(-10f, -75f));
+            state.SettingsTabsRoot = tabs;
             // These three fixed settings pages use direct anchors instead of a layout group.
             // The game can rebuild uGUI layouts while the modal opens; direct geometry keeps the
             // overlapping desktop-tab baseline stable instead of allowing preferred heights to
@@ -1233,6 +1561,7 @@ public static class StorageMenuPatch
             ConfigureStandaloneDesktopTab(state.SettingsGeneralButton);
             ConfigureStandaloneDesktopTab(state.SettingsTiersButton);
             ConfigureStandaloneDesktopTab(state.SettingsLayoutButton);
+            state.SettingsTabIndicator = CreateStandaloneSettingsTabIndicator(tabs);
             EventHelper.AddListener(() => SetStandaloneSettingsPage(menu, state, StandaloneBackpackSettingsPage.General),
                 state.SettingsGeneralButton.onClick);
             EventHelper.AddListener(() => SetStandaloneSettingsPage(menu, state, StandaloneBackpackSettingsPage.Tiers),
@@ -1256,9 +1585,12 @@ public static class StorageMenuPatch
 
         if (state.SettingsOpen)
         {
+            var wasInactive = !state.SettingsRoot.gameObject.activeSelf || state.SettingsClosing;
             state.SettingsRoot.gameObject.SetActive(true);
             state.SettingsRoot.SetAsLastSibling();
             RefreshStandaloneSettingsPane(menu, state);
+            if (wasInactive)
+                PlayStandaloneSettingsOpen(state);
         }
     }
 
@@ -1267,17 +1599,204 @@ public static class StorageMenuPatch
         if (menu == null || state == null)
             return;
 
-        state.SettingsOpen = !state.SettingsOpen;
-        state.AwaitingToggleKey = false;
-        if (state.SettingsOpen)
+        if (state.SettingsOpen || state.SettingsClosing)
         {
-            HideStandaloneDropdown(state);
-            state.SearchInput?.DeactivateInputField();
+            state.SettingsOpen = false;
+            state.AwaitingToggleKey = false;
+            PlayStandaloneSettingsClose(state);
+            return;
         }
 
+        state.SettingsOpen = true;
+        state.AwaitingToggleKey = false;
+        HideStandaloneDropdown(state);
+        state.SearchInput?.DeactivateInputField();
+
         EnsureStandaloneSettingsPanel(menu, state);
-        if (!state.SettingsOpen && state.SettingsRoot != null)
+    }
+
+    private static Image CreateStandaloneSettingsTabIndicator(RectTransform tabs)
+    {
+        if (tabs == null)
+            return null;
+
+        var indicatorGo = new GameObject("ActiveTabIndicator");
+        var indicator = indicatorGo.AddComponent<RectTransform>();
+        indicator.SetParent(tabs, worldPositionStays: false);
+        indicator.anchorMin = Vector2.zero;
+        indicator.anchorMax = Vector2.zero;
+        indicator.pivot = new Vector2(0f, 0f);
+        indicator.sizeDelta = new Vector2(1f, 3f);
+        var image = indicatorGo.AddComponent<Image>();
+        image.color = new Color32(109, 205, 251, 255);
+        image.raycastTarget = false;
+        indicatorGo.SetActive(false);
+        return image;
+    }
+
+    private static void PlayStandaloneSettingsOpen(StandaloneBackpackState state)
+    {
+        if (state?.SettingsRoot == null || state.SettingsCard == null)
+            return;
+
+        state.SettingsRootCanvasGroup ??= Utils.GetOrAddComponentSafe<CanvasGroup>(state.SettingsRoot.gameObject);
+        state.SettingsCardCanvasGroup ??= Utils.GetOrAddComponentSafe<CanvasGroup>(state.SettingsCard.gameObject);
+        if (state.SettingsRootCanvasGroup == null || state.SettingsCardCanvasGroup == null)
+            return;
+
+        state.SettingsClosing = false;
+        if (!state.SettingsCardRestCaptured)
+        {
+            state.SettingsCardRestPosition = state.SettingsCard.anchoredPosition;
+            state.SettingsCardRestCaptured = true;
+        }
+
+        var generation = ++state.SettingsMotionGeneration;
+        state.SettingsRootCanvasGroup.blocksRaycasts = true;
+        state.SettingsRootCanvasGroup.interactable = true;
+        state.SettingsCardCanvasGroup.interactable = true;
+        if (!Configuration.Instance.EnableUiAnimations)
+        {
+            SnapStandaloneSettingsMotion(state);
+            return;
+        }
+
+        state.SettingsRootCanvasGroup.alpha = 0f;
+        state.SettingsCardCanvasGroup.alpha = 0f;
+        state.SettingsCard.localScale = Configuration.Instance.ReduceUiMotion ? Vector3.one : new Vector3(0.94f, 0.94f, 1f);
+        state.SettingsCard.anchoredPosition = Configuration.Instance.ReduceUiMotion
+            ? state.SettingsCardRestPosition
+            : state.SettingsCardRestPosition + new Vector2(0f, -10f);
+        MelonCoroutines.Start(RunStandaloneSettingsOpenMotion(state, generation));
+    }
+
+    private static IEnumerator RunStandaloneSettingsOpenMotion(StandaloneBackpackState state, int generation)
+    {
+        var elapsed = 0f;
+        var duration = Mathf.Max(SettingsBlockerDuration, SettingsCardDuration);
+        while (state != null && state.SettingsMotionGeneration == generation && elapsed < duration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            var blockerT = EaseOutCubic(Mathf.Clamp01(elapsed / SettingsBlockerDuration));
+            var cardT = EaseOutCubic(Mathf.Clamp01(elapsed / SettingsCardDuration));
+            if (state.SettingsRootCanvasGroup != null)
+                state.SettingsRootCanvasGroup.alpha = blockerT;
+            if (state.SettingsCardCanvasGroup != null)
+                state.SettingsCardCanvasGroup.alpha = cardT;
+            if (state.SettingsCard != null && !Configuration.Instance.ReduceUiMotion)
+            {
+                state.SettingsCard.localScale = Vector3.Lerp(new Vector3(0.94f, 0.94f, 1f), Vector3.one, cardT);
+                state.SettingsCard.anchoredPosition = Vector2.Lerp(
+                    state.SettingsCardRestPosition + new Vector2(0f, -10f), state.SettingsCardRestPosition, cardT);
+            }
+            yield return null;
+        }
+
+        if (state != null && state.SettingsMotionGeneration == generation && state.SettingsOpen)
+            SnapStandaloneSettingsMotion(state);
+    }
+
+    private static void PlayStandaloneSettingsClose(StandaloneBackpackState state)
+    {
+        if (state?.SettingsRoot == null || !state.SettingsRoot.gameObject.activeSelf)
+            return;
+
+        state.SettingsRootCanvasGroup ??= Utils.GetOrAddComponentSafe<CanvasGroup>(state.SettingsRoot.gameObject);
+        state.SettingsCardCanvasGroup ??= Utils.GetOrAddComponentSafe<CanvasGroup>(state.SettingsCard.gameObject);
+        if (state.SettingsRootCanvasGroup == null || state.SettingsCardCanvasGroup == null)
+        {
             state.SettingsRoot.gameObject.SetActive(false);
+            return;
+        }
+
+        state.SettingsClosing = true;
+        var generation = ++state.SettingsMotionGeneration;
+        state.SettingsRootCanvasGroup.blocksRaycasts = true;
+        state.SettingsRootCanvasGroup.interactable = false;
+        state.SettingsCardCanvasGroup.interactable = false;
+        if (!Configuration.Instance.EnableUiAnimations)
+        {
+            state.SettingsRoot.gameObject.SetActive(false);
+            state.SettingsClosing = false;
+            SnapStandaloneSettingsMotion(state);
+            return;
+        }
+
+        MelonCoroutines.Start(RunStandaloneSettingsCloseMotion(state, generation,
+            state.SettingsRootCanvasGroup.alpha, state.SettingsCardCanvasGroup.alpha,
+            state.SettingsCard.localScale, state.SettingsCard.anchoredPosition));
+    }
+
+    private static IEnumerator RunStandaloneSettingsCloseMotion(StandaloneBackpackState state, int generation,
+        float rootAlpha, float cardAlpha, Vector3 cardScale, Vector2 cardPosition)
+    {
+        var elapsed = 0f;
+        while (state != null && state.SettingsMotionGeneration == generation && elapsed < SettingsCloseDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            var t = EaseOutCubic(Mathf.Clamp01(elapsed / SettingsCloseDuration));
+            if (state.SettingsRootCanvasGroup != null)
+                state.SettingsRootCanvasGroup.alpha = Mathf.Lerp(rootAlpha, 0f, t);
+            if (state.SettingsCardCanvasGroup != null)
+                state.SettingsCardCanvasGroup.alpha = Mathf.Lerp(cardAlpha, 0f, t);
+            if (state.SettingsCard != null && !Configuration.Instance.ReduceUiMotion)
+            {
+                state.SettingsCard.localScale = Vector3.Lerp(cardScale, new Vector3(0.96f, 0.96f, 1f), t);
+                state.SettingsCard.anchoredPosition = Vector2.Lerp(cardPosition,
+                    state.SettingsCardRestPosition + new Vector2(0f, -6f), t);
+            }
+            yield return null;
+        }
+
+        if (state != null && state.SettingsMotionGeneration == generation && !state.SettingsOpen)
+        {
+            state.SettingsRoot.gameObject.SetActive(false);
+            state.SettingsClosing = false;
+            SnapStandaloneSettingsMotion(state);
+        }
+    }
+
+    private static void SnapStandaloneSettingsMotion(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        if (state.SettingsRootCanvasGroup != null)
+        {
+            state.SettingsRootCanvasGroup.alpha = 1f;
+            state.SettingsRootCanvasGroup.blocksRaycasts = true;
+            state.SettingsRootCanvasGroup.interactable = true;
+        }
+        if (state.SettingsCardCanvasGroup != null)
+        {
+            state.SettingsCardCanvasGroup.alpha = 1f;
+            state.SettingsCardCanvasGroup.interactable = true;
+        }
+        if (state.SettingsCard != null)
+        {
+            state.SettingsCard.localScale = Vector3.one;
+            if (state.SettingsCardRestCaptured)
+                state.SettingsCard.anchoredPosition = state.SettingsCardRestPosition;
+        }
+    }
+
+    private static void SnapStandaloneMotionState(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        ++state.BackpackOpenMotionGeneration;
+        ++state.SettingsMotionGeneration;
+        ++state.DropdownMotionGeneration;
+        ++state.SearchFocusMotionGeneration;
+        ++state.TabMotionGeneration;
+        SnapStandaloneBackpackVisual(state);
+        SnapStandaloneSettingsMotion(state);
+        HideStandalonePageWipe(state);
+        if (state.SearchBackground != null)
+            state.SearchBackground.color = state.SearchInput != null && state.SearchInput.isFocused
+                ? new Color32(24, 74, 102, 250)
+                : state.SearchBackgroundBaseColor;
     }
 
     private static void SetStandaloneSettingsPage(StorageMenu menu, StandaloneBackpackState state,
@@ -1338,6 +1857,61 @@ public static class StorageMenuPatch
         UpdateStandaloneSettingsTab(state.SettingsGeneralButton, state.SettingsPage == StandaloneBackpackSettingsPage.General);
         UpdateStandaloneSettingsTab(state.SettingsTiersButton, state.SettingsPage == StandaloneBackpackSettingsPage.Tiers);
         UpdateStandaloneSettingsTab(state.SettingsLayoutButton, state.SettingsPage == StandaloneBackpackSettingsPage.Layout);
+        UpdateStandaloneSettingsTabIndicator(state);
+    }
+
+    private static void UpdateStandaloneSettingsTabIndicator(StandaloneBackpackState state)
+    {
+        if (state?.SettingsTabIndicator == null || state.SettingsTabsRoot == null)
+            return;
+
+        Canvas.ForceUpdateCanvases();
+        var width = state.SettingsTabsRoot.rect.width;
+        if (width <= 0f)
+            return;
+
+        var indicator = state.SettingsTabIndicator.GetComponent<RectTransform>();
+        if (indicator == null)
+            return;
+
+        var page = (int)state.SettingsPage;
+        var target = new Vector2((width / 3f * page) + 4f, 0f);
+        indicator.sizeDelta = new Vector2((width / 3f) - 8f, 3f);
+        indicator.gameObject.SetActive(true);
+        indicator.SetAsLastSibling();
+
+        var firstPresentation = state.LastPresentedSettingsPage < 0;
+        state.LastPresentedSettingsPage = page;
+        var generation = ++state.TabMotionGeneration;
+        if (firstPresentation || !Configuration.Instance.EnableUiAnimations || Configuration.Instance.ReduceUiMotion)
+        {
+            indicator.anchoredPosition = target;
+            return;
+        }
+
+        var start = indicator.anchoredPosition;
+        MelonCoroutines.Start(RunStandaloneTabIndicatorMotion(state, generation, start, target));
+    }
+
+    private static IEnumerator RunStandaloneTabIndicatorMotion(StandaloneBackpackState state, int generation,
+        Vector2 start, Vector2 target)
+    {
+        var elapsed = 0f;
+        while (state != null && state.TabMotionGeneration == generation && elapsed < TabIndicatorDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            var indicator = state.SettingsTabIndicator?.GetComponent<RectTransform>();
+            if (indicator != null)
+                indicator.anchoredPosition = Vector2.Lerp(start, target, EaseOutCubic(Mathf.Clamp01(elapsed / TabIndicatorDuration)));
+            yield return null;
+        }
+
+        if (state != null && state.TabMotionGeneration == generation)
+        {
+            var indicator = state.SettingsTabIndicator?.GetComponent<RectTransform>();
+            if (indicator != null)
+                indicator.anchoredPosition = target;
+        }
     }
 
     private static void UpdateStandaloneSessionStatus(StandaloneBackpackState state)
@@ -1438,6 +2012,20 @@ public static class StorageMenuPatch
         AddStandaloneSettingsToggleRow(state, "SYNC DIAGNOSTICS", config.BackpackSyncDebugLogging, value =>
         {
             config.BackpackSyncDebugLogging = value;
+            PersistStandaloneSettings(menu, state);
+        });
+        AddStandaloneSettingsToggleRow(state, "UI ANIMATIONS", config.EnableUiAnimations, value =>
+        {
+            config.EnableUiAnimations = value;
+            if (!value)
+                SnapStandaloneMotionState(state);
+            PersistStandaloneSettings(menu, state);
+        });
+        AddStandaloneSettingsToggleRow(state, "REDUCED MOTION", config.ReduceUiMotion, value =>
+        {
+            config.ReduceUiMotion = value;
+            if (value)
+                SnapStandaloneMotionState(state);
             PersistStandaloneSettings(menu, state);
         });
     }
@@ -1868,6 +2456,7 @@ public static class StorageMenuPatch
         dropdownRoot.pivot = new Vector2(0.5f, 1f);
         var background = dropdownGo.AddComponent<Image>();
         background.color = new Color32(12, 21, 30, 252);
+        background.raycastTarget = false;
 
         var canvas = Utils.AddComponentSafe<Canvas>(dropdownGo);
         if (canvas != null)
@@ -1887,12 +2476,6 @@ public static class StorageMenuPatch
         if (menu == null || state?.DropdownRoot == null)
             return;
 
-        if (state.ActiveDropdown == dropdown && state.DropdownRoot.gameObject.activeSelf)
-        {
-            HideStandaloneDropdown(state);
-            return;
-        }
-
         var options = BuildStandaloneDropdownOptions(menu, state, dropdown);
         if (options.Count == 0)
         {
@@ -1909,11 +2492,15 @@ public static class StorageMenuPatch
         state.DropdownRoot.gameObject.SetActive(true);
         state.DropdownRoot.SetAsLastSibling();
 
+        ModLogger.Debug($"[BackpackUI] Dropdown opened: {dropdown}, options={options.Count}.");
+
         for (var i = 0; i < state.DropdownOptionButtons.Count; i++)
             state.DropdownOptionButtons[i].gameObject.SetActive(i < options.Count);
 
         for (var i = 0; i < options.Count; i++)
             ConfigureStandaloneDropdownOption(state, i, options[i], dropdown);
+
+        PlayStandaloneDropdownOpen(state);
     }
 
     private static List<StandaloneBackpackDropdownOption> BuildStandaloneDropdownOptions(StorageMenu menu,
@@ -1976,6 +2563,12 @@ public static class StorageMenuPatch
                 AddStandaloneDropdownOption(options, "QUALITY", () => SetStandaloneSortMode(menu, state, StandaloneBackpackSortMode.Quality));
                 AddStandaloneDropdownOption(options, "TYPE", () => SetStandaloneSortMode(menu, state, StandaloneBackpackSortMode.Type));
                 break;
+            case StandaloneBackpackDropdown.SortDirection:
+                AddStandaloneDropdownOption(options, "ASCENDING", () => SetStandaloneSortDirection(menu, state,
+                    StandaloneBackpackSortDirection.Ascending));
+                AddStandaloneDropdownOption(options, "DESCENDING", () => SetStandaloneSortDirection(menu, state,
+                    StandaloneBackpackSortDirection.Descending));
+                break;
         }
 
         return options;
@@ -2021,7 +2614,22 @@ public static class StorageMenuPatch
         var previousSortMode = state.SortMode;
         state.SortMode = sortMode;
         UpdateStandaloneFilterLabels(state);
-        ModLogger.Info($"[BackpackUI] Sort changed: {GetSortModeLabel(previousSortMode)} -> {GetSortModeLabel(sortMode)}.");
+        ModLogger.Info($"[BackpackUI] Sort changed: {GetSortModeLabel(previousSortMode)} -> {GetSortModeLabel(sortMode)} "
+            + $"({GetSortDirectionLabel(state.SortDirection)}).");
+        RefreshStandaloneFilterView(menu, state);
+    }
+
+    private static void SetStandaloneSortDirection(StorageMenu menu, StandaloneBackpackState state,
+        StandaloneBackpackSortDirection sortDirection)
+    {
+        if (state == null)
+            return;
+
+        var previousSortDirection = state.SortDirection;
+        state.SortDirection = sortDirection;
+        UpdateStandaloneFilterLabels(state);
+        ModLogger.Info($"[BackpackUI] Sort order changed: {GetSortDirectionLabel(previousSortDirection)} -> "
+            + $"{GetSortDirectionLabel(sortDirection)}.");
         RefreshStandaloneFilterView(menu, state);
     }
 
@@ -2116,6 +2724,12 @@ public static class StorageMenuPatch
                 return string.Equals(label, GetSortModeLabel(state.SortMode), StringComparison.OrdinalIgnoreCase)
                     || (state.SortMode == StandaloneBackpackSortMode.SlotOrder && label == "SLOT ORDER")
                     || (state.SortMode == StandaloneBackpackSortMode.Quantity && label == "QUANTITY");
+            case StandaloneBackpackDropdown.SortDirection:
+                if (label == "ASCENDING")
+                    return state.SortDirection == StandaloneBackpackSortDirection.Ascending;
+                if (label == "DESCENDING")
+                    return state.SortDirection == StandaloneBackpackSortDirection.Descending;
+                return false;
             default:
                 return false;
         }
@@ -2137,8 +2751,64 @@ public static class StorageMenuPatch
             return;
 
         state.ActiveDropdown = StandaloneBackpackDropdown.None;
+        ++state.DropdownMotionGeneration;
         if (state.DropdownRoot != null)
+        {
+            if (state.DropdownCanvasGroup != null)
+            {
+                state.DropdownCanvasGroup.alpha = 1f;
+                state.DropdownCanvasGroup.blocksRaycasts = false;
+                state.DropdownCanvasGroup.interactable = false;
+            }
+            state.DropdownRoot.localScale = Vector3.one;
             state.DropdownRoot.gameObject.SetActive(false);
+        }
+    }
+
+    private static void PlayStandaloneDropdownOpen(StandaloneBackpackState state)
+    {
+        if (state?.DropdownRoot == null)
+            return;
+
+        state.DropdownCanvasGroup ??= Utils.GetOrAddComponentSafe<CanvasGroup>(state.DropdownRoot.gameObject);
+        if (state.DropdownCanvasGroup == null)
+            return;
+
+        var generation = ++state.DropdownMotionGeneration;
+        state.DropdownCanvasGroup.blocksRaycasts = true;
+        state.DropdownCanvasGroup.interactable = true;
+        if (!Configuration.Instance.EnableUiAnimations)
+        {
+            state.DropdownCanvasGroup.alpha = 1f;
+            state.DropdownRoot.localScale = Vector3.one;
+            return;
+        }
+
+        state.DropdownCanvasGroup.alpha = 0f;
+        state.DropdownRoot.localScale = Configuration.Instance.ReduceUiMotion ? Vector3.one : new Vector3(0.98f, 0.98f, 1f);
+        MelonCoroutines.Start(RunStandaloneDropdownOpenMotion(state, generation));
+    }
+
+    private static IEnumerator RunStandaloneDropdownOpenMotion(StandaloneBackpackState state, int generation)
+    {
+        var elapsed = 0f;
+        while (state != null && state.DropdownMotionGeneration == generation && elapsed < DropdownOpenDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            var t = EaseOutCubic(Mathf.Clamp01(elapsed / DropdownOpenDuration));
+            if (state.DropdownCanvasGroup != null)
+                state.DropdownCanvasGroup.alpha = t;
+            if (state.DropdownRoot != null && !Configuration.Instance.ReduceUiMotion)
+                state.DropdownRoot.localScale = Vector3.Lerp(new Vector3(0.98f, 0.98f, 1f), Vector3.one, t);
+            yield return null;
+        }
+
+        if (state != null && state.DropdownMotionGeneration == generation && state.DropdownRoot != null)
+        {
+            if (state.DropdownCanvasGroup != null)
+                state.DropdownCanvasGroup.alpha = 1f;
+            state.DropdownRoot.localScale = Vector3.one;
+        }
     }
 
     private static List<string> GetAvailableStandaloneFilterOptions(List<ItemSlot> slots, StandaloneBackpackState state,
@@ -2222,8 +2892,11 @@ public static class StorageMenuPatch
 
         if (StandaloneBackpackPanels.TryGetValue(menu.GetInstanceID(), out var state))
         {
+            SnapStandaloneMotionState(state);
             state.IsOpen = false;
             state.SettingsOpen = false;
+            state.SettingsClosing = false;
+            state.VisualPresented = false;
             state.AwaitingToggleKey = false;
             HideStandaloneDropdown(state);
             if (state.SettingsRoot != null)
@@ -2272,6 +2945,7 @@ public static class StorageMenuPatch
 
                 state.LastPageInputFrame = Time.frameCount;
                 state.CurrentPage--;
+                state.PendingPageWipeDirection = -1;
                 ApplyStandaloneBackpackMenu(menu);
             };
 
@@ -2285,6 +2959,7 @@ public static class StorageMenuPatch
 
                 state.LastPageInputFrame = Time.frameCount;
                 state.CurrentPage++;
+                state.PendingPageWipeDirection = 1;
                 ApplyStandaloneBackpackMenu(menu);
             };
 
@@ -2347,8 +3022,12 @@ public static class StorageMenuPatch
             state.TypeFilter = string.Empty;
             state.QualityFilter = string.Empty;
             state.SortMode = StandaloneBackpackSortMode.SlotOrder;
+            state.SortDirection = StandaloneBackpackSortDirection.Ascending;
             state.SettingsOpen = false;
+            state.SettingsClosing = false;
+            state.VisualPresented = false;
             state.AwaitingToggleKey = false;
+            SnapStandaloneMotionState(state);
             HideStandaloneDropdown(state);
             if (state.SettingsRoot != null)
                 state.SettingsRoot.gameObject.SetActive(false);
@@ -2414,16 +3093,24 @@ public static class StorageMenuPatch
                 return true;
 
             var requestedPage = state.CurrentPage;
+            var pageDirection = 0;
             if (previousRequested)
+            {
                 requestedPage--;
+                pageDirection = -1;
+            }
             else if (nextRequested)
+            {
                 requestedPage++;
+                pageDirection = 1;
+            }
 
             state.LastPageInputFrame = Time.frameCount;
             state.CurrentPage = Mathf.Clamp(requestedPage, 0, totalPages - 1);
             if (state.CurrentPage != requestedPage)
                 return true;
 
+            state.PendingPageWipeDirection = pageDirection;
             ApplyStandaloneBackpackMenu(menu);
             return true;
         }
@@ -3028,7 +3715,8 @@ public static class StorageMenuPatch
         }
 
         if (state != null && state.SortMode != StandaloneBackpackSortMode.SlotOrder)
-            displaySlots.Sort((left, right) => CompareStandaloneBackpackSlots(left, right, state.SortMode, backpackSlots));
+            displaySlots.Sort((left, right) => CompareStandaloneBackpackSlots(left, right, state.SortMode,
+                state.SortDirection, backpackSlots));
 
         return displaySlots;
     }
@@ -3041,7 +3729,7 @@ public static class StorageMenuPatch
     }
 
     private static int CompareStandaloneBackpackSlots(ItemSlot left, ItemSlot right, StandaloneBackpackSortMode sortMode,
-        List<ItemSlot> originalSlots)
+        StandaloneBackpackSortDirection sortDirection, List<ItemSlot> originalSlots)
     {
         string leftValue;
         string rightValue;
@@ -3052,12 +3740,25 @@ public static class StorageMenuPatch
                 rightValue = GetSlotName(right);
                 break;
             case StandaloneBackpackSortMode.Quantity:
-                var quantityComparison = GetSlotQuantity(right).CompareTo(GetSlotQuantity(left));
-                return quantityComparison != 0 ? quantityComparison : originalSlots.IndexOf(left).CompareTo(originalSlots.IndexOf(right));
+                var quantityComparison = GetSlotQuantity(left).CompareTo(GetSlotQuantity(right));
+                return quantityComparison != 0
+                    ? ApplyStandaloneSortDirection(quantityComparison, sortDirection)
+                    : originalSlots.IndexOf(left).CompareTo(originalSlots.IndexOf(right));
             case StandaloneBackpackSortMode.Quality:
-                leftValue = GetSlotQuality(left);
-                rightValue = GetSlotQuality(right);
-                break;
+                var leftQualityRank = GetQualitySortRank(GetSlotQuality(left));
+                var rightQualityRank = GetQualitySortRank(GetSlotQuality(right));
+                if (leftQualityRank < 0 || rightQualityRank < 0)
+                {
+                    if (leftQualityRank != rightQualityRank)
+                        return leftQualityRank < 0 ? 1 : -1;
+
+                    return originalSlots.IndexOf(left).CompareTo(originalSlots.IndexOf(right));
+                }
+
+                var qualityComparison = leftQualityRank.CompareTo(rightQualityRank);
+                return qualityComparison != 0
+                    ? ApplyStandaloneSortDirection(qualityComparison, sortDirection)
+                    : originalSlots.IndexOf(left).CompareTo(originalSlots.IndexOf(right));
             case StandaloneBackpackSortMode.Type:
                 leftValue = GetSlotType(left);
                 rightValue = GetSlotType(right);
@@ -3067,7 +3768,43 @@ public static class StorageMenuPatch
         }
 
         var comparison = string.Compare(leftValue, rightValue, StringComparison.OrdinalIgnoreCase);
-        return comparison != 0 ? comparison : originalSlots.IndexOf(left).CompareTo(originalSlots.IndexOf(right));
+        return comparison != 0
+            ? ApplyStandaloneSortDirection(comparison, sortDirection)
+            : originalSlots.IndexOf(left).CompareTo(originalSlots.IndexOf(right));
+    }
+
+    private static int ApplyStandaloneSortDirection(int comparison, StandaloneBackpackSortDirection sortDirection)
+    {
+        return sortDirection == StandaloneBackpackSortDirection.Descending ? -comparison : comparison;
+    }
+
+    /// <summary>
+    /// Gives the game's quality progression an explicit order for the inventory projection.
+    /// Items that do not expose Quality are deliberately ranked below Trash rather than being
+    /// sorted as an empty string ahead of every quality-bearing item.
+    /// </summary>
+    private static int GetQualitySortRank(string qualityName)
+    {
+        switch (qualityName?.Trim().ToLowerInvariant())
+        {
+            case "heavenly":
+                return 5;
+            case "premium":
+                return 4;
+            case "standard":
+                return 3;
+            case "poor":
+                return 2;
+            case "trash":
+                return 1;
+            default:
+                return string.IsNullOrWhiteSpace(qualityName) ? -1 : 0;
+        }
+    }
+
+    private static string GetSortDirectionLabel(StandaloneBackpackSortDirection sortDirection)
+    {
+        return sortDirection == StandaloneBackpackSortDirection.Descending ? "descending" : "ascending";
     }
 
     private static string GetSlotName(ItemSlot slot)
@@ -3169,7 +3906,11 @@ public static class StorageMenuPatch
         {
             var menu = Singleton<StorageMenu>.Instance;
             if (menu == null || !StandaloneBackpackPanels.TryGetValue(menu.GetInstanceID(), out var state) ||
-                !state.IsOpen || !state.SettingsOpen || !state.AwaitingToggleKey)
+                !state.IsOpen)
+                return false;
+
+            UpdateStandaloneSearchFocusState(state);
+            if (!state.SettingsOpen || !state.AwaitingToggleKey)
                 return false;
 
             if (Input.GetKeyDown(KeyCode.Escape))
@@ -3200,6 +3941,19 @@ public static class StorageMenuPatch
             ModLogger.Error("StorageMenuPatch.HandleStandaloneBackpackSettingsInput", ex);
             return false;
         }
+    }
+
+    private static void UpdateStandaloneSearchFocusState(StandaloneBackpackState state)
+    {
+        if (state?.SearchInput == null || state.SearchBackground == null)
+            return;
+
+        var focused = state.SearchInput.isFocused;
+        if (focused == state.SearchFocusPresented)
+            return;
+
+        state.SearchFocusPresented = focused;
+        PlayStandaloneSearchFocus(state, focused);
     }
 
     /// <summary>
