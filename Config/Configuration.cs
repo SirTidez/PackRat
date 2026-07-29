@@ -90,7 +90,7 @@ public class Configuration
         _protectFavoritesFromOrganizationEntry = _category.CreateEntry(
             "ProtectFavoritesFromOrganization",
             true,
-            "Keep favorited backpack items fixed when using PackRat's organize action"
+            "Keep favorited backpack items unchanged by PackRat's organize and stack actions"
         );
         _backpackOverlayOffsetXEntry = _category.CreateEntry(
             "BackpackOverlayOffsetX",
