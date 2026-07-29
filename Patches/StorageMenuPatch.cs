@@ -2108,7 +2108,7 @@ public static class StorageMenuPatch
         if (state.OrganizeLabel != null)
             state.OrganizeLabel.text = "ORGANIZE";
         if (state.ConsolidateLabel != null)
-            state.ConsolidateLabel.text = "STACKS";
+            state.ConsolidateLabel.text = "STACK";
 
         if (state.TypeFilterButton != null)
             state.TypeFilterButton.interactable = typeOptions.Count > 0;
@@ -2119,7 +2119,7 @@ public static class StorageMenuPatch
         if (state.ConsolidateButton != null)
         {
             state.ConsolidateButton.gameObject.SetActive(state.IsHotkeyBackpack);
-            state.ConsolidateButton.interactable = CanConsolidateStandaloneBackpack(state, backpackSlots);
+            state.ConsolidateButton.interactable = CanStackStandaloneBackpack(state, backpackSlots);
         }
         ConfigureStandaloneHeaderControls(state);
         UpdateStandaloneSortTabs(state);
@@ -2149,7 +2149,7 @@ public static class StorageMenuPatch
 
         state.ConsolidateButton = CreateStandaloneActionButton(header, "Consolidate",
             new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-86f, -31f), new Vector2(-35f, -8f),
-            "STACKS", 8, out state.ConsolidateLabel);
+            "STACK", 8, out state.ConsolidateLabel);
     }
 
     private static Button CreateStandaloneActionButton(RectTransform parent, string name, Vector2 anchorMin,
@@ -3890,13 +3890,13 @@ public static class StorageMenuPatch
 
     /// <summary>
     /// Merges compatible partial stacks in the main backpack using Schedule I's own quick-move
-    /// transfer sequence. The operation intentionally avoids empty destinations: it reduces
-    /// stack fragmentation without changing the player's established item ordering.
+    /// transfer sequence, then packs the surviving stacks into the earliest available movable
+    /// slots. The action reduces fragmentation while keeping the current item order intact.
     /// </summary>
     private static void ConsolidateStandaloneBackpack(StandaloneBackpackState state)
     {
         var backpackSlots = GetStandaloneSourceSlots(state);
-        if (!CanConsolidateStandaloneBackpack(state, backpackSlots))
+        if (!CanStackStandaloneBackpack(state, backpackSlots))
             return;
 
         var movedQuantity = 0;
@@ -3979,14 +3979,15 @@ public static class StorageMenuPatch
                 }
             }
 
-            if (mergedStackCount == 0)
+            var compactedSlotCount = CompactStandaloneBackpackSlots(state, slotSnapshot);
+            if (mergedStackCount == 0 && compactedSlotCount == 0)
             {
-                ModLogger.Info("[BackpackUI] Consolidate skipped: no compatible partial stacks were found.");
+                ModLogger.Info("[BackpackUI] Stack skipped: the backpack is already consolidated and compact.");
                 return;
             }
 
-            ModLogger.Info($"[BackpackUI] Consolidated {mergedStackCount} compatible stack transfers " +
-                $"({movedQuantity} items moved) using the native inventory transfer path.");
+            ModLogger.Info($"[BackpackUI] Stacked {mergedStackCount} compatible transfers " +
+                $"({movedQuantity} items moved) and compacted {compactedSlotCount} slots.");
             RefreshStandaloneFilterView(state);
         }
         catch (Exception ex)
@@ -3996,7 +3997,7 @@ public static class StorageMenuPatch
         }
     }
 
-    private static bool CanConsolidateStandaloneBackpack(StandaloneBackpackState state, List<ItemSlot> backpackSlots)
+    private static bool CanStackStandaloneBackpack(StandaloneBackpackState state, List<ItemSlot> backpackSlots)
     {
         if (state == null || !state.IsHotkeyBackpack || backpackSlots == null || backpackSlots.Count < 2)
             return false;
@@ -4022,7 +4023,73 @@ public static class StorageMenuPatch
             }
         }
 
+        return CanCompactStandaloneBackpackSlots(backpackSlots);
+    }
+
+    /// <summary>
+    /// Reports whether empty movable slots exist before a surviving item. This is deliberately
+    /// based on backing-slot order, so a stack action draws items forward across page boundaries
+    /// without re-sorting the player's categories, names, or favorites.
+    /// </summary>
+    private static bool CanCompactStandaloneBackpackSlots(List<ItemSlot> backpackSlots)
+    {
+        if (backpackSlots == null || backpackSlots.Count < 2)
+            return false;
+
+        var movableSlots = backpackSlots.Where(slot => slot != null && !ShouldKeepStandaloneSlotFixed(slot)).ToList();
+        var sourceItems = movableSlots.Where(slot => slot.ItemInstance != null)
+            .Select(slot => slot.ItemInstance).ToList();
+        for (var i = 0; i < movableSlots.Count; i++)
+        {
+            var expectedItem = i < sourceItems.Count ? sourceItems[i] : null;
+            if (!AreSameStandaloneItemInstance(movableSlots[i].ItemInstance, expectedItem))
+                return true;
+        }
+
         return false;
+    }
+
+    /// <summary>
+    /// Packs existing stack instances into the first non-protected backing slots. Quantities are
+    /// never written here: all merging happened through native transfers before this reorder.
+    /// Clearing destinations before assigning their final game-owned instances avoids transient
+    /// duplicate references while items move between pages.
+    /// </summary>
+    private static int CompactStandaloneBackpackSlots(StandaloneBackpackState state, List<ItemSlot> backpackSlots)
+    {
+        if (!CanCompactStandaloneBackpackSlots(backpackSlots))
+            return 0;
+
+        var movableSlots = backpackSlots.Where(slot => slot != null && !ShouldKeepStandaloneSlotFixed(slot)).ToList();
+        var sourceItems = movableSlots.Where(slot => slot.ItemInstance != null)
+            .Select(slot => slot.ItemInstance).ToList();
+        var changedSlots = new List<ItemSlot>();
+        var assignments = new Dictionary<ItemSlot, ItemInstance>();
+        for (var i = 0; i < movableSlots.Count; i++)
+        {
+            var item = i < sourceItems.Count ? sourceItems[i] : null;
+            assignments[movableSlots[i]] = item;
+            if (!AreSameStandaloneItemInstance(movableSlots[i].ItemInstance, item))
+                changedSlots.Add(movableSlots[i]);
+        }
+
+        for (var i = 0; i < changedSlots.Count; i++)
+        {
+            if (changedSlots[i].ItemInstance != null)
+                changedSlots[i].ClearStoredInstance();
+        }
+
+        for (var i = 0; i < changedSlots.Count; i++)
+        {
+            var item = assignments[changedSlots[i]];
+            if (item == null)
+                continue;
+
+            changedSlots[i].SetStoredItem(item);
+            MarkStandaloneRecentChange(state, changedSlots[i]);
+        }
+
+        return changedSlots.Count;
     }
 
     private static int GetWholeStandaloneSlotQuantity(ItemSlot slot)
