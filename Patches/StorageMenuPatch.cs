@@ -86,6 +86,17 @@ public static class StorageMenuPatch
         Deal
     }
 
+    /// <summary>
+    /// PackRat's keyboard focus is deliberately independent from Unity's global selected object.
+    /// The game owns that selection for drag/drop, hotbar, and its other menus, while this small
+    /// state only presents a non-invasive focus accent over the shared backpack browser.
+    /// </summary>
+    private enum StandaloneBackpackKeyboardFocusKind
+    {
+        None,
+        Control
+    }
+
     private sealed class StandaloneBackpackDropdownOption
     {
         public string Label;
@@ -110,6 +121,13 @@ public static class StorageMenuPatch
         public Button Button;
         public Text Label;
         public Action SelectAction;
+    }
+
+    private sealed class StandaloneBackpackKeyboardControl
+    {
+        public Selectable Selectable;
+        public Action ActivateAction;
+        public bool IsSearchInput;
     }
 
     private sealed class BackpackPanelState
@@ -265,18 +283,22 @@ public static class StorageMenuPatch
         public Action ClearFiltersAction;
         public Button SettingsButton;
         public Text SettingsLabel;
+        public Button DoneButton;
+        public Button SettingsCloseButton;
         public Button SettingsGeneralButton;
         public Button SettingsTiersButton;
         public Button SettingsLayoutButton;
         public readonly List<GameObject> SettingsRows = new List<GameObject>();
         public bool SettingsOpen;
         public bool AwaitingToggleKey;
+        public int KeyboardSettingsControlIndex = -1;
         public int SettingsTierIndex;
         public StandaloneBackpackSettingsPage SettingsPage;
         public StandaloneBackpackLayoutView LayoutView;
         public bool SearchListenerBound;
         public bool SearchFocusPresented;
         public StandaloneBackpackDropdown ActiveDropdown;
+        public int KeyboardDropdownOptionIndex = -1;
         public readonly List<Button> DropdownOptionButtons = new List<Button>();
         public readonly List<Text> DropdownOptionLabels = new List<Text>();
         public readonly List<Image> DropdownOptionQualityStars = new List<Image>();
@@ -322,6 +344,8 @@ public static class StorageMenuPatch
         public int CurrentPage;
         public int LastPageInputFrame;
         public bool IsOpen;
+        public StandaloneBackpackKeyboardFocusKind KeyboardFocusKind;
+        public int KeyboardFocusControlIndex = -1;
         /// <summary>
         /// Supplies the inventory currently projected by this shared browser. It defaults to the
         /// backpack, but lets an embedded owner reuse the exact browser for game-owned storage.
@@ -1017,6 +1041,9 @@ public static class StorageMenuPatch
         // storage owner.
         state.IsHotkeyBackpack = state.IsBackpackInventory && surface.PositionCloseControl &&
             surface.LayoutView == StandaloneBackpackLayoutView.Backpack;
+        state.DoneButton = surface.PositionCloseControl && surface.CloseButtonContainer != null
+            ? surface.CloseButtonContainer.GetComponentInChildren<Button>(includeInactive: true)
+            : null;
         state.RefreshAction = () => ApplyStandaloneBackpackSurface(surface);
         state.IsOpen = true;
         CaptureStandaloneRecentBaseline(state, backpackSlots);
@@ -1108,6 +1135,7 @@ public static class StorageMenuPatch
         }
         PositionStandalonePaging(surface, state, gridSize);
         UpdateStandalonePager(state, totalPages);
+        RefreshStandaloneKeyboardFocusPresentation(state);
 
         ModLogger.Info(
             $"[BackpackUI] Standalone layout applied: capacitySlots={gridSlotCount}, visibleSlots={visibleSlotCount}, gridSize={gridSize}, " +
@@ -2544,6 +2572,7 @@ public static class StorageMenuPatch
             var closeButton = CreateStandaloneActionButton(header, "SettingsClose",
                 Vector2.zero, Vector2.zero, Vector2.zero, Vector2.zero,
                 "CLOSE", 8, out _);
+            state.SettingsCloseButton = closeButton;
             AddStandaloneLayoutElement(closeButton.gameObject, preferredWidth: 58f, preferredHeight: 25f);
             EventHelper.AddListener(() => ToggleStandaloneSettings(state), closeButton.onClick);
 
@@ -2643,14 +2672,17 @@ public static class StorageMenuPatch
         {
             state.SettingsOpen = false;
             state.AwaitingToggleKey = false;
+            state.KeyboardSettingsControlIndex = -1;
             PlayStandaloneSettingsClose(state);
             return;
         }
 
+        var openedFromKeyboard = state.KeyboardFocusKind == StandaloneBackpackKeyboardFocusKind.Control;
         state.SettingsOpen = true;
         state.AwaitingToggleKey = false;
         HideStandaloneDropdown(state);
-        state.SearchInput?.DeactivateInputField();
+        ClearStandaloneKeyboardFocus(state);
+        state.KeyboardSettingsControlIndex = openedFromKeyboard ? 0 : -1;
         state.RefreshAction?.Invoke();
     }
 
@@ -2876,6 +2908,8 @@ public static class StorageMenuPatch
                 BuildStandaloneGeneralSettings(state);
                 break;
         }
+
+        RefreshStandaloneSettingsKeyboardFocusPresentation(state);
     }
 
     private static void ClearStandaloneSettingsRows(StandaloneBackpackState state)
@@ -3690,6 +3724,18 @@ public static class StorageMenuPatch
         for (var i = 0; i < options.Count; i++)
             ConfigureStandaloneDropdownOption(state, i, options[i], dropdown);
 
+        if (state.KeyboardFocusKind == StandaloneBackpackKeyboardFocusKind.Control)
+        {
+            state.KeyboardDropdownOptionIndex = GetStandaloneSelectedDropdownOptionIndex(state, dropdown);
+            if (state.KeyboardDropdownOptionIndex < 0)
+                state.KeyboardDropdownOptionIndex = 0;
+        }
+        else
+        {
+            state.KeyboardDropdownOptionIndex = -1;
+        }
+        RefreshStandaloneDropdownKeyboardFocusPresentation(state);
+
         PlayStandaloneDropdownOpen(state);
     }
 
@@ -4268,6 +4314,21 @@ public static class StorageMenuPatch
         }
     }
 
+    private static int GetStandaloneSelectedDropdownOptionIndex(StandaloneBackpackState state,
+        StandaloneBackpackDropdown dropdown)
+    {
+        if (state == null)
+            return -1;
+
+        for (var i = 0; i < state.DropdownOptions.Count; i++)
+        {
+            if (IsStandaloneDropdownOptionSelected(state, dropdown, i))
+                return i;
+        }
+
+        return -1;
+    }
+
     private static void SelectStandaloneDropdownOption(StandaloneBackpackState state, int optionIndex)
     {
         if (state == null || optionIndex < 0 || optionIndex >= state.DropdownOptions.Count)
@@ -4284,6 +4345,7 @@ public static class StorageMenuPatch
             return;
 
         state.ActiveDropdown = StandaloneBackpackDropdown.None;
+        state.KeyboardDropdownOptionIndex = -1;
         ++state.DropdownMotionGeneration;
         if (state.DropdownRoot != null)
         {
@@ -4596,6 +4658,536 @@ public static class StorageMenuPatch
         return menu != null
             && StandaloneBackpackPanels.TryGetValue(menu.GetInstanceID(), out var state)
             && state.IsOpen;
+    }
+
+    /// <summary>
+    /// A mouse click inside the PackRat-owned browser returns it to mouse mode. This only clears
+    /// PackRat's presentation state; it neither consumes the click nor changes the game's slot
+    /// selection, drag/drop, or tooltip behavior.
+    /// </summary>
+    public static void ClearStandaloneBackpackKeyboardFocusOnPointerInput()
+    {
+        if (!Input.GetMouseButtonDown(0))
+            return;
+
+        try
+        {
+            var menu = Singleton<StorageMenu>.Instance;
+            if (menu == null || !StandaloneBackpackPanels.TryGetValue(menu.GetInstanceID(), out var state) ||
+                !state.IsOpen || !state.IsHotkeyBackpack || !IsPointerOverStandaloneBackpackInterface(state))
+                return;
+
+            state.KeyboardFocusKind = StandaloneBackpackKeyboardFocusKind.None;
+            state.KeyboardFocusControlIndex = -1;
+            state.KeyboardDropdownOptionIndex = -1;
+            state.KeyboardSettingsControlIndex = -1;
+            RefreshStandaloneKeyboardFocusPresentation(state);
+            RefreshStandaloneDropdownKeyboardFocusPresentation(state);
+            RefreshStandaloneSettingsKeyboardFocusPresentation(state);
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("StorageMenuPatch.ClearStandaloneBackpackKeyboardFocusOnPointerInput", ex);
+        }
+    }
+
+    private static bool IsPointerOverStandaloneBackpackInterface(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return false;
+
+        var pointer = (Vector2)Input.mousePosition;
+        return IsPointerOverStandaloneRect(state.VisualRoot, pointer) ||
+            IsPointerOverStandaloneRect(state.DropdownRoot, pointer) ||
+            IsPointerOverStandaloneRect(state.SettingsRoot, pointer) ||
+            IsPointerOverStandaloneRect(state.PagingRoot, pointer);
+    }
+
+    private static bool IsPointerOverStandaloneRect(RectTransform rect, Vector2 pointer)
+    {
+        return rect != null && rect.gameObject.activeInHierarchy &&
+            RectTransformUtility.RectangleContainsScreenPoint(rect, pointer);
+    }
+
+    /// <summary>
+    /// Routes keyboard focus only while the standalone hotkey backpack is open. It deliberately
+    /// targets PackRat-owned controls, leaving the game's slots and drag/drop interaction under
+    /// mouse ownership until a dedicated keyboard item-action model is designed.
+    /// </summary>
+    public static bool HandleStandaloneBackpackKeyboardNavigation()
+    {
+        var tabRequested = Input.GetKeyDown(KeyCode.Tab);
+        var escapeRequested = Input.GetKeyDown(KeyCode.Escape);
+        var activateRequested = Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter) ||
+            Input.GetKeyDown(KeyCode.Space);
+        var leftRequested = Input.GetKeyDown(KeyCode.LeftArrow);
+        var rightRequested = Input.GetKeyDown(KeyCode.RightArrow);
+        var upRequested = Input.GetKeyDown(KeyCode.UpArrow);
+        var downRequested = Input.GetKeyDown(KeyCode.DownArrow);
+        if (!tabRequested && !escapeRequested && !activateRequested && !leftRequested && !rightRequested &&
+            !upRequested && !downRequested)
+            return false;
+
+        try
+        {
+            var menu = Singleton<StorageMenu>.Instance;
+            if (menu == null || !StandaloneBackpackPanels.TryGetValue(menu.GetInstanceID(), out var state) ||
+                !state.IsOpen || !state.IsHotkeyBackpack)
+                return false;
+
+            if (state.SettingsOpen)
+            {
+                return HandleStandaloneSettingsKeyboardNavigation(state, tabRequested, escapeRequested,
+                    activateRequested, leftRequested, rightRequested, upRequested, downRequested);
+            }
+
+            if (state.DropdownRoot != null && state.DropdownRoot.gameObject.activeInHierarchy)
+            {
+                return HandleStandaloneDropdownKeyboardNavigation(state, tabRequested, escapeRequested,
+                    activateRequested, leftRequested, rightRequested, upRequested, downRequested);
+            }
+
+            if (state.SearchInput != null && state.SearchInput.isFocused)
+            {
+                if (tabRequested)
+                {
+                    MoveStandaloneKeyboardControlFocus(state, Input.GetKey(KeyCode.LeftShift) ||
+                        Input.GetKey(KeyCode.RightShift) ? -1 : 1);
+                    return true;
+                }
+
+                if (escapeRequested)
+                {
+                    ClearStandaloneKeyboardFocus(state);
+                    return true;
+                }
+
+                // The focused InputField owns normal text editing, including its cursor keys.
+                return false;
+            }
+
+            if (tabRequested)
+            {
+                MoveStandaloneKeyboardControlFocus(state, Input.GetKey(KeyCode.LeftShift) ||
+                    Input.GetKey(KeyCode.RightShift) ? -1 : 1);
+                return true;
+            }
+
+            if (escapeRequested && state.KeyboardFocusKind != StandaloneBackpackKeyboardFocusKind.None)
+            {
+                ClearStandaloneKeyboardFocus(state);
+                return true;
+            }
+
+            if (activateRequested && state.KeyboardFocusKind == StandaloneBackpackKeyboardFocusKind.Control)
+            {
+                ActivateStandaloneKeyboardControl(state);
+                return true;
+            }
+
+            if (state.KeyboardFocusKind == StandaloneBackpackKeyboardFocusKind.Control)
+            {
+                if (leftRequested)
+                {
+                    MoveStandaloneKeyboardControlFocus(state, -1);
+                    return true;
+                }
+
+                if (rightRequested)
+                {
+                    MoveStandaloneKeyboardControlFocus(state, 1);
+                    return true;
+                }
+
+                // Keep the old arrow-key pagination dormant after focus deliberately enters a
+                // control. Escape returns to the unfocused state, where that pagination remains
+                // exactly as it was before keyboard navigation was added.
+                return upRequested || downRequested;
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("StorageMenuPatch.HandleStandaloneBackpackKeyboardNavigation", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Keeps a PackRat dropdown self-contained while it is open: navigation never falls through
+    /// to the backpack's page controls or the game's global selection state.
+    /// </summary>
+    private static bool HandleStandaloneDropdownKeyboardNavigation(StandaloneBackpackState state, bool tabRequested,
+        bool escapeRequested, bool activateRequested, bool leftRequested, bool rightRequested, bool upRequested,
+        bool downRequested)
+    {
+        if (state == null || state.DropdownOptions.Count == 0)
+            return false;
+
+        if (escapeRequested)
+        {
+            HideStandaloneDropdown(state);
+            RefreshStandaloneKeyboardFocusPresentation(state);
+            return true;
+        }
+
+        var direction = 0;
+        if (tabRequested)
+            direction = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) ? -1 : 1;
+        else if (leftRequested || upRequested)
+            direction = -1;
+        else if (rightRequested || downRequested)
+            direction = 1;
+
+        if (direction != 0)
+        {
+            MoveStandaloneDropdownKeyboardFocus(state, direction);
+            return true;
+        }
+
+        if (activateRequested)
+        {
+            if (state.KeyboardDropdownOptionIndex < 0)
+                state.KeyboardDropdownOptionIndex = 0;
+            SelectStandaloneDropdownOption(state, state.KeyboardDropdownOptionIndex);
+            RefreshStandaloneKeyboardFocusPresentation(state);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void MoveStandaloneDropdownKeyboardFocus(StandaloneBackpackState state, int direction)
+    {
+        if (state == null || state.DropdownOptions.Count == 0)
+            return;
+
+        var index = state.KeyboardDropdownOptionIndex;
+        if (index < 0)
+            index = direction < 0 ? state.DropdownOptions.Count - 1 : 0;
+        else
+            index = (index + direction) % state.DropdownOptions.Count;
+
+        state.KeyboardDropdownOptionIndex = index < 0 ? index + state.DropdownOptions.Count : index;
+        RefreshStandaloneDropdownKeyboardFocusPresentation(state);
+    }
+
+    private static void RefreshStandaloneDropdownKeyboardFocusPresentation(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        for (var i = 0; i < state.DropdownOptionButtons.Count; i++)
+        {
+            var button = state.DropdownOptionButtons[i];
+            SetStandaloneKeyboardFocusVisual(button?.transform,
+                state.ActiveDropdown != StandaloneBackpackDropdown.None && i == state.KeyboardDropdownOptionIndex);
+        }
+    }
+
+    /// <summary>
+    /// Provides a complete keyboard loop for the PackRat-owned settings modal. The game remains
+    /// responsible for inventory slots and drag/drop; this route only invokes settings controls.
+    /// </summary>
+    private static bool HandleStandaloneSettingsKeyboardNavigation(StandaloneBackpackState state, bool tabRequested,
+        bool escapeRequested, bool activateRequested, bool leftRequested, bool rightRequested, bool upRequested,
+        bool downRequested)
+    {
+        if (state == null)
+            return false;
+
+        if (escapeRequested)
+        {
+            ToggleStandaloneSettings(state);
+            return true;
+        }
+
+        var direction = 0;
+        if (tabRequested)
+            direction = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) ? -1 : 1;
+        else if (leftRequested || upRequested)
+            direction = -1;
+        else if (rightRequested || downRequested)
+            direction = 1;
+
+        if (direction != 0)
+        {
+            MoveStandaloneSettingsKeyboardFocus(state, direction);
+            return true;
+        }
+
+        if (activateRequested)
+        {
+            ActivateStandaloneSettingsKeyboardControl(state);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static List<StandaloneBackpackKeyboardControl> GetStandaloneKeyboardControls(
+        StandaloneBackpackState state)
+    {
+        var controls = new List<StandaloneBackpackKeyboardControl>();
+        if (state == null)
+            return controls;
+
+        AddStandaloneKeyboardControl(controls, state.SearchInput, null, isSearchInput: true);
+        AddStandaloneKeyboardControl(controls, state.TypeFilterButton, state.TypeFilterAction);
+        AddStandaloneKeyboardControl(controls, state.QualityFilterButton, state.QualityFilterAction);
+        AddStandaloneKeyboardControl(controls, state.SortDirectionButton, state.SortDirectionAction);
+        AddStandaloneKeyboardControl(controls, state.OrganizeButton, state.OrganizeAction);
+        AddStandaloneKeyboardControl(controls, state.ConsolidateButton, state.ConsolidateAction);
+        // Stack and Settings are visually adjacent in the header, so preserve that adjacency
+        // for keyboard traversal instead of making the user cross filters and sort tabs first.
+        AddStandaloneKeyboardControl(controls, state.SettingsButton, null);
+        AddStandaloneKeyboardControl(controls, state.ClearFiltersButton, state.ClearFiltersAction);
+
+        for (var i = 0; i < state.SortTabs.Count; i++)
+        {
+            var tab = state.SortTabs[i];
+            AddStandaloneKeyboardControl(controls, tab?.Button, tab?.SelectAction);
+        }
+
+        AddStandaloneKeyboardControl(controls, state.DoneButton, null);
+        AddStandaloneKeyboardControl(controls, state.PrevButton, state.PrevAction);
+        AddStandaloneKeyboardControl(controls, state.NextButton, state.NextAction);
+        return controls;
+    }
+
+    private static List<StandaloneBackpackKeyboardControl> GetStandaloneSettingsKeyboardControls(
+        StandaloneBackpackState state)
+    {
+        var controls = new List<StandaloneBackpackKeyboardControl>();
+        if (state == null || !state.SettingsOpen)
+            return controls;
+
+        // Keep the modal chrome at the head of the traversal even though the active desktop tab
+        // changes sibling order to draw above the others.
+        AddStandaloneKeyboardControl(controls, state.SettingsCloseButton, null);
+        AddStandaloneKeyboardControl(controls, state.SettingsGeneralButton, null);
+        AddStandaloneKeyboardControl(controls, state.SettingsTiersButton, null);
+        AddStandaloneKeyboardControl(controls, state.SettingsLayoutButton, null);
+
+        var page = GetStandaloneSettingsPageRoot(state);
+        if (page == null || !page.gameObject.activeInHierarchy)
+            return controls;
+
+        var pageControls = page.GetComponentsInChildren<Selectable>(includeInactive: false);
+        for (var i = 0; i < pageControls.Length; i++)
+            AddStandaloneKeyboardControl(controls, pageControls[i], null);
+
+        return controls;
+    }
+
+    private static void AddStandaloneKeyboardControl(List<StandaloneBackpackKeyboardControl> controls,
+        Selectable selectable, Action activateAction, bool isSearchInput = false)
+    {
+        if (controls == null || selectable == null || !selectable.gameObject.activeInHierarchy ||
+            !selectable.interactable)
+            return;
+
+        controls.Add(new StandaloneBackpackKeyboardControl
+        {
+            Selectable = selectable,
+            ActivateAction = activateAction,
+            IsSearchInput = isSearchInput
+        });
+    }
+
+    private static void MoveStandaloneSettingsKeyboardFocus(StandaloneBackpackState state, int direction)
+    {
+        var controls = GetStandaloneSettingsKeyboardControls(state);
+        if (controls.Count == 0)
+        {
+            state.KeyboardSettingsControlIndex = -1;
+            return;
+        }
+
+        var index = state.KeyboardSettingsControlIndex;
+        if (index < 0)
+            index = direction < 0 ? controls.Count - 1 : 0;
+        else
+            index = (index + direction) % controls.Count;
+
+        FocusStandaloneSettingsKeyboardControl(state, index, controls);
+    }
+
+    private static void FocusStandaloneSettingsKeyboardControl(StandaloneBackpackState state, int index,
+        List<StandaloneBackpackKeyboardControl> controls = null)
+    {
+        controls = controls ?? GetStandaloneSettingsKeyboardControls(state);
+        if (state == null || controls.Count == 0)
+        {
+            if (state != null)
+                state.KeyboardSettingsControlIndex = -1;
+            return;
+        }
+
+        state.KeyboardSettingsControlIndex = Mathf.Clamp(index, 0, controls.Count - 1);
+        RefreshStandaloneSettingsKeyboardFocusPresentation(state);
+    }
+
+    private static void ActivateStandaloneSettingsKeyboardControl(StandaloneBackpackState state)
+    {
+        var controls = GetStandaloneSettingsKeyboardControls(state);
+        if (state == null || controls.Count == 0)
+            return;
+
+        if (state.KeyboardSettingsControlIndex < 0 || state.KeyboardSettingsControlIndex >= controls.Count)
+            state.KeyboardSettingsControlIndex = 0;
+
+        var control = controls[state.KeyboardSettingsControlIndex];
+        if (control.ActivateAction != null)
+            control.ActivateAction.Invoke();
+        else if (control.Selectable is Button button)
+            button.onClick.Invoke();
+        else if (control.Selectable is Toggle toggle)
+            toggle.isOn = !toggle.isOn;
+
+        // Setting changes rebuild their current page to reflect MelonPreferences immediately.
+        // Repaint the surviving or rebuilt control at the same logical index.
+        RefreshStandaloneSettingsKeyboardFocusPresentation(state);
+    }
+
+    private static void RefreshStandaloneSettingsKeyboardFocusPresentation(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        var controls = GetStandaloneSettingsKeyboardControls(state);
+        if (state.KeyboardSettingsControlIndex >= controls.Count)
+            state.KeyboardSettingsControlIndex = controls.Count > 0 ? 0 : -1;
+
+        for (var i = 0; i < controls.Count; i++)
+            SetStandaloneKeyboardFocusVisual(controls[i].Selectable?.transform, i == state.KeyboardSettingsControlIndex);
+    }
+
+    private static void MoveStandaloneKeyboardControlFocus(StandaloneBackpackState state, int direction)
+    {
+        var controls = GetStandaloneKeyboardControls(state);
+        if (controls.Count == 0)
+        {
+            ClearStandaloneKeyboardFocus(state);
+            return;
+        }
+
+        var index = state.KeyboardFocusKind == StandaloneBackpackKeyboardFocusKind.Control
+            ? state.KeyboardFocusControlIndex + direction
+            : (direction < 0 ? controls.Count - 1 : 0);
+        index = (index % controls.Count + controls.Count) % controls.Count;
+        FocusStandaloneKeyboardControl(state, index, controls);
+    }
+
+    private static void FocusStandaloneKeyboardControl(StandaloneBackpackState state, int index,
+        List<StandaloneBackpackKeyboardControl> controls = null)
+    {
+        controls = controls ?? GetStandaloneKeyboardControls(state);
+        if (state == null || controls.Count == 0)
+        {
+            ClearStandaloneKeyboardFocus(state);
+            return;
+        }
+
+        index = Mathf.Clamp(index, 0, controls.Count - 1);
+        if (state.SearchInput != null && state.SearchInput.isFocused)
+            state.SearchInput.DeactivateInputField();
+
+        state.KeyboardFocusKind = StandaloneBackpackKeyboardFocusKind.Control;
+        state.KeyboardFocusControlIndex = index;
+        RefreshStandaloneKeyboardFocusPresentation(state);
+
+        if (controls[index].IsSearchInput && state.SearchInput != null)
+            state.SearchInput.ActivateInputField();
+    }
+
+    private static void ActivateStandaloneKeyboardControl(StandaloneBackpackState state)
+    {
+        var controls = GetStandaloneKeyboardControls(state);
+        if (state == null || state.KeyboardFocusControlIndex < 0 ||
+            state.KeyboardFocusControlIndex >= controls.Count)
+            return;
+
+        var control = controls[state.KeyboardFocusControlIndex];
+        if (control.IsSearchInput && state.SearchInput != null)
+        {
+            state.SearchInput.ActivateInputField();
+            return;
+        }
+
+        if (control.ActivateAction != null)
+            control.ActivateAction.Invoke();
+        else if (control.Selectable is Button button)
+            button.onClick.Invoke();
+        else if (control.Selectable is Toggle toggle)
+            toggle.isOn = !toggle.isOn;
+
+        RefreshStandaloneKeyboardFocusPresentation(state);
+    }
+
+    private static void ClearStandaloneKeyboardFocus(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        if (state.SearchInput != null && state.SearchInput.isFocused)
+            state.SearchInput.DeactivateInputField();
+        state.KeyboardFocusKind = StandaloneBackpackKeyboardFocusKind.None;
+        state.KeyboardFocusControlIndex = -1;
+        RefreshStandaloneKeyboardFocusPresentation(state);
+    }
+
+    private static void RefreshStandaloneKeyboardFocusPresentation(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        var controls = GetStandaloneKeyboardControls(state);
+        if (state.KeyboardFocusKind == StandaloneBackpackKeyboardFocusKind.Control &&
+            (state.KeyboardFocusControlIndex < 0 || state.KeyboardFocusControlIndex >= controls.Count))
+        {
+            state.KeyboardFocusKind = StandaloneBackpackKeyboardFocusKind.None;
+            state.KeyboardFocusControlIndex = -1;
+        }
+
+        for (var i = 0; i < controls.Count; i++)
+        {
+            SetStandaloneKeyboardFocusVisual(controls[i].Selectable?.transform,
+                state.KeyboardFocusKind == StandaloneBackpackKeyboardFocusKind.Control &&
+                i == state.KeyboardFocusControlIndex);
+        }
+    }
+
+    private static void SetStandaloneKeyboardFocusVisual(Transform target, bool visible)
+    {
+        if (target == null)
+            return;
+
+        // Older panel instances may still carry the rectangular child-edge treatment from the
+        // first keyboard-navigation pass. Remove it before using Unity's alpha-aware Outline:
+        // the component follows the target graphic's own sliced sprite and therefore preserves
+        // pills, gentle rounded corners, and the settings desktop-tab silhouette.
+        var legacyOutline = target.Find("PackRat_KeyboardFocusOutline");
+        if (legacyOutline != null)
+            UnityEngine.Object.Destroy(legacyOutline.gameObject);
+
+        // Most PackRat controls keep their Image on the selectable root, but the vanilla Done
+        // button may use a child target graphic. Outline that actual graphic so its focus ring
+        // follows the rendered button rather than an invisible layout container.
+        var selectable = target.GetComponent<Selectable>();
+        var graphic = selectable?.targetGraphic ?? target.GetComponent<Graphic>();
+        if (graphic == null)
+            return;
+
+        var outline = Utils.GetOrAddComponentSafe<Outline>(graphic.gameObject);
+        if (outline == null)
+            return;
+
+        outline.effectColor = new Color32(54, 177, 239, 255);
+        outline.effectDistance = new Vector2(1.5f, -1.5f);
+        outline.useGraphicAlpha = true;
+        outline.enabled = visible;
     }
 
     /// <summary>
