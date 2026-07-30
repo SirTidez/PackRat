@@ -1314,12 +1314,18 @@ public static class HandoverScreenPatch
             state.DedicatedToggleRoot.SetParent(header, worldPositionStays: false);
         }
 
-        state.DedicatedToggleRoot.anchorMin = new Vector2(1f, 0.5f);
-        state.DedicatedToggleRoot.anchorMax = new Vector2(1f, 0.5f);
-        state.DedicatedToggleRoot.pivot = new Vector2(1f, 0.5f);
-        state.DedicatedToggleRoot.anchoredPosition = new Vector2(-38f, 10f);
         state.DedicatedToggleRoot.sizeDelta = new Vector2(84f, 24f);
         state.DedicatedToggleRoot.localScale = Vector3.one;
+        if (!AnchorDedicatedVehicleToggleBesideStack(state, header))
+        {
+            // The embedded browser can be rebuilt between the handover opening and the first
+            // refresh. Keep a deterministic fallback until its shared Stack control exists.
+            state.DedicatedToggleRoot.anchorMin = new Vector2(1f, 0.5f);
+            state.DedicatedToggleRoot.anchorMax = new Vector2(1f, 0.5f);
+            state.DedicatedToggleRoot.pivot = new Vector2(1f, 0.5f);
+            state.DedicatedToggleRoot.anchoredPosition = new Vector2(-38f, 10f);
+        }
+
         // Keep the control visible even while vehicle state is unavailable. That leaves an
         // explicit, disabled receipt rather than silently making the selector disappear.
         state.DedicatedToggleRoot.gameObject.SetActive(true);
@@ -1353,6 +1359,39 @@ public static class HandoverScreenPatch
 
         ReserveDedicatedHeaderToggleSpace(state);
         state.DedicatedToggleRoot.SetAsLastSibling();
+    }
+
+    /// <summary>
+    /// Positions the handover vehicle selector against the shared browser's Stack action instead
+    /// of against a fixed header edge. This preserves their relationship as the browser scales or
+    /// the handover canvas is rebuilt at a different resolution.
+    /// </summary>
+    private static bool AnchorDedicatedVehicleToggleBesideStack(PanelState state, RectTransform header)
+    {
+        if (state?.DedicatedToggleRoot == null || header == null)
+            return false;
+
+        var stackRect = header.Find("PackRat_BackpackConsolidateButton") as RectTransform;
+        if (stackRect == null)
+            return false;
+
+        Canvas.ForceUpdateCanvases();
+
+        const float gap = 6f;
+        var stackLeftCenterWorld = stackRect.TransformPoint(
+            new Vector3(stackRect.rect.xMin, stackRect.rect.center.y, 0f));
+        var desiredRightEdgeInHeader = header.InverseTransformPoint(stackLeftCenterWorld);
+        desiredRightEdgeInHeader.x -= gap;
+
+        // With a top-right anchor and right-center pivot, anchoredPosition is the selected
+        // control's right edge relative to the header's top-right corner.
+        var headerTopRight = new Vector3(header.rect.xMax, header.rect.yMax, 0f);
+        var root = state.DedicatedToggleRoot;
+        root.anchorMin = new Vector2(1f, 1f);
+        root.anchorMax = new Vector2(1f, 1f);
+        root.pivot = new Vector2(1f, 0.5f);
+        root.anchoredPosition = (Vector2)(desiredRightEdgeInHeader - headerTopRight);
+        return true;
     }
 
     /// <summary>
@@ -1994,16 +2033,22 @@ public static class HandoverScreenPatch
     private static void ReserveDedicatedHeaderToggleSpace(PanelState state)
     {
         var header = FindDedicatedBrowserHeader(state);
-        if (header == null)
+        var toggle = state?.DedicatedToggleRoot;
+        if (header == null || toggle == null)
             return;
+
+        Canvas.ForceUpdateCanvases();
+        var toggleLeftWorld = toggle.TransformPoint(new Vector3(toggle.rect.xMin, toggle.rect.center.y, 0f));
+        var toggleLeftInHeader = header.InverseTransformPoint(toggleLeftWorld);
+        var reservedRightInset = Mathf.Max(126f, header.rect.xMax - toggleLeftInHeader.x + 8f);
 
         var title = header.Find("Title") as RectTransform;
         if (title != null)
-            title.offsetMax = new Vector2(-126f, title.offsetMax.y);
+            title.offsetMax = new Vector2(-reservedRightInset, title.offsetMax.y);
 
         var meta = header.Find("Meta") as RectTransform;
         if (meta != null)
-            meta.offsetMax = new Vector2(-126f, meta.offsetMax.y);
+            meta.offsetMax = new Vector2(-reservedRightInset, meta.offsetMax.y);
     }
 
     /// <summary>
