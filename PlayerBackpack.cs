@@ -187,6 +187,11 @@ public class PlayerBackpack : MonoBehaviour
 
     private void Update()
     {
+        // A PackRat-owned mouse click explicitly returns the shared browser to mouse mode. This
+        // leaves the click available for the game's normal drag/drop and tooltip handling.
+        if (IsOpen)
+            Patches.StorageMenuPatch.ClearStandaloneBackpackKeyboardFocusOnPointerInput();
+
         // Capture a replacement hotkey from the backpack settings pane before this frame's
         // normal toggle processing can close the menu with the old binding.
         if (IsOpen && Patches.StorageMenuPatch.HandleStandaloneBackpackSettingsInput())
@@ -209,7 +214,7 @@ public class PlayerBackpack : MonoBehaviour
 
         try
         {
-            if (IsOpen && Patches.StorageMenuPatch.HandleStandaloneBackpackPaginationHotkeys())
+            if (IsOpen && Patches.StorageMenuPatch.HandleStandaloneBackpackKeyboardNavigation())
                 return;
 
             if (!keyDown)
