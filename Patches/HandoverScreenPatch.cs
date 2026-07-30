@@ -71,12 +71,17 @@ public static class HandoverScreenPatch
         public Button ToggleButton;
         public Button DedicatedToggleButton;
         public RectTransform DedicatedToggleRoot;
+        public RectTransform TransferRoot;
+        public Button TransferButton;
+        public Button BoundTransferButton;
+        public Text TransferStatusLabel;
         public Text PageLabel;
         public Text VisualTitleLabel;
         public Text VisualMetaLabel;
         public Action PrevAction;
         public Action NextAction;
         public Action ToggleAction;
+        public Action TransferAction;
         public S1LandVehicle NearbyVehicle;
         public Vector2 VehicleOriginalAnchoredPos;
         public Vector2 DoneButtonOriginalAnchorMin;
@@ -92,6 +97,22 @@ public static class HandoverScreenPatch
         public int LastPageInputFrame;
         public int NextVehicleProbeFrame;
         public bool Initialized;
+        public string TransferStatus;
+    }
+
+    private sealed class HandoverRequirement
+    {
+        public string ProductId;
+        public string Quality;
+        public int QualityRank;
+        public int Remaining;
+    }
+
+    private sealed class HandoverTransferSource
+    {
+        public string Name;
+        public List<ItemSlot> Slots;
+        public int Moved;
     }
 
     private sealed class HeaderCandidate
@@ -176,6 +197,7 @@ public static class HandoverScreenPatch
             panel.CurrentPage = 0;
             panel.SlotsPerPage = panel.SlotUIs != null ? panel.SlotUIs.Length : 0;
             panel.ShowingVehicle = false;
+            panel.TransferStatus = null;
             panel.IsOpen = true;
             if (panel.DedicatedCanvas == null && panel.BackpackContainer != null)
                 panel.BackpackContainer.gameObject.SetActive(true);
@@ -293,6 +315,8 @@ public static class HandoverScreenPatch
                 panel.PagingRoot.gameObject.SetActive(false);
             if (panel.DedicatedToggleRoot != null)
                 panel.DedicatedToggleRoot.gameObject.SetActive(false);
+            if (panel.TransferRoot != null)
+                panel.TransferRoot.gameObject.SetActive(false);
             if (panel.DedicatedCanvas != null)
                 panel.DedicatedCanvas.gameObject.SetActive(false);
             if (panel.CanvasProofMarker != null)
@@ -1010,7 +1034,9 @@ public static class HandoverScreenPatch
 
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.overrideSorting = true;
-            canvas.sortingOrder = (screen.Canvas != null ? screen.Canvas.sortingOrder : 0) + 50;
+            // Keep this browser above the handover owner while allowing the game's item tooltip
+            // canvas to render over hovered PackRat slots. The old +50 order buried tooltips.
+            canvas.sortingOrder = (screen.Canvas != null ? screen.Canvas.sortingOrder : 0) + 1;
             scaler.uiScaleMode = UnityEngine.UI.CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.matchWidthOrHeight = 0.5f;
@@ -1201,6 +1227,9 @@ public static class HandoverScreenPatch
             StorageMenuPatch.ApplyEmbeddedBackpackBrowser(state.DedicatedCard, grid, layout, state.SlotUIs,
                 layoutView: 3);
         }
+
+        UpdateDedicatedDealMatchAccents(screen, state);
+        EnsureDedicatedTransferControls(screen, state);
         var overlayScale = Mathf.Clamp(Configuration.Instance.HandoverOverlayScale, 0.5f, 1.5f);
 
         var doneRect = screen?.DoneButton?.transform as RectTransform;
@@ -1324,6 +1353,636 @@ public static class HandoverScreenPatch
 
         ReserveDedicatedHeaderToggleSpace(state);
         state.DedicatedToggleRoot.SetAsLastSibling();
+    }
+
+    /// <summary>
+    /// Adds a compact, PackRat-owned deal action underneath the shared browser pager. The row is
+    /// deliberately a sibling of the pager instead of a child of the slot grid so filtering,
+    /// paging, and the game-owned handover layout cannot reposition or hide it.
+    /// </summary>
+    private static void EnsureDedicatedTransferControls(HandoverScreen screen, PanelState state)
+    {
+        if (screen == null || state?.DedicatedCard == null)
+            return;
+
+        var pager = state.DedicatedCard.Find("PackRat_BackpackPaging") as RectTransform;
+        if (pager == null)
+            return;
+
+        if (state.TransferRoot == null || state.TransferRoot.parent != state.DedicatedCard)
+        {
+            var existing = state.DedicatedCard.Find("PackRat_HandoverTransferControls") as RectTransform;
+            if (existing != null)
+            {
+                state.TransferRoot = existing;
+                state.TransferButton = existing.Find("AutoFillButton")?.GetComponent<Button>();
+                state.TransferStatusLabel = existing.Find("Status")?.GetComponent<Text>();
+            }
+            else
+            {
+                var rootGo = new GameObject("PackRat_HandoverTransferControls");
+                var root = rootGo.AddComponent<RectTransform>();
+                root.SetParent(state.DedicatedCard, worldPositionStays: false);
+                root.anchorMin = new Vector2(0.5f, 0.5f);
+                root.anchorMax = new Vector2(0.5f, 0.5f);
+                root.pivot = new Vector2(0.5f, 1f);
+                root.sizeDelta = new Vector2(240f, 50f);
+                rootGo.AddComponent<LayoutElement>().ignoreLayout = true;
+
+                var background = rootGo.AddComponent<Image>();
+                background.color = new Color32(10, 21, 31, 220);
+                background.raycastTarget = false;
+
+                var buttonGo = new GameObject("AutoFillButton");
+                var buttonRect = buttonGo.AddComponent<RectTransform>();
+                buttonRect.SetParent(root, worldPositionStays: false);
+                buttonRect.anchorMin = new Vector2(0.5f, 1f);
+                buttonRect.anchorMax = new Vector2(0.5f, 1f);
+                buttonRect.pivot = new Vector2(0.5f, 1f);
+                buttonRect.anchoredPosition = new Vector2(0f, -3f);
+                buttonRect.sizeDelta = new Vector2(164f, 24f);
+                var buttonImage = buttonGo.AddComponent<Image>();
+                buttonImage.color = new Color32(39, 112, 156, 255);
+                var button = buttonGo.AddComponent<Button>();
+                button.targetGraphic = buttonImage;
+
+                var buttonLabelGo = new GameObject("Label");
+                var buttonLabelRect = buttonLabelGo.AddComponent<RectTransform>();
+                buttonLabelRect.SetParent(buttonRect, worldPositionStays: false);
+                buttonLabelRect.anchorMin = Vector2.zero;
+                buttonLabelRect.anchorMax = Vector2.one;
+                buttonLabelRect.offsetMin = Vector2.zero;
+                buttonLabelRect.offsetMax = Vector2.zero;
+                var buttonLabel = buttonLabelGo.AddComponent<Text>();
+                buttonLabel.text = "AUTO-FILL DEAL";
+                buttonLabel.font = ResolveUiFont(root);
+                buttonLabel.fontSize = 11;
+                buttonLabel.fontStyle = FontStyle.Bold;
+                buttonLabel.alignment = TextAnchor.MiddleCenter;
+                buttonLabel.color = Color.white;
+                buttonLabel.raycastTarget = false;
+
+                var statusGo = new GameObject("Status");
+                var statusRect = statusGo.AddComponent<RectTransform>();
+                statusRect.SetParent(root, worldPositionStays: false);
+                statusRect.anchorMin = new Vector2(0.5f, 0f);
+                statusRect.anchorMax = new Vector2(0.5f, 0f);
+                statusRect.pivot = new Vector2(0.5f, 0f);
+                statusRect.anchoredPosition = new Vector2(0f, 2f);
+                statusRect.sizeDelta = new Vector2(232f, 18f);
+                var status = statusGo.AddComponent<Text>();
+                status.font = ResolveUiFont(root);
+                status.fontSize = 9;
+                status.alignment = TextAnchor.MiddleCenter;
+                status.color = new Color32(191, 215, 232, 255);
+                status.raycastTarget = false;
+
+                state.TransferRoot = root;
+                state.TransferButton = button;
+                state.TransferStatusLabel = status;
+            }
+        }
+
+        var scale = pager.localScale.x <= 0f ? 1f : pager.localScale.x;
+        state.TransferRoot.localScale = Vector3.one * scale;
+        state.TransferRoot.anchoredPosition = new Vector2(
+            pager.anchoredPosition.x,
+            pager.anchoredPosition.y - pager.sizeDelta.y * scale - 8f * scale
+        );
+        state.TransferRoot.gameObject.SetActive(true);
+        state.TransferRoot.SetAsLastSibling();
+
+        if (state.TransferAction == null)
+            state.TransferAction = () => AutoFillDeal(FindOwningScreen(state), state);
+
+        // The handover owner refreshes this browser while it is open. Bind a button only once
+        // for its lifetime; repeatedly adding the same Action makes one click replay the fill.
+        if (state.TransferButton != null && state.BoundTransferButton != state.TransferButton)
+        {
+            if (state.BoundTransferButton != null)
+                EventHelper.RemoveListener(state.TransferAction, state.BoundTransferButton.onClick);
+
+            EventHelper.AddListener(state.TransferAction, state.TransferButton.onClick);
+            state.BoundTransferButton = state.TransferButton;
+        }
+
+        var requirements = GetHandoverRequirements(screen, GetCustomerSlots(screen));
+        var canFill = requirements.Count > 0;
+        if (state.TransferButton != null)
+            state.TransferButton.interactable = canFill;
+
+        // The blue frame is self-explanatory; reserve this line for a result only after the
+        // player explicitly triggers auto-fill.
+        if (string.IsNullOrEmpty(state.TransferStatus) && state.TransferStatusLabel != null)
+            state.TransferStatusLabel.gameObject.SetActive(false);
+    }
+
+    /// <summary>
+    /// Fills only the remaining exact contract requirements. Existing customer-slot contents are
+    /// retained, each source uses the game's ItemSlot transfer methods, and the result reports
+    /// the individual sources that contributed product.
+    /// </summary>
+    private static void AutoFillDeal(HandoverScreen screen, PanelState state)
+    {
+        if (screen == null || state == null || !state.IsOpen)
+            return;
+
+        try
+        {
+            var customerSlots = GetCustomerSlots(screen);
+            var requirements = GetHandoverRequirements(screen, customerSlots);
+            if (requirements.Count == 0)
+            {
+                SetTransferStatus(state, "NOTHING REMAINING FOR THIS DEAL", new Color32(220, 190, 105, 255));
+                return;
+            }
+
+            var sources = new List<HandoverTransferSource>
+            {
+                new HandoverTransferSource { Name = "PACK", Slots = GetBackpackSlots() },
+                new HandoverTransferSource { Name = "VEHICLE", Slots = GetNearbyVehicleSlots(state) },
+                new HandoverTransferSource { Name = "INVENTORY", Slots = GetPlayerInventorySlots() }
+            };
+
+            var movedTotal = 0;
+            for (var requirementIndex = 0; requirementIndex < requirements.Count; requirementIndex++)
+            {
+                var requirement = requirements[requirementIndex];
+                for (var sourceIndex = 0; sourceIndex < sources.Count && requirement.Remaining > 0; sourceIndex++)
+                {
+                    var source = sources[sourceIndex];
+                    if (source.Slots == null)
+                        continue;
+
+                    for (var slotIndex = 0; slotIndex < source.Slots.Count && requirement.Remaining > 0; slotIndex++)
+                    {
+                        var sourceSlot = source.Slots[slotIndex];
+                        if (!ItemMatchesRequirement(sourceSlot?.ItemInstance, requirement))
+                            continue;
+
+                        var moved = MoveMatchingItemToDeal(sourceSlot, customerSlots, requirement.Remaining);
+                        if (moved <= 0)
+                            continue;
+
+                        requirement.Remaining -= moved;
+                        source.Moved += moved;
+                        movedTotal += moved;
+                    }
+                }
+            }
+
+            NotifyHandoverItemsChanged(screen);
+            UpdateDedicatedOverlayLayout(screen, state);
+
+            if (movedTotal <= 0)
+            {
+                LogAutoFillMatchDiagnostics(requirements, sources);
+                SetTransferStatus(state, "NO MATCHING PRODUCTS FOUND", new Color32(220, 190, 105, 255));
+                return;
+            }
+
+            var sourceReceipt = new List<string>();
+            for (var sourceIndex = 0; sourceIndex < sources.Count; sourceIndex++)
+            {
+                var source = sources[sourceIndex];
+                if (source.Moved > 0)
+                    sourceReceipt.Add($"{source.Name} {source.Moved}");
+            }
+
+            var remaining = 0;
+            for (var requirementIndex = 0; requirementIndex < requirements.Count; requirementIndex++)
+                remaining += requirements[requirementIndex].Remaining;
+
+            var outcome = remaining > 0
+                ? $"MOVED {movedTotal}  •  {remaining} STILL NEEDED"
+                : $"FILLED {movedTotal}";
+            SetTransferStatus(state, $"{outcome}  •  {string.Join(" / ", sourceReceipt)}  →  DEAL",
+                remaining > 0 ? new Color32(220, 190, 105, 255) : new Color32(105, 225, 142, 255));
+            ModLogger.Info($"[HandoverUI] Auto-fill completed: moved={movedTotal}, remaining={remaining}, " +
+                $"sources={string.Join(", ", sourceReceipt)}.");
+        }
+        catch (Exception ex)
+        {
+            SetTransferStatus(state, "AUTO-FILL FAILED — SEE LOG", new Color32(238, 125, 112, 255));
+            ModLogger.Error("HandoverScreenPatch.AutoFillDeal", ex);
+        }
+    }
+
+    private static List<ItemSlot> GetCustomerSlots(HandoverScreen screen)
+    {
+        var result = new List<ItemSlot>();
+        var slots = ReflectionUtils.TryGetFieldOrProperty(screen, "CustomerSlots")
+            ?? ReflectionUtils.TryGetFieldOrProperty(screen, "_customerSlots");
+        var count = ReflectionUtils.TryGetListCount(slots);
+        for (var index = 0; index < count; index++)
+        {
+            var candidate = ReflectionUtils.TryGetListItem(slots, index);
+            if (Utils.Is<ItemSlot>(candidate, out var slot) && slot != null)
+                result.Add(slot);
+        }
+
+        return result;
+    }
+
+    private static List<ItemSlot> GetPlayerInventorySlots()
+    {
+        var result = new List<ItemSlot>();
+#if MONO
+        var inventory = PlayerInventory.Instance;
+#else
+        var inventory = PlayerSingleton<PlayerInventory>.Instance;
+#endif
+        var slots = inventory?.GetAllInventorySlots();
+        if (slots == null)
+            return result;
+
+        foreach (var slot in slots.AsEnumerable())
+        {
+            if (slot != null)
+                result.Add(slot);
+        }
+
+        return result;
+    }
+
+    private static List<HandoverRequirement> GetHandoverRequirements(HandoverScreen screen,
+        List<ItemSlot> customerSlots)
+    {
+        var requirements = new List<HandoverRequirement>();
+        var contract = ReflectionUtils.TryGetFieldOrProperty(screen, "CurrentContract")
+            ?? ReflectionUtils.TryGetFieldOrProperty(screen, "_CurrentContract");
+        var productList = ReflectionUtils.TryGetFieldOrProperty(contract, "ProductList");
+        var entries = ReflectionUtils.TryGetFieldOrProperty(productList, "entries")
+            ?? ReflectionUtils.TryGetFieldOrProperty(productList, "Entries");
+        var count = ReflectionUtils.TryGetListCount(entries);
+        for (var index = 0; index < count; index++)
+        {
+            var entry = ReflectionUtils.TryGetListItem(entries, index);
+            var productId = ReflectionUtils.TryGetFieldOrProperty(entry, "ProductID")?.ToString();
+            var qualityValue = ReflectionUtils.TryGetFieldOrProperty(entry, "Quality");
+            var quality = qualityValue?.ToString();
+            var quantityValue = ReflectionUtils.TryGetFieldOrProperty(entry, "Quantity");
+            if (string.IsNullOrWhiteSpace(productId) || !TryConvertToInt(quantityValue, out var quantity) || quantity <= 0)
+                continue;
+
+            requirements.Add(new HandoverRequirement
+            {
+                ProductId = productId,
+                Quality = quality ?? string.Empty,
+                QualityRank = TryConvertToInt(qualityValue, out var qualityRank) ? qualityRank : -1,
+                Remaining = quantity
+            });
+        }
+
+        if (customerSlots != null)
+        {
+            for (var requirementIndex = 0; requirementIndex < requirements.Count; requirementIndex++)
+            {
+                var requirement = requirements[requirementIndex];
+                for (var slotIndex = 0; slotIndex < customerSlots.Count; slotIndex++)
+                {
+                    var slot = customerSlots[slotIndex];
+                    if (ItemMatchesRequirement(slot?.ItemInstance, requirement))
+                        requirement.Remaining = Mathf.Max(0, requirement.Remaining - Mathf.Max(0, slot.Quantity));
+                }
+            }
+        }
+
+        requirements.RemoveAll(requirement => requirement.Remaining <= 0);
+        return requirements;
+    }
+
+    private static bool ItemMatchesRequirement(ItemInstance item, HandoverRequirement requirement)
+    {
+        if (item?.Definition == null || requirement == null)
+            return false;
+
+        var itemProductId = ReflectionUtils.TryGetFieldOrProperty(item.Definition, "ID")?.ToString()
+            ?? ReflectionUtils.TryGetFieldOrProperty(item.Definition, "Id")?.ToString();
+        var definitionName = ReflectionUtils.TryGetFieldOrProperty(item.Definition, "Name")?.ToString();
+        var itemName = ReflectionUtils.TryGetFieldOrProperty(item, "Name")?.ToString();
+        if (!AreEquivalentProductIdentifiers(requirement.ProductId, itemProductId, definitionName, itemName))
+            return false;
+
+        if (!TryGetItemQuality(item, out var itemQuality, out var itemQualityRank))
+            return false;
+
+        if (requirement.QualityRank >= 0 && itemQualityRank >= 0)
+            return itemQualityRank >= requirement.QualityRank;
+
+        return string.Equals(itemQuality, requirement.Quality, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Reads quality from its shared ItemFramework base type. ProductItemInstance inherits this
+    /// member, but the generated IL2CPP wrapper does not expose it reliably through reflection
+    /// against the concrete product type.
+    /// </summary>
+    private static bool TryGetItemQuality(ItemInstance item, out string quality, out int qualityRank)
+    {
+        quality = string.Empty;
+        qualityRank = -1;
+        if (item == null)
+            return false;
+
+#if MONO
+        var qualityItem = item as QualityItemInstance;
+#else
+        var qualityItem = item.TryCast<QualityItemInstance>();
+#endif
+        if (qualityItem != null)
+        {
+            quality = qualityItem.Quality.ToString();
+            qualityRank = (int)qualityItem.Quality;
+            return true;
+        }
+
+        // Preserve a compatibility fallback for custom or future instances that expose a
+        // quality member without deriving from QualityItemInstance.
+        var qualityValue = ReflectionUtils.TryGetFieldOrProperty(item, "Quality")
+            ?? ReflectionUtils.TryGetFieldOrProperty(item, "quality");
+        if (qualityValue == null)
+            return false;
+
+        quality = qualityValue.ToString() ?? string.Empty;
+        if (TryConvertToInt(qualityValue, out var reflectedRank))
+            qualityRank = reflectedRank;
+
+        return !string.IsNullOrEmpty(quality);
+    }
+
+    /// <summary>
+    /// Adds a non-interactive blue frame to every visible source slot that can satisfy a remaining
+    /// handover requirement. The slot itself stays game-owned, so its tooltip, drag/drop, and
+    /// stack behavior remain untouched.
+    /// </summary>
+    private static void UpdateDedicatedDealMatchAccents(HandoverScreen screen, PanelState state)
+    {
+        if (screen == null || state?.SlotUIs == null)
+            return;
+
+        var requirements = GetHandoverRequirements(screen, GetCustomerSlots(screen));
+        for (var index = 0; index < state.SlotUIs.Length; index++)
+        {
+            var slotUi = state.SlotUIs[index];
+            if (slotUi == null)
+                continue;
+
+            var sourceSlot = GetAssignedItemSlot(slotUi);
+            var isMatch = false;
+            if (sourceSlot?.ItemInstance != null)
+            {
+                for (var requirementIndex = 0; requirementIndex < requirements.Count; requirementIndex++)
+                {
+                    if (!ItemMatchesRequirement(sourceSlot.ItemInstance, requirements[requirementIndex]))
+                        continue;
+
+                    isMatch = true;
+                    break;
+                }
+            }
+
+            SetDealMatchAccent(slotUi, isMatch);
+        }
+    }
+
+    private static ItemSlot GetAssignedItemSlot(ItemSlotUI slotUi)
+    {
+        if (slotUi == null)
+            return null;
+
+        // This is the public game-owned binding on both current runtime wrappers. Prefer it to
+        // reflection so the accent follows the same slot the native UI is currently rendering.
+        if (slotUi.assignedSlot != null)
+            return slotUi.assignedSlot;
+
+        var candidate = ReflectionUtils.TryGetFieldOrProperty(slotUi, "AssignedSlot")
+            ?? ReflectionUtils.TryGetFieldOrProperty(slotUi, "assignedSlot")
+            ?? ReflectionUtils.TryGetFieldOrProperty(slotUi, "Slot")
+            ?? ReflectionUtils.TryGetFieldOrProperty(slotUi, "slot");
+        return Utils.Is<ItemSlot>(candidate, out var slot) ? slot : null;
+    }
+
+    private static void SetDealMatchAccent(ItemSlotUI slotUi, bool enabled)
+    {
+        var slotRect = slotUi?.Rect ?? slotUi?.transform as RectTransform;
+        if (slotRect == null)
+            return;
+
+        var accent = slotRect.Find("PackRat_DealMatchAccent") as RectTransform;
+        if (accent == null)
+        {
+            var accentGo = new GameObject("PackRat_DealMatchAccent");
+            accent = accentGo.AddComponent<RectTransform>();
+            accent.SetParent(slotRect, worldPositionStays: false);
+            accent.anchorMin = Vector2.zero;
+            accent.anchorMax = Vector2.one;
+            accent.pivot = new Vector2(0.5f, 0.5f);
+            // Place the border just outside the slot's native background so it remains visible
+            // over icon art without covering the item or its quantity label.
+            accent.offsetMin = new Vector2(-2f, -2f);
+            accent.offsetMax = new Vector2(2f, 2f);
+            accentGo.AddComponent<LayoutElement>().ignoreLayout = true;
+            CreateDealMatchAccentEdge(accent, "Top", new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(0.5f, 1f), new Vector2(0f, 0f), new Vector2(0f, 4f));
+            CreateDealMatchAccentEdge(accent, "Bottom", new Vector2(0f, 0f), new Vector2(1f, 0f),
+                new Vector2(0.5f, 0f), new Vector2(0f, 0f), new Vector2(0f, 4f));
+            CreateDealMatchAccentEdge(accent, "Left", new Vector2(0f, 0f), new Vector2(0f, 1f),
+                new Vector2(0f, 0.5f), new Vector2(0f, 0f), new Vector2(4f, 0f));
+            CreateDealMatchAccentEdge(accent, "Right", new Vector2(1f, 0f), new Vector2(1f, 1f),
+                new Vector2(1f, 0.5f), new Vector2(0f, 0f), new Vector2(4f, 0f));
+        }
+
+        accent.gameObject.SetActive(enabled);
+        if (enabled)
+            accent.SetAsLastSibling();
+    }
+
+    private static void CreateDealMatchAccentEdge(RectTransform parent, string name, Vector2 anchorMin,
+        Vector2 anchorMax, Vector2 pivot, Vector2 anchoredPosition, Vector2 sizeDelta)
+    {
+        var edgeGo = new GameObject(name);
+        var edge = edgeGo.AddComponent<RectTransform>();
+        edge.SetParent(parent, worldPositionStays: false);
+        edge.anchorMin = anchorMin;
+        edge.anchorMax = anchorMax;
+        edge.pivot = pivot;
+        edge.anchoredPosition = anchoredPosition;
+        edge.sizeDelta = sizeDelta;
+        var image = edgeGo.AddComponent<Image>();
+        image.color = new Color32(58, 171, 232, 255);
+        image.raycastTarget = false;
+    }
+
+    /// <summary>
+    /// Contracts use a product identifier while inventory definitions may expose the same value
+    /// as an ID, display name, or packaging-derived name. Normalize these representations before
+    /// comparing so an equivalent highest-quality product is not omitted from a deal fill.
+    /// </summary>
+    private static bool AreEquivalentProductIdentifiers(string required, params string[] candidates)
+    {
+        var normalizedRequired = NormalizeProductIdentifier(required);
+        if (string.IsNullOrEmpty(normalizedRequired) || candidates == null)
+            return false;
+
+        for (var index = 0; index < candidates.Length; index++)
+        {
+            if (string.Equals(normalizedRequired, NormalizeProductIdentifier(candidates[index]),
+                    StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string NormalizeProductIdentifier(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var buffer = new char[value.Length];
+        var count = 0;
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (!char.IsLetterOrDigit(value[index]))
+                continue;
+
+            buffer[count++] = char.ToUpperInvariant(value[index]);
+        }
+
+        return new string(buffer, 0, count);
+    }
+
+    private static int MoveMatchingItemToDeal(ItemSlot source, List<ItemSlot> customerSlots, int requestedQuantity)
+    {
+        if (source?.ItemInstance == null || source.IsRemovalLocked || customerSlots == null || requestedQuantity <= 0)
+            return 0;
+
+        var item = source.ItemInstance;
+        var available = Mathf.Max(0, source.Quantity);
+        for (var index = 0; index < customerSlots.Count && available > 0 && requestedQuantity > 0; index++)
+        {
+            var destination = customerSlots[index];
+            if (destination == null || destination.IsAddLocked || !destination.DoesItemMatchHardFilters(item))
+                continue;
+            if (destination.ItemInstance != null && !destination.ItemInstance.CanStackWith(item, checkQuantities: false))
+                continue;
+
+            var capacity = Mathf.Max(0, destination.GetCapacityForItem(item, checkPlayerFilters: false));
+            var requestedMove = Mathf.Min(available, Mathf.Min(requestedQuantity, capacity));
+            if (requestedMove <= 0)
+                continue;
+
+            var transfer = item.GetCopy(requestedMove);
+            if (transfer == null)
+                continue;
+
+            var beforeQuantity = destination.Quantity;
+            destination.AddItem(transfer);
+            var moved = Mathf.Clamp(destination.Quantity - beforeQuantity, 0, requestedMove);
+            if (moved <= 0)
+                continue;
+
+            source.ChangeQuantity(-moved);
+            return moved;
+        }
+
+        return 0;
+    }
+
+    private static bool TryConvertToInt(object value, out int result)
+    {
+        result = 0;
+        if (value == null)
+            return false;
+
+        try
+        {
+            result = Convert.ToInt32(value);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void LogAutoFillMatchDiagnostics(List<HandoverRequirement> requirements,
+        List<HandoverTransferSource> sources)
+    {
+        var requested = new List<string>();
+        if (requirements != null)
+        {
+            for (var index = 0; index < requirements.Count; index++)
+            {
+                var requirement = requirements[index];
+                requested.Add($"{requirement.ProductId} q={requirement.Quality}({requirement.QualityRank}) x{requirement.Remaining}");
+            }
+        }
+
+        var candidates = new List<string>();
+        if (sources != null)
+        {
+            for (var sourceIndex = 0; sourceIndex < sources.Count; sourceIndex++)
+            {
+                var source = sources[sourceIndex];
+                if (source?.Slots == null)
+                    continue;
+
+                for (var slotIndex = 0; slotIndex < source.Slots.Count && candidates.Count < 24; slotIndex++)
+                {
+                    var item = source.Slots[slotIndex]?.ItemInstance;
+                    if (item?.Definition == null)
+                        continue;
+
+                    var id = ReflectionUtils.TryGetFieldOrProperty(item.Definition, "ID")?.ToString() ?? "?";
+                    var name = ReflectionUtils.TryGetFieldOrProperty(item, "Name")?.ToString() ?? "?";
+                    var hasQuality = TryGetItemQuality(item, out var quality, out var qualityRank);
+                    candidates.Add($"{source.Name}:{id}/{name} q={(hasQuality ? quality : "?")}" +
+                        $"({(hasQuality ? qualityRank.ToString() : "?")})");
+                }
+            }
+        }
+
+        ModLogger.Warn($"[HandoverUI] Auto-fill no-match diagnostics: requested=[{string.Join("; ", requested)}], " +
+            $"candidates=[{string.Join("; ", candidates)}].");
+    }
+
+    private static void NotifyHandoverItemsChanged(HandoverScreen screen)
+    {
+        if (screen == null)
+            return;
+
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.NonPublic;
+        var names = new[] { "CustomerItemsChanged", "UpdateDoneButton", "UpdateSuccessChance" };
+        for (var index = 0; index < names.Length; index++)
+        {
+            try
+            {
+                var method = ReflectionUtils.GetMethod(screen.GetType(), names[index], flags);
+                if (method != null && method.GetParameters().Length == 0)
+                    method.Invoke(screen, null);
+            }
+            catch (Exception ex)
+            {
+                ModLogger.Debug($"[HandoverUI] Could not invoke {names[index]} after auto-fill: {ex.Message}");
+            }
+        }
+    }
+
+    private static void SetTransferStatus(PanelState state, string text, Color color)
+    {
+        if (state == null)
+            return;
+
+        state.TransferStatus = text;
+        if (state.TransferStatusLabel == null)
+            return;
+
+        state.TransferStatusLabel.gameObject.SetActive(!string.IsNullOrEmpty(text));
+        state.TransferStatusLabel.text = text;
+        state.TransferStatusLabel.color = color;
     }
 
     private static RectTransform FindDedicatedBrowserHeader(PanelState state)
