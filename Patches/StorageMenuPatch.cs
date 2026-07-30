@@ -11,12 +11,14 @@ using UnityEngine;
 using UnityEngine.UI;
 
 #if MONO
+using ScheduleOne;
 using ScheduleOne.DevUtilities;
 using ScheduleOne.ItemFramework;
 using ScheduleOne.Levelling;
 using ScheduleOne.Money;
 using ScheduleOne.PlayerScripts;
 using ScheduleOne.Product;
+using S1Contract = ScheduleOne.Quests.Contract;
 using ScheduleOne.Storage;
 using ScheduleOne.UI;
 using ScheduleOne.UI.Items;
@@ -24,12 +26,14 @@ using S1TMP = TMPro.TextMeshProUGUI;
 using S1Action = System.Action;
 #else
 using Il2CppInterop.Runtime;
+using Il2CppScheduleOne;
 using Il2CppScheduleOne.DevUtilities;
 using Il2CppScheduleOne.ItemFramework;
 using Il2CppScheduleOne.Levelling;
 using Il2CppScheduleOne.Money;
 using Il2CppScheduleOne.PlayerScripts;
 using Il2CppScheduleOne.Product;
+using S1Contract = Il2CppScheduleOne.Quests.Contract;
 using Il2CppScheduleOne.Storage;
 using Il2CppScheduleOne.UI;
 using Il2CppScheduleOne.UI.Items;
@@ -77,7 +81,8 @@ public static class StorageMenuPatch
         General,
         Tiers,
         Layout,
-        Routing
+        Routing,
+        Metrics
     }
 
     private enum StandaloneBackpackLayoutView
@@ -115,6 +120,21 @@ public static class StorageMenuPatch
         public Image Background;
         public Text Label;
         public Action ToggleAction;
+    }
+
+    /// <summary>
+    /// Aggregates one product definition across the actual backpack slots for the optional
+    /// metrics tray. Browser search and sorting must never change these totals.
+    /// </summary>
+    private sealed class StandaloneBackpackProductMetric
+    {
+        public string Id;
+        public string Name;
+        public int Quantity;
+        public float UnitPrice;
+        public bool HasUnitPrice;
+        public object Definition;
+        public int ActiveOrderQuantity;
     }
 
     private sealed class StandaloneBackpackSortTab
@@ -257,6 +277,7 @@ public static class StorageMenuPatch
         public RectTransform SettingsTiersPage;
         public RectTransform SettingsLayoutPage;
         public RectTransform SettingsRoutingPage;
+        public RectTransform SettingsMetricsPage;
         public Text SettingsSessionStatusValue;
         public Image SettingsTabIndicator;
         public Text VisualTitleLabel;
@@ -284,6 +305,18 @@ public static class StorageMenuPatch
         public Action OrganizeAction;
         public Action ConsolidateAction;
         public Action ClearFiltersAction;
+        public RectTransform MetricsTrayRoot;
+        public RectTransform MetricsTrayPanel;
+        public RectTransform MetricsTrayContent;
+        public Text MetricsTraySummary;
+        public Button MetricsTrayToggleButton;
+        public Text MetricsTrayToggleLabel;
+        public CanvasGroup MetricsTrayCanvasGroup;
+        public readonly List<GameObject> MetricsTrayRows = new List<GameObject>();
+        public bool MetricsTrayExpanded;
+        public int MetricsTrayMotionGeneration;
+        public string MetricsTrayFingerprint;
+        public float NextMetricsTrayRefreshTime;
         public Button SettingsButton;
         public Text SettingsLabel;
         public Button DoneButton;
@@ -292,6 +325,7 @@ public static class StorageMenuPatch
         public Button SettingsTiersButton;
         public Button SettingsLayoutButton;
         public Button SettingsRoutingButton;
+        public Button SettingsMetricsButton;
         public readonly List<GameObject> SettingsRows = new List<GameObject>();
         public bool SettingsOpen;
         public bool AwaitingToggleKey;
@@ -408,11 +442,15 @@ public static class StorageMenuPatch
     private const float SearchFocusDuration = 0.10f;
     private const float TabIndicatorDuration = 0.12f;
     private const float PageWipeDuration = 0.14f;
+    private const float MetricsTrayWidth = 190f;
+    private const float MetricsTrayMotionDuration = 0.16f;
     private const int PillSpriteSize = 32;
     private const int PillSpriteBorder = 8;
     private const float PillSpriteCornerRadius = 7f;
     private const int DesktopTabSpriteSize = 32;
     private const int DesktopTabCornerRadius = 10;
+    private const int MetricsTrayTabSpriteSize = 32;
+    private const int MetricsTrayTabCornerRadius = 8;
     private const string SettingsCogResourceName = "PackRat.assets.settings-cog-ui.png";
     private const int StorageBackpackSlotsPerPage = 20;
     private const int StorageBackpackGridRows = 4;
@@ -434,6 +472,8 @@ public static class StorageMenuPatch
     private static Texture2D _pillButtonTexture;
     private static Sprite _desktopTabSprite;
     private static Texture2D _desktopTabTexture;
+    private static Sprite _metricsTrayTabSprite;
+    private static Texture2D _metricsTrayTabTexture;
     private static readonly List<ItemSlot> ActiveInventorySlots = new List<ItemSlot>();
     private static readonly List<ItemSlot> ActiveStorageSlots = new List<ItemSlot>();
     private static readonly List<ItemSlot> ActiveBackpackSlots = new List<ItemSlot>();
@@ -800,16 +840,30 @@ public static class StorageMenuPatch
 
         var currentQuantities = new Dictionary<string, float>();
         AddStandaloneItemQuantities(currentQuantities, GetStandaloneSourceSlots(state));
+        var quantitiesChanged = currentQuantities.Count != state.OpenItemQuantities.Count;
         foreach (var pair in currentQuantities)
         {
             state.OpenItemQuantities.TryGetValue(pair.Key, out var openingQuantity);
             if (!Mathf.Approximately(openingQuantity, pair.Value))
+            {
                 state.RecentItemTimestamps[pair.Key] = Time.unscaledTime;
+                quantitiesChanged = true;
+            }
         }
 
         state.OpenItemQuantities.Clear();
         foreach (var pair in currentQuantities)
             state.OpenItemQuantities[pair.Key] = pair.Value;
+
+        // Drag/drop remains game-owned, but the tray reads the same backing slots. Refresh its
+        // lightweight aggregate only when quantities actually change so it stays current without
+        // rebuilding UI every frame.
+        var shouldRefreshMetrics = quantitiesChanged || Time.unscaledTime >= state.NextMetricsTrayRefreshTime;
+        if (shouldRefreshMetrics && state.IsHotkeyBackpack && state.MetricsTrayRoot != null)
+        {
+            state.NextMetricsTrayRefreshTime = Time.unscaledTime + 1f;
+            RefreshStandaloneMetricsTray(state, GetStandaloneSourceSlots(state));
+        }
     }
 
     private static void AddStandaloneItemQuantities(Dictionary<string, float> quantities, List<ItemSlot> slots)
@@ -1478,6 +1532,7 @@ public static class StorageMenuPatch
         CreateStandaloneSettingsButton(state.HeaderRoot, state);
         CreateStandaloneConsolidateButton(state.HeaderRoot, state);
         EnsureStandaloneSettingsPanel(surface, state);
+        EnsureStandaloneMetricsTray(state, GetStandaloneSourceSlots(state));
 
         ConfigureStandaloneHeaderLabels(state);
         BindStandaloneSearchInput(state);
@@ -1502,6 +1557,618 @@ public static class StorageMenuPatch
             state.VisualMetaLabel.text =
                 $"{usedSlotCount}/{slotCount} USED{filterSummary}  •  PAGE {state.CurrentPage + 1}/{Mathf.Max(1, totalPages)}";
         }
+    }
+
+    /// <summary>
+    /// Builds the hotkey-only product tray as a child of the card background. Anchoring against
+    /// that background means the tray automatically follows the grid's responsive scale and its
+    /// visual height, while its content expands outward into the unused left-side space.
+    /// </summary>
+    private static void EnsureStandaloneMetricsTray(StandaloneBackpackState state, List<ItemSlot> backpackSlots)
+    {
+        if (state?.VisualRoot == null)
+            return;
+
+        var shouldShow = state.IsHotkeyBackpack && Configuration.Instance.ShowMetricsTray;
+        if (!shouldShow)
+        {
+            if (state.MetricsTrayRoot != null)
+                state.MetricsTrayRoot.gameObject.SetActive(false);
+            if (state.MetricsTrayToggleButton != null)
+                state.MetricsTrayToggleButton.gameObject.SetActive(false);
+            state.MetricsTrayExpanded = false;
+            return;
+        }
+
+        if (state.MetricsTrayRoot == null)
+            CreateStandaloneMetricsTray(state);
+
+        if (state.MetricsTrayRoot == null || state.MetricsTrayToggleButton == null)
+            return;
+
+        state.MetricsTrayRoot.gameObject.SetActive(true);
+        state.MetricsTrayToggleButton.gameObject.SetActive(true);
+        RefreshStandaloneMetricsTray(state, backpackSlots);
+        if (!state.MetricsTrayExpanded)
+            SnapStandaloneMetricsTray(state);
+    }
+
+    private static void CreateStandaloneMetricsTray(StandaloneBackpackState state)
+    {
+        var visualRoot = state?.VisualRoot;
+        if (visualRoot == null)
+            return;
+
+        var trayGo = new GameObject("PackRat_BackpackMetricsTray");
+        var tray = trayGo.AddComponent<RectTransform>();
+        tray.SetParent(visualRoot, worldPositionStays: false);
+        tray.anchorMin = new Vector2(0f, 0f);
+        tray.anchorMax = new Vector2(0f, 1f);
+        tray.pivot = new Vector2(1f, 0.5f);
+        // Keep the extension mechanically joined to the card; the edge-to-edge seam makes it
+        // read as an opened backpack compartment rather than another floating modal.
+        tray.anchoredPosition = Vector2.zero;
+        tray.sizeDelta = new Vector2(0f, 0f);
+        var trayImage = trayGo.AddComponent<Image>();
+        trayImage.color = Color.clear;
+        trayImage.raycastTarget = false;
+        trayGo.AddComponent<RectMask2D>();
+        state.MetricsTrayRoot = tray;
+        state.MetricsTrayCanvasGroup = Utils.GetOrAddComponentSafe<CanvasGroup>(trayGo);
+
+        var panelGo = new GameObject("Panel");
+        var panel = panelGo.AddComponent<RectTransform>();
+        panel.SetParent(tray, worldPositionStays: false);
+        panel.anchorMin = new Vector2(1f, 0f);
+        panel.anchorMax = new Vector2(1f, 1f);
+        panel.pivot = new Vector2(1f, 0.5f);
+        panel.sizeDelta = new Vector2(MetricsTrayWidth, 0f);
+        panel.anchoredPosition = Vector2.zero;
+        var panelImage = panelGo.AddComponent<Image>();
+        panelImage.color = new Color32(9, 19, 27, 252);
+        panelImage.raycastTarget = true;
+        state.MetricsTrayPanel = panel;
+
+        var title = CreateSearchText(panel, "Title", new Color32(217, 236, 248, 255));
+        title.text = "PRODUCT METRICS";
+        title.fontSize = 9;
+        title.fontStyle = FontStyle.Bold;
+        title.alignment = TextAnchor.MiddleLeft;
+        var titleRect = title.GetComponent<RectTransform>();
+        titleRect.anchorMin = new Vector2(0f, 1f);
+        titleRect.anchorMax = new Vector2(1f, 1f);
+        titleRect.pivot = new Vector2(0.5f, 1f);
+        titleRect.offsetMin = new Vector2(10f, -28f);
+        titleRect.offsetMax = new Vector2(-10f, -7f);
+
+        state.MetricsTraySummary = CreateSearchText(panel, "Summary", new Color32(135, 191, 222, 255));
+        state.MetricsTraySummary.fontSize = 7;
+        state.MetricsTraySummary.fontStyle = FontStyle.Bold;
+        state.MetricsTraySummary.alignment = TextAnchor.MiddleLeft;
+        var summaryRect = state.MetricsTraySummary.GetComponent<RectTransform>();
+        summaryRect.anchorMin = new Vector2(0f, 0f);
+        summaryRect.anchorMax = new Vector2(1f, 0f);
+        summaryRect.pivot = new Vector2(0.5f, 0f);
+        summaryRect.offsetMin = new Vector2(10f, 7f);
+        summaryRect.offsetMax = new Vector2(-10f, 27f);
+
+        var scrollGo = new GameObject("Scroll");
+        var scrollRect = scrollGo.AddComponent<RectTransform>();
+        scrollRect.SetParent(panel, worldPositionStays: false);
+        scrollRect.anchorMin = new Vector2(0f, 0f);
+        scrollRect.anchorMax = new Vector2(1f, 1f);
+        scrollRect.offsetMin = new Vector2(8f, 31f);
+        scrollRect.offsetMax = new Vector2(-8f, -32f);
+        var scrollImage = scrollGo.AddComponent<Image>();
+        scrollImage.color = Color.clear;
+        scrollImage.raycastTarget = true;
+        var scroll = scrollGo.AddComponent<ScrollRect>();
+        scroll.horizontal = false;
+        scroll.vertical = true;
+        scroll.movementType = ScrollRect.MovementType.Clamped;
+        scroll.scrollSensitivity = 18f;
+
+        var viewportGo = new GameObject("Viewport");
+        var viewport = viewportGo.AddComponent<RectTransform>();
+        viewport.SetParent(scrollRect, worldPositionStays: false);
+        viewport.anchorMin = Vector2.zero;
+        viewport.anchorMax = Vector2.one;
+        viewport.offsetMin = Vector2.zero;
+        viewport.offsetMax = Vector2.zero;
+        var viewportImage = viewportGo.AddComponent<Image>();
+        viewportImage.color = Color.clear;
+        viewportImage.raycastTarget = true;
+        viewportGo.AddComponent<RectMask2D>();
+
+        var contentGo = new GameObject("Content");
+        var content = contentGo.AddComponent<RectTransform>();
+        content.SetParent(viewport, worldPositionStays: false);
+        content.anchorMin = new Vector2(0f, 1f);
+        content.anchorMax = new Vector2(1f, 1f);
+        content.pivot = new Vector2(0.5f, 1f);
+        content.anchoredPosition = Vector2.zero;
+        scroll.viewport = viewport;
+        scroll.content = content;
+        state.MetricsTrayContent = content;
+
+        var toggle = CreateStandaloneActionButton(visualRoot, "MetricsTrayToggle",
+            new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(-28f, -24f), new Vector2(0f, 24f),
+            "<<", 7, out state.MetricsTrayToggleLabel);
+        state.MetricsTrayToggleButton = toggle;
+        ApplyMetricsTrayTabPresentation(toggle.targetGraphic as Image);
+        // The tray owns this control's colour and geometry so the default Button tint cannot
+        // make its side tab look like a vertically-focused desktop tab.
+        toggle.transition = Selectable.Transition.None;
+        EventHelper.AddListener(() => ToggleStandaloneMetricsTray(state), toggle.onClick);
+    }
+
+    private static void ToggleStandaloneMetricsTray(StandaloneBackpackState state)
+    {
+        if (state?.MetricsTrayRoot == null || !Configuration.Instance.ShowMetricsTray)
+            return;
+
+        state.MetricsTrayExpanded = !state.MetricsTrayExpanded;
+        if (state.MetricsTrayExpanded)
+            RefreshStandaloneMetricsTray(state, GetStandaloneSourceSlots(state));
+        PlayStandaloneMetricsTrayMotion(state);
+    }
+
+    private static void PlayStandaloneMetricsTrayMotion(StandaloneBackpackState state)
+    {
+        if (state?.MetricsTrayRoot == null)
+            return;
+
+        var generation = ++state.MetricsTrayMotionGeneration;
+        if (!Configuration.Instance.EnableUiAnimations || Configuration.Instance.ReduceUiMotion)
+        {
+            SnapStandaloneMetricsTray(state);
+            return;
+        }
+
+        var startWidth = state.MetricsTrayRoot.sizeDelta.x;
+        var startAlpha = state.MetricsTrayCanvasGroup?.alpha ?? 1f;
+        var targetWidth = state.MetricsTrayExpanded ? MetricsTrayWidth : 0f;
+        var targetAlpha = state.MetricsTrayExpanded ? 1f : 0f;
+        MelonCoroutines.Start(RunStandaloneMetricsTrayMotion(state, generation, startWidth, targetWidth, startAlpha,
+            targetAlpha));
+    }
+
+    private static IEnumerator RunStandaloneMetricsTrayMotion(StandaloneBackpackState state, int generation,
+        float startWidth, float targetWidth, float startAlpha, float targetAlpha)
+    {
+        var elapsed = 0f;
+        while (state != null && state.MetricsTrayMotionGeneration == generation && elapsed < MetricsTrayMotionDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            var t = EaseOutCubic(Mathf.Clamp01(elapsed / MetricsTrayMotionDuration));
+            if (state.MetricsTrayRoot != null)
+                state.MetricsTrayRoot.sizeDelta = new Vector2(Mathf.Lerp(startWidth, targetWidth, t), 0f);
+            PositionStandaloneMetricsTrayToggle(state, state.MetricsTrayRoot?.sizeDelta.x ?? targetWidth);
+            if (state.MetricsTrayCanvasGroup != null)
+                state.MetricsTrayCanvasGroup.alpha = Mathf.Lerp(startAlpha, targetAlpha, t);
+            yield return null;
+        }
+
+        if (state != null && state.MetricsTrayMotionGeneration == generation)
+            SnapStandaloneMetricsTray(state);
+    }
+
+    private static void SnapStandaloneMetricsTray(StandaloneBackpackState state)
+    {
+        if (state?.MetricsTrayRoot == null)
+            return;
+
+        var expanded = state.MetricsTrayExpanded && Configuration.Instance.ShowMetricsTray;
+        state.MetricsTrayRoot.sizeDelta = new Vector2(expanded ? MetricsTrayWidth : 0f, 0f);
+        PositionStandaloneMetricsTrayToggle(state, state.MetricsTrayRoot.sizeDelta.x);
+        if (state.MetricsTrayCanvasGroup != null)
+        {
+            state.MetricsTrayCanvasGroup.alpha = expanded ? 1f : 0f;
+            state.MetricsTrayCanvasGroup.blocksRaycasts = expanded;
+        }
+        if (state.MetricsTrayToggleLabel != null)
+            state.MetricsTrayToggleLabel.text = expanded ? ">>" : "<<";
+        var toggleImage = state.MetricsTrayToggleButton?.targetGraphic as Image;
+        if (toggleImage != null)
+            toggleImage.color = expanded
+                ? new Color32(48, 128, 170, 255)
+                : new Color32(20, 35, 47, 255);
+    }
+
+    /// <summary>
+    /// Keeps the side tab attached to the drawer's exposed edge. The drawer itself needs a
+    /// RectMask2D for the wipe animation, so the control remains a sibling and follows the
+    /// drawer's measured width instead of being clipped as a child of that mask.
+    /// </summary>
+    private static void PositionStandaloneMetricsTrayToggle(StandaloneBackpackState state, float trayWidth)
+    {
+        var toggleRect = state?.MetricsTrayToggleButton?.GetComponent<RectTransform>();
+        if (toggleRect == null)
+            return;
+
+        trayWidth = Mathf.Max(0f, trayWidth);
+        toggleRect.offsetMin = new Vector2(-trayWidth - 28f, -24f);
+        toggleRect.offsetMax = new Vector2(-trayWidth, 24f);
+    }
+
+    private static void RefreshStandaloneMetricsTray(StandaloneBackpackState state, List<ItemSlot> backpackSlots)
+    {
+        if (state?.MetricsTrayContent == null)
+            return;
+
+        var metrics = GetStandaloneBackpackProductMetrics(backpackSlots);
+        var fingerprint = BuildStandaloneMetricsFingerprint(metrics);
+        if (string.Equals(state.MetricsTrayFingerprint, fingerprint, StringComparison.Ordinal))
+            return;
+
+        state.MetricsTrayFingerprint = fingerprint;
+        for (var i = 0; i < state.MetricsTrayRows.Count; i++)
+        {
+            if (state.MetricsTrayRows[i] != null)
+                UnityEngine.Object.Destroy(state.MetricsTrayRows[i]);
+        }
+        state.MetricsTrayRows.Clear();
+
+        for (var i = 0; i < metrics.Count; i++)
+            CreateStandaloneMetricsTrayRow(state, metrics[i]);
+
+        if (metrics.Count == 0)
+        {
+            var empty = CreateSearchText(state.MetricsTrayContent, "Empty", new Color32(144, 171, 188, 255));
+            empty.text = "NO PRODUCTS IN BACKPACK";
+            empty.fontSize = 7;
+            empty.fontStyle = FontStyle.Bold;
+            empty.alignment = TextAnchor.MiddleCenter;
+            var emptyRect = empty.GetComponent<RectTransform>();
+            emptyRect.anchorMin = new Vector2(0f, 1f);
+            emptyRect.anchorMax = new Vector2(1f, 1f);
+            emptyRect.pivot = new Vector2(0.5f, 1f);
+            emptyRect.offsetMin = new Vector2(2f, -30f);
+            emptyRect.offsetMax = new Vector2(-2f, -2f);
+            state.MetricsTrayRows.Add(empty.gameObject);
+        }
+
+        if (state.MetricsTraySummary != null)
+        {
+            var config = Configuration.Instance;
+            var summaryParts = new List<string> { metrics.Count + " TYPES" };
+            if (config.ShowProductQuantityTotalMetric)
+                summaryParts.Add("QTY " + metrics.Sum(metric => metric.Quantity));
+            if (config.ShowProductTotalPriceMetric)
+            {
+                var totalPrice = metrics.Where(metric => metric.HasUnitPrice)
+                    .Sum(metric => metric.UnitPrice * metric.Quantity);
+                summaryParts.Add("VALUE " + FormatStandaloneProductPrice(totalPrice));
+            }
+            state.MetricsTraySummary.text = string.Join("  •  ", summaryParts);
+        }
+
+        // Avoid ContentSizeFitter here. It is rebuilt by the host game's menu while this
+        // injected card is animating, which can collapse the viewport to zero. Explicit row
+        // geometry keeps the content scrollable and visible on every scale.
+        state.MetricsTrayContent.sizeDelta = new Vector2(0f, Mathf.Max(1f, 2f + (state.MetricsTrayRows.Count * 40f)));
+        Canvas.ForceUpdateCanvases();
+        LayoutRebuilder.ForceRebuildLayoutImmediate(state.MetricsTrayContent);
+    }
+
+    private static List<StandaloneBackpackProductMetric> GetStandaloneBackpackProductMetrics(List<ItemSlot> slots)
+    {
+        var metricsById = new Dictionary<string, StandaloneBackpackProductMetric>(StringComparer.OrdinalIgnoreCase);
+        if (slots == null)
+            return new List<StandaloneBackpackProductMetric>();
+
+        for (var i = 0; i < slots.Count; i++)
+        {
+            var slot = slots[i];
+            var item = slot?.ItemInstance;
+            if (!IsProductItemInstance(item))
+                continue;
+
+            var id = GetSlotDefinitionId(slot);
+            if (string.IsNullOrWhiteSpace(id))
+                continue;
+
+            if (!metricsById.TryGetValue(id, out var metric))
+            {
+                metric = new StandaloneBackpackProductMetric
+                {
+                    Id = id,
+                    Name = GetSlotName(slot),
+                    Definition = item.Definition,
+                    HasUnitPrice = TryGetStandaloneProductUnitPrice(item, out var unitPrice),
+                    UnitPrice = unitPrice
+                };
+                metricsById[id] = metric;
+            }
+
+            metric.Quantity += GetWholeStandaloneSlotQuantity(slot);
+        }
+
+        var metrics = metricsById.Values
+            .OrderBy(metric => metric.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        for (var index = 0; index < metrics.Count; index++)
+            metrics[index].ActiveOrderQuantity = GetStandaloneActiveOrderQuantity(metrics[index]);
+
+        return metrics;
+    }
+
+    private static bool TryGetStandaloneProductUnitPrice(ItemInstance item, out float unitPrice)
+    {
+        unitPrice = 0f;
+        var definition = item?.Definition;
+        if (definition == null)
+            return false;
+
+        try
+        {
+            // Use the game's typed APIs first. IL2CPP wrappers do not always expose inherited
+            // ProductDefinition members through ordinary reflection, which was leaving the tray
+            // with a false zero even though the item itself was a valid product.
+#if MONO
+            var productDefinition = definition as ProductDefinition;
+            var productItem = item as ProductItemInstance;
+#else
+            var productDefinition = definition.TryCast<ProductDefinition>();
+            var productItem = item.TryCast<ProductItemInstance>();
+#endif
+            if (productDefinition != null)
+            {
+                var livePrice = Mathf.Max(0f, productDefinition.Price);
+                if (livePrice > 0f)
+                {
+                    unitPrice = livePrice;
+                    return true;
+                }
+
+                var definitionMarketValue = Mathf.Max(0f, productDefinition.MarketValue);
+                if (definitionMarketValue > 0f)
+                {
+                    unitPrice = definitionMarketValue;
+                    return true;
+                }
+
+                var basePrice = Mathf.Max(0f, productDefinition.BasePrice);
+                if (basePrice > 0f)
+                {
+                    unitPrice = basePrice;
+                    return true;
+                }
+            }
+
+            // This is the exact value the game assigns to the stack. It remains a useful last
+            // typed fallback for future product subclasses that customise their definition.
+            if (productItem != null)
+            {
+                var monetaryValue = Mathf.Max(0f, productItem.GetMonetaryValue());
+                var stackQuantityValue = ReflectionUtils.TryGetFieldOrProperty(productItem, "Quantity");
+                var stackQuantity = stackQuantityValue != null ? Mathf.Max(1f, Convert.ToSingle(stackQuantityValue)) : 1f;
+                if (monetaryValue > 0f)
+                {
+                    unitPrice = monetaryValue / stackQuantity;
+                    return unitPrice > 0f;
+                }
+            }
+
+            // Retain field/property discovery for modded definition types which may not inherit
+            // the base product definition directly.
+            var price = ReflectionUtils.TryGetFieldOrProperty(definition, "Price");
+            if (price != null)
+            {
+                unitPrice = Mathf.Max(0f, Convert.ToSingle(price));
+                if (unitPrice > 0f)
+                    return true;
+            }
+
+            // ProductManager can briefly return zero while generated products are registering.
+            // MarketValue is the product definition's persistent fallback used by the game's
+            // monetary-value calculation, so the tray remains useful during that window.
+            var marketValue = ReflectionUtils.TryGetFieldOrProperty(definition, "MarketValue")
+                ?? ReflectionUtils.TryGetFieldOrProperty(definition, "BasePrice");
+            if (marketValue == null)
+                return false;
+
+            unitPrice = Mathf.Max(0f, Convert.ToSingle(marketValue));
+            return unitPrice > 0f;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Returns the outstanding quantity across the player's active contracts for this product.
+    /// Marijuana mixes additionally match their shared base strain, so a Granddaddy Purple
+    /// order remains visible beside a Granddaddy Purple product with added effects.
+    /// </summary>
+    private static int GetStandaloneActiveOrderQuantity(StandaloneBackpackProductMetric metric)
+    {
+        if (metric == null)
+            return 0;
+
+        var metricProductIds = GetStandaloneProductIdentityIds(metric.Definition, metric.Id);
+        if (metricProductIds.Count == 0)
+            return 0;
+
+        try
+        {
+            object contracts = S1Contract.Contracts;
+            var contractCount = ReflectionUtils.TryGetListCount(contracts);
+            var outstandingQuantity = 0;
+            for (var contractIndex = 0; contractIndex < contractCount; contractIndex++)
+            {
+                var contract = ReflectionUtils.TryGetListItem(contracts, contractIndex);
+                if (contract == null || !string.Equals(ReflectionUtils.TryGetFieldOrProperty(contract, "State")?.ToString(),
+                        "Active", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var productList = ReflectionUtils.TryGetFieldOrProperty(contract, "ProductList");
+                var entries = ReflectionUtils.TryGetFieldOrProperty(productList, "entries")
+                    ?? ReflectionUtils.TryGetFieldOrProperty(productList, "Entries");
+                var entryCount = ReflectionUtils.TryGetListCount(entries);
+                for (var entryIndex = 0; entryIndex < entryCount; entryIndex++)
+                {
+                    var entry = ReflectionUtils.TryGetListItem(entries, entryIndex);
+                    var productId = ReflectionUtils.TryGetFieldOrProperty(entry, "ProductID")?.ToString();
+                    if (string.IsNullOrWhiteSpace(productId) || !TryGetStandaloneMetricQuantity(
+                            ReflectionUtils.TryGetFieldOrProperty(entry, "Quantity"), out var quantity) || quantity <= 0)
+                        continue;
+
+                    var orderedDefinition = GetStandaloneRegisteredItemDefinition(productId);
+                    var orderProductIds = GetStandaloneProductIdentityIds(orderedDefinition, productId);
+                    if (metricProductIds.Overlaps(orderProductIds))
+                        outstandingQuantity += quantity;
+                }
+            }
+
+            return outstandingQuantity;
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Debug("Unable to read active product orders for metrics tray: " + ex.Message);
+            return 0;
+        }
+    }
+
+    private static HashSet<string> GetStandaloneProductIdentityIds(object definition, string fallbackId)
+    {
+        var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddStandaloneProductIdentity(identities, fallbackId);
+        AddStandaloneProductIdentity(identities, GetReflectedDefinitionId(definition));
+        if (!IsMarijuanaProductDefinition(definition))
+            return identities;
+
+        var baseStrains = new Dictionary<string, WeedStrainOption>(StringComparer.OrdinalIgnoreCase);
+        ResolveWeedBaseStrains(definition, new HashSet<string>(StringComparer.OrdinalIgnoreCase), baseStrains);
+        foreach (var strain in baseStrains.Values)
+            AddStandaloneProductIdentity(identities, strain?.Id);
+        return identities;
+    }
+
+    private static void AddStandaloneProductIdentity(ISet<string> identities, string value)
+    {
+        if (identities == null || string.IsNullOrWhiteSpace(value))
+            return;
+
+        var buffer = new char[value.Length];
+        var count = 0;
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (!char.IsLetterOrDigit(value[index]))
+                continue;
+
+            buffer[count++] = char.ToUpperInvariant(value[index]);
+        }
+
+        if (count > 0)
+            identities.Add(new string(buffer, 0, count));
+    }
+
+    private static object GetStandaloneRegisteredItemDefinition(string itemId)
+    {
+        if (string.IsNullOrWhiteSpace(itemId))
+            return null;
+
+        try
+        {
+            return Registry.ItemExists(itemId) ? Registry.GetItem(itemId) : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool TryGetStandaloneMetricQuantity(object value, out int quantity)
+    {
+        quantity = 0;
+        if (value == null)
+            return false;
+
+        try
+        {
+            quantity = Convert.ToInt32(value);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string BuildStandaloneMetricsFingerprint(List<StandaloneBackpackProductMetric> metrics)
+    {
+        var config = Configuration.Instance;
+        var rows = metrics?.Select(metric => metric.Id + ":" + metric.Quantity + ":" + metric.UnitPrice.ToString("0.###") +
+                ":" + metric.ActiveOrderQuantity)
+            ?? Enumerable.Empty<string>();
+        return string.Join("|", rows) + ";" + config.ShowProductQuantityMetric + ";" +
+            config.ShowProductQuantityTotalMetric + ";" + config.ShowProductUnitPriceMetric + ";" +
+            config.ShowProductTotalPriceMetric;
+    }
+
+    private static void CreateStandaloneMetricsTrayRow(StandaloneBackpackState state,
+        StandaloneBackpackProductMetric metric)
+    {
+        if (state?.MetricsTrayContent == null || metric == null)
+            return;
+
+        var rowGo = new GameObject("ProductMetricRow");
+        var row = rowGo.AddComponent<RectTransform>();
+        row.SetParent(state.MetricsTrayContent, worldPositionStays: false);
+        var rowIndex = state.MetricsTrayRows.Count;
+        var rowTop = 2f + (rowIndex * 40f);
+        row.anchorMin = new Vector2(0f, 1f);
+        row.anchorMax = new Vector2(1f, 1f);
+        row.pivot = new Vector2(0.5f, 1f);
+        row.offsetMin = new Vector2(1f, -rowTop - 36f);
+        row.offsetMax = new Vector2(-1f, -rowTop);
+        var background = rowGo.AddComponent<Image>();
+        background.color = new Color32(23, 42, 56, 238);
+        background.raycastTarget = false;
+        ApplyRoundedButtonPresentation(background);
+
+        var name = CreateSearchText(row, "Name", new Color32(237, 245, 250, 255));
+        name.text = string.IsNullOrWhiteSpace(metric.Name) ? metric.Id : metric.Name.ToUpperInvariant();
+        name.fontSize = 7;
+        name.fontStyle = FontStyle.Bold;
+        name.alignment = TextAnchor.MiddleLeft;
+        var nameRect = name.GetComponent<RectTransform>();
+        nameRect.anchorMin = new Vector2(0f, 0.5f);
+        nameRect.anchorMax = new Vector2(1f, 1f);
+        nameRect.offsetMin = new Vector2(7f, 0f);
+        nameRect.offsetMax = new Vector2(-7f, -2f);
+
+        var config = Configuration.Instance;
+        var primaryDetails = new List<string>();
+        var secondaryDetails = new List<string>();
+        if (config.ShowProductQuantityMetric)
+            primaryDetails.Add("QTY " + metric.Quantity);
+        if (config.ShowProductUnitPriceMetric && metric.HasUnitPrice)
+            primaryDetails.Add("EA " + FormatStandaloneProductPrice(metric.UnitPrice));
+        if (config.ShowProductTotalPriceMetric && metric.HasUnitPrice)
+            secondaryDetails.Add("TOTAL " + FormatStandaloneProductPrice(metric.UnitPrice * metric.Quantity));
+        if (metric.ActiveOrderQuantity > 0)
+            secondaryDetails.Add("ORDERS " + metric.ActiveOrderQuantity);
+
+        var detail = CreateSearchText(row, "Details", new Color32(141, 196, 226, 255));
+        var firstLine = primaryDetails.Count == 0 ? "PRODUCT" : string.Join("  •  ", primaryDetails);
+        detail.text = secondaryDetails.Count == 0 ? firstLine : firstLine + "\n" + string.Join("  •  ", secondaryDetails);
+        detail.fontSize = 6;
+        detail.fontStyle = FontStyle.Bold;
+        detail.alignment = TextAnchor.MiddleLeft;
+        var detailRect = detail.GetComponent<RectTransform>();
+        detailRect.anchorMin = new Vector2(0f, 0f);
+        detailRect.anchorMax = new Vector2(1f, 0.5f);
+        detailRect.offsetMin = new Vector2(7f, 1f);
+        detailRect.offsetMax = new Vector2(-7f, 0f);
+        state.MetricsTrayRows.Add(rowGo);
+    }
+
+    private static string FormatStandaloneProductPrice(float price)
+    {
+        return "$" + Mathf.Max(0f, price).ToString("0");
     }
 
     /// <summary>
@@ -2498,6 +3165,76 @@ public static class StorageMenuPatch
         }
     }
 
+    /// <summary>
+    /// Gives the metrics handle the same solid tab language as the backpack controls while
+    /// orienting its rounded corners toward the open side of the drawer. Its right edge is flat
+    /// so it reads as mechanically attached to the drawer rather than as a vertically focused
+    /// top tab.
+    /// </summary>
+    private static void ApplyMetricsTrayTabPresentation(Image image)
+    {
+        if (image == null)
+            return;
+
+        var tabSprite = GetMetricsTrayTabSprite();
+        if (tabSprite == null)
+            return;
+
+        image.sprite = tabSprite;
+        image.type = Image.Type.Sliced;
+    }
+
+    private static Sprite GetMetricsTrayTabSprite()
+    {
+        if (_metricsTrayTabSprite != null)
+            return _metricsTrayTabSprite;
+
+        try
+        {
+            _metricsTrayTabTexture = new Texture2D(MetricsTrayTabSpriteSize, MetricsTrayTabSpriteSize,
+                TextureFormat.RGBA32, false)
+            {
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+
+            var pixels = new Color32[MetricsTrayTabSpriteSize * MetricsTrayTabSpriteSize];
+            var radius = MetricsTrayTabCornerRadius;
+            for (var y = 0; y < MetricsTrayTabSpriteSize; y++)
+            {
+                for (var x = 0; x < MetricsTrayTabSpriteSize; x++)
+                {
+                    var alpha = 1f;
+                    if (x < radius && (y < radius || y >= MetricsTrayTabSpriteSize - radius))
+                    {
+                        var centerY = y < radius
+                            ? radius - 0.5f
+                            : MetricsTrayTabSpriteSize - radius - 0.5f;
+                        var distance = Vector2.Distance(new Vector2(x, y),
+                            new Vector2(radius - 0.5f, centerY));
+                        alpha = Mathf.Clamp01(radius - distance + 0.5f);
+                    }
+
+                    pixels[(y * MetricsTrayTabSpriteSize) + x] = new Color32(255, 255, 255,
+                        (byte)(alpha * 255f));
+                }
+            }
+
+            _metricsTrayTabTexture.SetPixels32(pixels);
+            _metricsTrayTabTexture.Apply(updateMipmaps: false, makeNoLongerReadable: true);
+            _metricsTrayTabSprite = Sprite.Create(_metricsTrayTabTexture,
+                new Rect(0f, 0f, MetricsTrayTabSpriteSize, MetricsTrayTabSpriteSize), new Vector2(0.5f, 0.5f),
+                100f, 0, SpriteMeshType.FullRect,
+                new Vector4(MetricsTrayTabCornerRadius, MetricsTrayTabCornerRadius, 0f, 0f));
+            return _metricsTrayTabSprite;
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Warn("[BackpackUI] Metrics tray tab sprite was unavailable: " + ex.Message);
+            return null;
+        }
+    }
+
     private static void ConfigureStandaloneDesktopTab(Button button, int index, int tabCount)
     {
         if (button == null || tabCount <= 0)
@@ -2642,10 +3379,14 @@ public static class StorageMenuPatch
             state.SettingsRoutingButton = CreateStandaloneActionButton(tabs, "SettingsRouting",
                 Vector2.zero, Vector2.zero, Vector2.zero, Vector2.zero,
                 "ROUTING", 9, out _);
-            ConfigureStandaloneDesktopTab(state.SettingsGeneralButton, 0, 4);
-            ConfigureStandaloneDesktopTab(state.SettingsTiersButton, 1, 4);
-            ConfigureStandaloneDesktopTab(state.SettingsLayoutButton, 2, 4);
-            ConfigureStandaloneDesktopTab(state.SettingsRoutingButton, 3, 4);
+            state.SettingsMetricsButton = CreateStandaloneActionButton(tabs, "SettingsMetrics",
+                Vector2.zero, Vector2.zero, Vector2.zero, Vector2.zero,
+                "METRICS", 9, out _);
+            ConfigureStandaloneDesktopTab(state.SettingsGeneralButton, 0, 5);
+            ConfigureStandaloneDesktopTab(state.SettingsTiersButton, 1, 5);
+            ConfigureStandaloneDesktopTab(state.SettingsLayoutButton, 2, 5);
+            ConfigureStandaloneDesktopTab(state.SettingsRoutingButton, 3, 5);
+            ConfigureStandaloneDesktopTab(state.SettingsMetricsButton, 4, 5);
             state.SettingsTabIndicator = CreateStandaloneSettingsTabIndicator(tabs);
             EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.General),
                 state.SettingsGeneralButton.onClick);
@@ -2655,6 +3396,8 @@ public static class StorageMenuPatch
                 state.SettingsLayoutButton.onClick);
             EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.Routing),
                 state.SettingsRoutingButton.onClick);
+            EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.Metrics),
+                state.SettingsMetricsButton.onClick);
 
             var content = CreateStandaloneSettingsRegion(card, "Content", Vector2.zero, Vector2.one,
                 new Vector2(10f, 10f), new Vector2(-10f, -110f));
@@ -2665,6 +3408,7 @@ public static class StorageMenuPatch
             state.SettingsTiersPage = CreateStandaloneSettingsPage(content, "TiersPage");
             state.SettingsLayoutPage = CreateStandaloneSettingsPage(content, "LayoutPage");
             state.SettingsRoutingPage = CreateStandaloneSettingsPage(content, "RoutingPage");
+            state.SettingsMetricsPage = CreateStandaloneSettingsPage(content, "MetricsPage");
             // The tabs are deliberately drawn above the content surface where their lower edge
             // overlaps it, matching a desktop tabbed window rather than a separated button row.
             tabs.SetAsLastSibling();
@@ -2935,6 +3679,9 @@ public static class StorageMenuPatch
             case StandaloneBackpackSettingsPage.Routing:
                 BuildStandaloneRoutingSettings(state);
                 break;
+            case StandaloneBackpackSettingsPage.Metrics:
+                BuildStandaloneMetricsSettings(state);
+                break;
             default:
                 BuildStandaloneGeneralSettings(state);
                 break;
@@ -2962,6 +3709,7 @@ public static class StorageMenuPatch
         UpdateStandaloneSettingsTab(state.SettingsTiersButton, state.SettingsPage == StandaloneBackpackSettingsPage.Tiers);
         UpdateStandaloneSettingsTab(state.SettingsLayoutButton, state.SettingsPage == StandaloneBackpackSettingsPage.Layout);
         UpdateStandaloneSettingsTab(state.SettingsRoutingButton, state.SettingsPage == StandaloneBackpackSettingsPage.Routing);
+        UpdateStandaloneSettingsTab(state.SettingsMetricsButton, state.SettingsPage == StandaloneBackpackSettingsPage.Metrics);
         UpdateStandaloneSettingsTabIndicator(state);
     }
 
@@ -2980,7 +3728,7 @@ public static class StorageMenuPatch
             return;
 
         var page = (int)state.SettingsPage;
-        const int tabCount = 4;
+        const int tabCount = 5;
         var target = new Vector2((width / tabCount * page) + 4f, 0f);
         indicator.sizeDelta = new Vector2((width / tabCount) - 8f, 3f);
         indicator.gameObject.SetActive(true);
@@ -3084,6 +3832,7 @@ public static class StorageMenuPatch
         SetStandaloneSettingsPageActive(state.SettingsTiersPage, state.SettingsPage == StandaloneBackpackSettingsPage.Tiers);
         SetStandaloneSettingsPageActive(state.SettingsLayoutPage, state.SettingsPage == StandaloneBackpackSettingsPage.Layout);
         SetStandaloneSettingsPageActive(state.SettingsRoutingPage, state.SettingsPage == StandaloneBackpackSettingsPage.Routing);
+        SetStandaloneSettingsPageActive(state.SettingsMetricsPage, state.SettingsPage == StandaloneBackpackSettingsPage.Metrics);
     }
 
     private static void SetStandaloneSettingsPageActive(RectTransform page, bool active)
@@ -3172,6 +3921,42 @@ public static class StorageMenuPatch
         AddStandaloneSettingsToggleRow(state, "ROUTE REAGENTS", config.RouteReagents, value =>
         {
             config.RouteReagents = value;
+            PersistStandaloneSettings(state);
+        });
+    }
+
+    /// <summary>
+    /// Lets each player choose the information density of the local product metrics tray without
+    /// affecting any inventory or multiplayer state.
+    /// </summary>
+    private static void BuildStandaloneMetricsSettings(StandaloneBackpackState state)
+    {
+        var config = Configuration.Instance;
+        AddStandaloneSettingsToggleRow(state, "SHOW METRICS TRAY", config.ShowMetricsTray, value =>
+        {
+            config.ShowMetricsTray = value;
+            if (!value)
+                state.MetricsTrayExpanded = false;
+            PersistStandaloneSettings(state);
+        });
+        AddStandaloneSettingsToggleRow(state, "SHOW QUANTITY", config.ShowProductQuantityMetric, value =>
+        {
+            config.ShowProductQuantityMetric = value;
+            PersistStandaloneSettings(state);
+        });
+        AddStandaloneSettingsToggleRow(state, "SHOW QUANTITY TOTAL", config.ShowProductQuantityTotalMetric, value =>
+        {
+            config.ShowProductQuantityTotalMetric = value;
+            PersistStandaloneSettings(state);
+        });
+        AddStandaloneSettingsToggleRow(state, "SHOW UNIT PRICE", config.ShowProductUnitPriceMetric, value =>
+        {
+            config.ShowProductUnitPriceMetric = value;
+            PersistStandaloneSettings(state);
+        });
+        AddStandaloneSettingsToggleRow(state, "SHOW TOTAL PRICE", config.ShowProductTotalPriceMetric, value =>
+        {
+            config.ShowProductTotalPriceMetric = value;
             PersistStandaloneSettings(state);
         });
     }
@@ -3577,6 +4362,7 @@ public static class StorageMenuPatch
             StandaloneBackpackSettingsPage.Tiers => state.SettingsTiersPage,
             StandaloneBackpackSettingsPage.Layout => state.SettingsLayoutPage,
             StandaloneBackpackSettingsPage.Routing => state.SettingsRoutingPage,
+            StandaloneBackpackSettingsPage.Metrics => state.SettingsMetricsPage,
             _ => state.SettingsGeneralPage
         };
     }
@@ -5039,6 +5825,7 @@ public static class StorageMenuPatch
         AddStandaloneKeyboardControl(controls, state.SettingsTiersButton, null);
         AddStandaloneKeyboardControl(controls, state.SettingsLayoutButton, null);
         AddStandaloneKeyboardControl(controls, state.SettingsRoutingButton, null);
+        AddStandaloneKeyboardControl(controls, state.SettingsMetricsButton, null);
 
         var page = GetStandaloneSettingsPageRoot(state);
         if (page == null || !page.gameObject.activeInHierarchy)

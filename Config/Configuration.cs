@@ -33,6 +33,11 @@ public class Configuration
     private readonly MelonPreferences_Entry<bool> _routeSeedsEntry;
     private readonly MelonPreferences_Entry<bool> _routeMixersEntry;
     private readonly MelonPreferences_Entry<bool> _routeReagentsEntry;
+    private readonly MelonPreferences_Entry<bool> _showMetricsTrayEntry;
+    private readonly MelonPreferences_Entry<bool> _showProductQuantityMetricEntry;
+    private readonly MelonPreferences_Entry<bool> _showProductQuantityTotalMetricEntry;
+    private readonly MelonPreferences_Entry<bool> _showProductUnitPriceMetricEntry;
+    private readonly MelonPreferences_Entry<bool> _showProductTotalPriceMetricEntry;
     private readonly MelonPreferences_Entry<float> _backpackOverlayOffsetXEntry;
     private readonly MelonPreferences_Entry<float> _backpackOverlayOffsetYEntry;
     private readonly MelonPreferences_Entry<float> _backpackOverlayScaleEntry;
@@ -121,6 +126,31 @@ public class Configuration
             "RouteReagents",
             false,
             "Route reagents into the backpack during quick move when Smart Routing is enabled"
+        );
+        _showMetricsTrayEntry = _category.CreateEntry(
+            "ShowMetricsTray",
+            true,
+            "Show the expandable product metrics tray beside the hotkey backpack"
+        );
+        _showProductQuantityMetricEntry = _category.CreateEntry(
+            "ShowProductQuantityMetric",
+            true,
+            "Show each product's quantity in the backpack metrics tray"
+        );
+        _showProductQuantityTotalMetricEntry = _category.CreateEntry(
+            "ShowProductQuantityTotalMetric",
+            true,
+            "Show the total product quantity in the backpack metrics tray"
+        );
+        _showProductUnitPriceMetricEntry = _category.CreateEntry(
+            "ShowProductUnitPriceMetric",
+            true,
+            "Show the game's current product unit price in the backpack metrics tray"
+        );
+        _showProductTotalPriceMetricEntry = _category.CreateEntry(
+            "ShowProductTotalPriceMetric",
+            true,
+            "Show total product value in the backpack metrics tray"
         );
         _backpackOverlayOffsetXEntry = _category.CreateEntry(
             "BackpackOverlayOffsetX",
@@ -233,6 +263,11 @@ public class Configuration
     public bool RouteSeeds { get; set; }
     public bool RouteMixers { get; set; }
     public bool RouteReagents { get; set; }
+    public bool ShowMetricsTray { get; set; }
+    public bool ShowProductQuantityMetric { get; set; }
+    public bool ShowProductQuantityTotalMetric { get; set; }
+    public bool ShowProductUnitPriceMetric { get; set; }
+    public bool ShowProductTotalPriceMetric { get; set; }
     public float BackpackOverlayOffsetX { get; set; }
     public float BackpackOverlayOffsetY { get; set; }
     public float BackpackOverlayScale { get; set; }
@@ -286,6 +321,11 @@ public class Configuration
         RouteSeeds = _routeSeedsEntry.Value;
         RouteMixers = _routeMixersEntry.Value;
         RouteReagents = _routeReagentsEntry.Value;
+        ShowMetricsTray = _showMetricsTrayEntry.Value;
+        ShowProductQuantityMetric = _showProductQuantityMetricEntry.Value;
+        ShowProductQuantityTotalMetric = _showProductQuantityTotalMetricEntry.Value;
+        ShowProductUnitPriceMetric = _showProductUnitPriceMetricEntry.Value;
+        ShowProductTotalPriceMetric = _showProductTotalPriceMetricEntry.Value;
         BackpackOverlayOffsetX = _backpackOverlayOffsetXEntry.Value;
         BackpackOverlayOffsetY = _backpackOverlayOffsetYEntry.Value;
         BackpackOverlayScale = ClampOverlayScale(_backpackOverlayScaleEntry.Value);
@@ -325,6 +365,11 @@ public class Configuration
         _routeSeedsEntry.Value = RouteSeeds;
         _routeMixersEntry.Value = RouteMixers;
         _routeReagentsEntry.Value = RouteReagents;
+        _showMetricsTrayEntry.Value = ShowMetricsTray;
+        _showProductQuantityMetricEntry.Value = ShowProductQuantityMetric;
+        _showProductQuantityTotalMetricEntry.Value = ShowProductQuantityTotalMetric;
+        _showProductUnitPriceMetricEntry.Value = ShowProductUnitPriceMetric;
+        _showProductTotalPriceMetricEntry.Value = ShowProductTotalPriceMetric;
         _backpackOverlayOffsetXEntry.Value = BackpackOverlayOffsetX;
         _backpackOverlayOffsetYEntry.Value = BackpackOverlayOffsetY;
         _backpackOverlayScaleEntry.Value = ClampOverlayScale(BackpackOverlayScale);
@@ -434,6 +479,11 @@ public class Configuration
         sb.AppendLine($"RouteSeeds = {RouteSeeds.ToString().ToLowerInvariant()}");
         sb.AppendLine($"RouteMixers = {RouteMixers.ToString().ToLowerInvariant()}");
         sb.AppendLine($"RouteReagents = {RouteReagents.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"ShowMetricsTray = {ShowMetricsTray.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"ShowProductQuantityMetric = {ShowProductQuantityMetric.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"ShowProductQuantityTotalMetric = {ShowProductQuantityTotalMetric.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"ShowProductUnitPriceMetric = {ShowProductUnitPriceMetric.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"ShowProductTotalPriceMetric = {ShowProductTotalPriceMetric.ToString().ToLowerInvariant()}");
         return sb.ToString();
     }
 
