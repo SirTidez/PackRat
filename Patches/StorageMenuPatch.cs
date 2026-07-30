@@ -5,6 +5,7 @@ using PackRat.Config;
 using PackRat.Extensions;
 using PackRat.Helpers;
 using PackRat.Networking;
+using PackRat.Routing;
 using PackRat.Storage;
 using UnityEngine;
 using UnityEngine.UI;
@@ -75,7 +76,8 @@ public static class StorageMenuPatch
     {
         General,
         Tiers,
-        Layout
+        Layout,
+        Routing
     }
 
     private enum StandaloneBackpackLayoutView
@@ -254,6 +256,7 @@ public static class StorageMenuPatch
         public RectTransform SettingsGeneralPage;
         public RectTransform SettingsTiersPage;
         public RectTransform SettingsLayoutPage;
+        public RectTransform SettingsRoutingPage;
         public Text SettingsSessionStatusValue;
         public Image SettingsTabIndicator;
         public Text VisualTitleLabel;
@@ -288,6 +291,7 @@ public static class StorageMenuPatch
         public Button SettingsGeneralButton;
         public Button SettingsTiersButton;
         public Button SettingsLayoutButton;
+        public Button SettingsRoutingButton;
         public readonly List<GameObject> SettingsRows = new List<GameObject>();
         public bool SettingsOpen;
         public bool AwaitingToggleKey;
@@ -434,6 +438,7 @@ public static class StorageMenuPatch
     private static readonly List<ItemSlot> ActiveStorageSlots = new List<ItemSlot>();
     private static readonly List<ItemSlot> ActiveBackpackSlots = new List<ItemSlot>();
     private static bool _quickMoveActive;
+    private static bool _backpackQuickMoveEditSessionActive;
 
     [HarmonyPatch("Awake")]
     [HarmonyPostfix]
@@ -546,18 +551,20 @@ public static class StorageMenuPatch
     [HarmonyPrefix]
     public static void CloseMenu(StorageMenu __instance)
     {
-        if (IsStandaloneBackpackOpen(__instance))
+        if (IsStandaloneBackpackOpen(__instance) || _backpackQuickMoveEditSessionActive)
         {
             RecordStandaloneRecentChanges(__instance);
             BackpackStateSyncManager.CompleteLocalBackpackEdit();
-            RestoreStandaloneBackpackSlotCapacity(__instance);
         }
+
+        RestoreStandaloneBackpackSlotCapacity(__instance);
 
         HideBackpackSidePanel(__instance);
         HideStandaloneBackpackPaging(__instance);
         RestoreStandaloneBackpackLabels(__instance);
         __instance.Container.localPosition = Vector3.zero;
         _quickMoveActive = false;
+        _backpackQuickMoveEditSessionActive = false;
         ActiveInventorySlots.Clear();
         ActiveStorageSlots.Clear();
         ActiveBackpackSlots.Clear();
@@ -577,13 +584,27 @@ public static class StorageMenuPatch
         var targets = new List<ItemSlot>();
         if (ActiveInventorySlots.Contains(sourceSlot))
         {
-            AddQuickMoveTargets(sourceSlot, ActiveStorageSlots, targets);
-            AddQuickMoveTargets(sourceSlot, ActiveBackpackSlots, targets);
+            if (!SmartRoutingManager.IsEnabled)
+            {
+                AddQuickMoveTargets(sourceSlot, ActiveStorageSlots, targets);
+                AddQuickMoveTargets(sourceSlot, ActiveBackpackSlots, targets);
+            }
+            else if (SmartRoutingManager.ShouldPreferBackpack(sourceSlot.ItemInstance))
+                AddQuickMoveTargets(sourceSlot, ActiveBackpackSlots, targets);
+            else
+                AddQuickMoveTargets(sourceSlot, ActiveStorageSlots, targets);
         }
         else if (ActiveStorageSlots.Contains(sourceSlot))
         {
-            AddQuickMoveTargets(sourceSlot, ActiveInventorySlots, targets);
-            AddQuickMoveTargets(sourceSlot, ActiveBackpackSlots, targets);
+            if (!SmartRoutingManager.IsEnabled)
+            {
+                AddQuickMoveTargets(sourceSlot, ActiveInventorySlots, targets);
+                AddQuickMoveTargets(sourceSlot, ActiveBackpackSlots, targets);
+            }
+            else if (SmartRoutingManager.ShouldPreferBackpack(sourceSlot.ItemInstance))
+                AddQuickMoveTargets(sourceSlot, ActiveBackpackSlots, targets);
+            else
+                AddQuickMoveTargets(sourceSlot, ActiveInventorySlots, targets);
         }
         else if (ActiveBackpackSlots.Contains(sourceSlot))
         {
@@ -2477,25 +2498,25 @@ public static class StorageMenuPatch
         }
     }
 
-    private static void ConfigureStandaloneDesktopTab(Button button)
+    private static void ConfigureStandaloneDesktopTab(Button button, int index, int tabCount)
     {
-        if (button == null)
+        if (button == null || tabCount <= 0)
             return;
 
         ApplyDesktopTabPresentation(button.targetGraphic as Image);
         var rect = button.GetComponent<RectTransform>();
         if (rect != null)
         {
-            var index = Mathf.Clamp(button.transform.GetSiblingIndex(), 0, 2);
-            var minX = index / 3f;
-            var maxX = (index + 1) / 3f;
+            index = Mathf.Clamp(index, 0, tabCount - 1);
+            var minX = index / (float)tabCount;
+            var maxX = (index + 1) / (float)tabCount;
             rect.anchorMin = new Vector2(minX, 0f);
             rect.anchorMax = new Vector2(maxX, 0f);
             rect.pivot = new Vector2(0.5f, 0f);
             // Preserve a compact desktop-tab group, but leave a visible six-pixel gutter between
             // faces so their labels and rounded upper corners do not read as one control.
             rect.offsetMin = new Vector2(index == 0 ? 0f : 3f, 0f);
-            rect.offsetMax = new Vector2(index == 2 ? 0f : -3f, 31f);
+            rect.offsetMax = new Vector2(index == tabCount - 1 ? 0f : -3f, 31f);
         }
 
         var label = button.GetComponentInChildren<Text>();
@@ -2604,7 +2625,7 @@ public static class StorageMenuPatch
             var tabs = CreateStandaloneSettingsRegion(card, "Tabs", new Vector2(0f, 1f), new Vector2(1f, 1f),
                 new Vector2(10f, -115f), new Vector2(-10f, -75f));
             state.SettingsTabsRoot = tabs;
-            // These three fixed settings pages use direct anchors instead of a layout group.
+            // These fixed settings pages use direct anchors instead of a layout group.
             // The game can rebuild uGUI layouts while the modal opens; direct geometry keeps the
             // overlapping desktop-tab baseline stable instead of allowing preferred heights to
             // collapse to zero during that rebuild.
@@ -2618,9 +2639,13 @@ public static class StorageMenuPatch
             state.SettingsLayoutButton = CreateStandaloneActionButton(tabs, "SettingsLayout",
                 Vector2.zero, Vector2.zero, Vector2.zero, Vector2.zero,
                 "LAYOUT", 9, out _);
-            ConfigureStandaloneDesktopTab(state.SettingsGeneralButton);
-            ConfigureStandaloneDesktopTab(state.SettingsTiersButton);
-            ConfigureStandaloneDesktopTab(state.SettingsLayoutButton);
+            state.SettingsRoutingButton = CreateStandaloneActionButton(tabs, "SettingsRouting",
+                Vector2.zero, Vector2.zero, Vector2.zero, Vector2.zero,
+                "ROUTING", 9, out _);
+            ConfigureStandaloneDesktopTab(state.SettingsGeneralButton, 0, 4);
+            ConfigureStandaloneDesktopTab(state.SettingsTiersButton, 1, 4);
+            ConfigureStandaloneDesktopTab(state.SettingsLayoutButton, 2, 4);
+            ConfigureStandaloneDesktopTab(state.SettingsRoutingButton, 3, 4);
             state.SettingsTabIndicator = CreateStandaloneSettingsTabIndicator(tabs);
             EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.General),
                 state.SettingsGeneralButton.onClick);
@@ -2628,6 +2653,8 @@ public static class StorageMenuPatch
                 state.SettingsTiersButton.onClick);
             EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.Layout),
                 state.SettingsLayoutButton.onClick);
+            EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.Routing),
+                state.SettingsRoutingButton.onClick);
 
             var content = CreateStandaloneSettingsRegion(card, "Content", Vector2.zero, Vector2.one,
                 new Vector2(10f, 10f), new Vector2(-10f, -110f));
@@ -2637,6 +2664,7 @@ public static class StorageMenuPatch
             state.SettingsGeneralPage = CreateStandaloneSettingsPage(content, "GeneralPage");
             state.SettingsTiersPage = CreateStandaloneSettingsPage(content, "TiersPage");
             state.SettingsLayoutPage = CreateStandaloneSettingsPage(content, "LayoutPage");
+            state.SettingsRoutingPage = CreateStandaloneSettingsPage(content, "RoutingPage");
             // The tabs are deliberately drawn above the content surface where their lower edge
             // overlaps it, matching a desktop tabbed window rather than a separated button row.
             tabs.SetAsLastSibling();
@@ -2904,6 +2932,9 @@ public static class StorageMenuPatch
             case StandaloneBackpackSettingsPage.Layout:
                 BuildStandaloneLayoutSettings(state);
                 break;
+            case StandaloneBackpackSettingsPage.Routing:
+                BuildStandaloneRoutingSettings(state);
+                break;
             default:
                 BuildStandaloneGeneralSettings(state);
                 break;
@@ -2930,6 +2961,7 @@ public static class StorageMenuPatch
         UpdateStandaloneSettingsTab(state.SettingsGeneralButton, state.SettingsPage == StandaloneBackpackSettingsPage.General);
         UpdateStandaloneSettingsTab(state.SettingsTiersButton, state.SettingsPage == StandaloneBackpackSettingsPage.Tiers);
         UpdateStandaloneSettingsTab(state.SettingsLayoutButton, state.SettingsPage == StandaloneBackpackSettingsPage.Layout);
+        UpdateStandaloneSettingsTab(state.SettingsRoutingButton, state.SettingsPage == StandaloneBackpackSettingsPage.Routing);
         UpdateStandaloneSettingsTabIndicator(state);
     }
 
@@ -2948,8 +2980,9 @@ public static class StorageMenuPatch
             return;
 
         var page = (int)state.SettingsPage;
-        var target = new Vector2((width / 3f * page) + 4f, 0f);
-        indicator.sizeDelta = new Vector2((width / 3f) - 8f, 3f);
+        const int tabCount = 4;
+        var target = new Vector2((width / tabCount * page) + 4f, 0f);
+        indicator.sizeDelta = new Vector2((width / tabCount) - 8f, 3f);
         indicator.gameObject.SetActive(true);
         indicator.SetAsLastSibling();
 
@@ -3050,6 +3083,7 @@ public static class StorageMenuPatch
         SetStandaloneSettingsPageActive(state.SettingsGeneralPage, state.SettingsPage == StandaloneBackpackSettingsPage.General);
         SetStandaloneSettingsPageActive(state.SettingsTiersPage, state.SettingsPage == StandaloneBackpackSettingsPage.Tiers);
         SetStandaloneSettingsPageActive(state.SettingsLayoutPage, state.SettingsPage == StandaloneBackpackSettingsPage.Layout);
+        SetStandaloneSettingsPageActive(state.SettingsRoutingPage, state.SettingsPage == StandaloneBackpackSettingsPage.Routing);
     }
 
     private static void SetStandaloneSettingsPageActive(RectTransform page, bool active)
@@ -3104,6 +3138,40 @@ public static class StorageMenuPatch
         AddStandaloneSettingsToggleRow(state, "PROTECT FAVORITES", config.ProtectFavoritesFromOrganization, value =>
         {
             config.ProtectFavoritesFromOrganization = value;
+            PersistStandaloneSettings(state);
+        });
+    }
+
+    /// <summary>
+    /// Builds the local quick-move routing preferences. These settings intentionally remain per
+    /// player: the resulting backpack mutation is synchronized only after the storage session closes.
+    /// </summary>
+    private static void BuildStandaloneRoutingSettings(StandaloneBackpackState state)
+    {
+        var config = Configuration.Instance;
+        AddStandaloneSettingsToggleRow(state, "SMART ROUTING", config.EnableSmartRouting, value =>
+        {
+            config.EnableSmartRouting = value;
+            PersistStandaloneSettings(state);
+        });
+        AddStandaloneSettingsToggleRow(state, "ROUTE PRODUCTS", config.RouteProducts, value =>
+        {
+            config.RouteProducts = value;
+            PersistStandaloneSettings(state);
+        });
+        AddStandaloneSettingsToggleRow(state, "ROUTE SEEDS", config.RouteSeeds, value =>
+        {
+            config.RouteSeeds = value;
+            PersistStandaloneSettings(state);
+        });
+        AddStandaloneSettingsToggleRow(state, "ROUTE MIXERS", config.RouteMixers, value =>
+        {
+            config.RouteMixers = value;
+            PersistStandaloneSettings(state);
+        });
+        AddStandaloneSettingsToggleRow(state, "ROUTE REAGENTS", config.RouteReagents, value =>
+        {
+            config.RouteReagents = value;
             PersistStandaloneSettings(state);
         });
     }
@@ -3508,6 +3576,7 @@ public static class StorageMenuPatch
         {
             StandaloneBackpackSettingsPage.Tiers => state.SettingsTiersPage,
             StandaloneBackpackSettingsPage.Layout => state.SettingsLayoutPage,
+            StandaloneBackpackSettingsPage.Routing => state.SettingsRoutingPage,
             _ => state.SettingsGeneralPage
         };
     }
@@ -4969,6 +5038,7 @@ public static class StorageMenuPatch
         AddStandaloneKeyboardControl(controls, state.SettingsGeneralButton, null);
         AddStandaloneKeyboardControl(controls, state.SettingsTiersButton, null);
         AddStandaloneKeyboardControl(controls, state.SettingsLayoutButton, null);
+        AddStandaloneKeyboardControl(controls, state.SettingsRoutingButton, null);
 
         var page = GetStandaloneSettingsPageRoot(state);
         if (page == null || !page.gameObject.activeInHierarchy)
@@ -6668,6 +6738,7 @@ public static class StorageMenuPatch
         Singleton<ItemUIManager>.Instance.EnableQuickMove(ActiveInventorySlots, secondarySlots);
 #endif
         _quickMoveActive = ActiveInventorySlots.Count > 0 && (ActiveStorageSlots.Count > 0 || ActiveBackpackSlots.Count > 0);
+        BeginBackpackQuickMoveEditSession();
     }
 
     /// <summary>
@@ -6718,6 +6789,21 @@ public static class StorageMenuPatch
 #endif
         _quickMoveActive = ActiveInventorySlots.Count > 0 &&
             (ActiveStorageSlots.Count > 0 || ActiveBackpackSlots.Count > 0);
+        BeginBackpackQuickMoveEditSession();
+    }
+
+    /// <summary>
+    /// Captures one baseline for a storage screen that can mutate the backpack. Closing that
+    /// screen then emits one authoritative state update rather than one network message per
+    /// native quick-move transaction.
+    /// </summary>
+    private static void BeginBackpackQuickMoveEditSession()
+    {
+        if (_backpackQuickMoveEditSessionActive || !_quickMoveActive || ActiveBackpackSlots.Count == 0)
+            return;
+
+        BackpackStateSyncManager.BeginLocalBackpackEdit();
+        _backpackQuickMoveEditSessionActive = true;
     }
 
     private static List<ItemSlot> GetBackpackSlots()
@@ -6979,7 +7065,16 @@ public static class StorageMenuPatch
 
     private static string GetSlotType(ItemSlot slot)
     {
-        var definition = slot?.ItemInstance?.Definition;
+        return GetItemCategory(slot?.ItemInstance);
+    }
+
+    /// <summary>
+    /// Returns the same player-facing item category used by the backpack filter UI. Shared
+    /// pickup features use this rather than reproducing fragile runtime type checks.
+    /// </summary>
+    internal static string GetItemCategory(ItemInstance item)
+    {
+        var definition = item?.Definition;
         if (definition == null)
             return string.Empty;
 
@@ -7007,7 +7102,7 @@ public static class StorageMenuPatch
         // represents the other add-ins accepted by the game's mixing and growing workflows.
         if (ContainsTypeToken(definitionType, "additive", "propertyitem", "mixer"))
             return "Mixers";
-        if (IsProductItemInstance(slot.ItemInstance))
+        if (IsProductItemInstance(item))
             return "Products";
         if (ContainsTypeToken(definitionType, "buildable") || ContainsTypeToken(equippableType, "buildable"))
             return "Furniture";
