@@ -79,6 +79,7 @@ public static class StorageMenuPatch
     private enum StandaloneBackpackSettingsPage
     {
         General,
+        Theme,
         Tiers,
         Layout,
         Routing,
@@ -274,6 +275,7 @@ public static class StorageMenuPatch
         public RectTransform SettingsTabsRoot;
         public RectTransform SettingsContentRoot;
         public RectTransform SettingsGeneralPage;
+        public RectTransform SettingsThemePage;
         public RectTransform SettingsTiersPage;
         public RectTransform SettingsLayoutPage;
         public RectTransform SettingsRoutingPage;
@@ -314,6 +316,9 @@ public static class StorageMenuPatch
         public CanvasGroup MetricsTrayCanvasGroup;
         public readonly List<GameObject> MetricsTrayRows = new List<GameObject>();
         public bool MetricsTrayExpanded;
+        public BackpackUiTheme AppliedTheme;
+        public BackpackUiThemePalette AppliedThemePalette;
+        public bool AppliedThemePaletteCaptured;
         public int MetricsTrayMotionGeneration;
         public string MetricsTrayFingerprint;
         public float NextMetricsTrayRefreshTime;
@@ -322,10 +327,12 @@ public static class StorageMenuPatch
         public Button DoneButton;
         public Button SettingsCloseButton;
         public Button SettingsGeneralButton;
+        public Button SettingsThemeButton;
         public Button SettingsTiersButton;
         public Button SettingsLayoutButton;
         public Button SettingsRoutingButton;
         public Button SettingsMetricsButton;
+        public Text SettingsThemeValueLabel;
         public readonly List<GameObject> SettingsRows = new List<GameObject>();
         public bool SettingsOpen;
         public bool AwaitingToggleKey;
@@ -1557,6 +1564,194 @@ public static class StorageMenuPatch
             state.VisualMetaLabel.text =
                 $"{usedSlotCount}/{slotCount} USED{filterSummary}  •  PAGE {state.CurrentPage + 1}/{Mathf.Max(1, totalPages)}";
         }
+
+        ApplyStandaloneBackpackTheme(state);
+    }
+
+    /// <summary>
+    /// Applies the selected preset only to PackRat-created roots. The native slot widgets remain
+    /// siblings of these roots, so their game-owned quality, drag, and tooltip presentation is
+    /// never recoloured by the mod.
+    /// </summary>
+    private static void ApplyStandaloneBackpackTheme(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        var config = Configuration.Instance;
+        var palette = BackpackUiThemes.Get(config.BackpackUiTheme, config.CustomBackpackUiPrimaryColor);
+        var previousPalette = state.AppliedThemePaletteCaptured ? state.AppliedThemePalette : BackpackUiThemes.Get(BackpackUiTheme.S1Blue);
+        ApplyStandaloneThemeToRoot(state.VisualRoot, palette, previousPalette);
+        ApplyStandaloneThemeToRoot(state.SettingsRoot, palette, previousPalette);
+        ApplyStandaloneThemeToRoot(state.DropdownRoot, palette, previousPalette);
+        ApplyStandaloneThemeToRoot(state.PageWipeRoot, palette, previousPalette);
+
+        if (state.SlotsPanelRoot != null)
+        {
+            var panel = state.SlotsPanelRoot.GetComponent<Image>();
+            if (panel != null)
+                panel.color = GetStandaloneThemeColor(panel.color, palette, previousPalette);
+        }
+
+        state.SearchBackgroundBaseColor = palette.Search;
+        if (state.SearchBackground != null && (state.SearchInput == null || !state.SearchInput.isFocused))
+            state.SearchBackground.color = palette.Search;
+        state.AppliedTheme = config.BackpackUiTheme;
+        state.AppliedThemePalette = palette;
+        state.AppliedThemePaletteCaptured = true;
+    }
+
+    /// <summary>
+    /// Repaints every currently open projection after a local theme preference changes. This is
+    /// intentionally presentation-only; the state and inventory ownership stay untouched.
+    /// </summary>
+    public static void RefreshActiveUiThemes()
+    {
+        try
+        {
+            foreach (var state in StandaloneBackpackPanels.Values)
+            {
+                if (state?.VisualRoot == null)
+                    continue;
+                ApplyStandaloneBackpackTheme(state);
+            }
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Error("StorageMenuPatch.RefreshActiveUiThemes", ex);
+        }
+    }
+
+    private static void ApplyStandaloneThemeToRoot(RectTransform root, BackpackUiThemePalette palette,
+        BackpackUiThemePalette previousPalette)
+    {
+        if (root == null)
+            return;
+
+        var graphics = root.GetComponentsInChildren<Graphic>(includeInactive: true);
+        for (var i = 0; i < graphics.Length; i++)
+        {
+            if (graphics[i] != null)
+                graphics[i].color = GetStandaloneThemeColor(graphics[i].color, palette, previousPalette);
+        }
+
+        var selectables = root.GetComponentsInChildren<Selectable>(includeInactive: true);
+        for (var i = 0; i < selectables.Length; i++)
+        {
+            var selectable = selectables[i];
+            if (selectable == null || selectable.transition != Selectable.Transition.ColorTint)
+                continue;
+
+            var colors = selectable.colors;
+            colors.normalColor = GetStandaloneThemeColor(colors.normalColor, palette, previousPalette);
+            colors.highlightedColor = GetStandaloneThemeColor(colors.highlightedColor, palette, previousPalette);
+            colors.pressedColor = GetStandaloneThemeColor(colors.pressedColor, palette, previousPalette);
+            colors.selectedColor = GetStandaloneThemeColor(colors.selectedColor, palette, previousPalette);
+            colors.disabledColor = GetStandaloneThemeColor(colors.disabledColor, palette, previousPalette);
+            selectable.colors = colors;
+        }
+    }
+
+    private static Color GetStandaloneThemeColor(Color source, BackpackUiThemePalette target,
+        BackpackUiThemePalette previousPalette)
+    {
+        var source32 = NormalizeStandaloneThemeColor((Color32)source, previousPalette);
+        var r = source32.r;
+        var g = source32.g;
+        var b = source32.b;
+        var a = source32.a;
+        if (MatchesStandaloneThemeColor(r, g, b, 15, 21, 28) || MatchesStandaloneThemeColor(r, g, b, 11, 20, 29))
+            return WithStandaloneThemeAlpha(target.Card, a);
+        if (MatchesStandaloneThemeColor(r, g, b, 35, 61, 86))
+            return WithStandaloneThemeAlpha(target.Header, a);
+        if (MatchesStandaloneThemeColor(r, g, b, 76, 173, 229) || MatchesStandaloneThemeColor(r, g, b, 109, 205, 251))
+            return WithStandaloneThemeAlpha(target.Accent, a);
+        if (MatchesStandaloneThemeColor(r, g, b, 18, 30, 40) || MatchesStandaloneThemeColor(r, g, b, 25, 43, 57) ||
+            MatchesStandaloneThemeColor(r, g, b, 24, 43, 57))
+            return WithStandaloneThemeAlpha(target.Control, a);
+        if (MatchesStandaloneThemeColor(r, g, b, 20, 35, 47) || MatchesStandaloneThemeColor(r, g, b, 18, 36, 49) ||
+            MatchesStandaloneThemeColor(r, g, b, 20, 33, 44) || MatchesStandaloneThemeColor(r, g, b, 35, 65, 84))
+            return WithStandaloneThemeAlpha(target.ControlAlt, a);
+        if (MatchesStandaloneThemeColor(r, g, b, 48, 128, 170) || MatchesStandaloneThemeColor(r, g, b, 45, 109, 146) ||
+            MatchesStandaloneThemeColor(r, g, b, 40, 121, 157) || MatchesStandaloneThemeColor(r, g, b, 64, 153, 196) ||
+            MatchesStandaloneThemeColor(r, g, b, 36, 103, 137))
+            return WithStandaloneThemeAlpha(target.SelectedControl, a);
+        if (MatchesStandaloneThemeColor(r, g, b, 10, 15, 20) || MatchesStandaloneThemeColor(r, g, b, 12, 21, 30))
+            return WithStandaloneThemeAlpha(target.Search, a);
+        if (MatchesStandaloneThemeColor(r, g, b, 24, 74, 102))
+            return WithStandaloneThemeAlpha(target.SearchFocused, a);
+        if (MatchesStandaloneThemeColor(r, g, b, 10, 23, 31) || MatchesStandaloneThemeColor(r, g, b, 10, 24, 33))
+            return WithStandaloneThemeAlpha(target.ModalCard, a);
+        if (MatchesStandaloneThemeColor(r, g, b, 16, 32, 43))
+            return WithStandaloneThemeAlpha(target.ModalContent, a);
+        if (MatchesStandaloneThemeColor(r, g, b, 9, 19, 27))
+            return WithStandaloneThemeAlpha(target.Drawer, a);
+        if (MatchesStandaloneThemeColor(r, g, b, 23, 42, 56))
+            return WithStandaloneThemeAlpha(target.DrawerRow, a);
+        if (MatchesStandaloneThemeColor(r, g, b, 244, 247, 250) || MatchesStandaloneThemeColor(r, g, b, 242, 247, 251) ||
+            MatchesStandaloneThemeColor(r, g, b, 245, 248, 251) || MatchesStandaloneThemeColor(r, g, b, 237, 245, 250))
+            return WithStandaloneThemeAlpha(target.PrimaryText, a);
+        if (MatchesStandaloneThemeColor(r, g, b, 166, 205, 229) || MatchesStandaloneThemeColor(r, g, b, 190, 221, 241) ||
+            MatchesStandaloneThemeColor(r, g, b, 190, 212, 225) || MatchesStandaloneThemeColor(r, g, b, 188, 216, 235) ||
+            MatchesStandaloneThemeColor(r, g, b, 176, 210, 231) || MatchesStandaloneThemeColor(r, g, b, 144, 167, 181) ||
+            MatchesStandaloneThemeColor(r, g, b, 144, 171, 188) || MatchesStandaloneThemeColor(r, g, b, 141, 196, 226) ||
+            MatchesStandaloneThemeColor(r, g, b, 135, 191, 222) || MatchesStandaloneThemeColor(r, g, b, 217, 236, 248) ||
+            MatchesStandaloneThemeColor(r, g, b, 223, 239, 248))
+            return WithStandaloneThemeAlpha(target.SecondaryText, a);
+        return source;
+    }
+
+    private static Color32 NormalizeStandaloneThemeColor(Color32 source, BackpackUiThemePalette previousPalette)
+    {
+        var defaultPalette = BackpackUiThemes.Get(BackpackUiTheme.S1Blue);
+        if (TryNormalizeStandaloneThemeColor(source, previousPalette, defaultPalette, out var normalized))
+            return normalized;
+
+        foreach (BackpackUiTheme theme in Enum.GetValues(typeof(BackpackUiTheme)))
+        {
+            var palette = BackpackUiThemes.Get(theme);
+            if (TryNormalizeStandaloneThemeColor(source, palette, defaultPalette, out normalized))
+                return normalized;
+        }
+        return source;
+    }
+
+    private static bool TryNormalizeStandaloneThemeColor(Color32 source, BackpackUiThemePalette palette,
+        BackpackUiThemePalette defaultPalette, out Color32 normalized)
+    {
+        if (SameStandaloneThemeColor(source, palette.Card)) { normalized = (Color32)defaultPalette.Card; return true; }
+        if (SameStandaloneThemeColor(source, palette.Header)) { normalized = (Color32)defaultPalette.Header; return true; }
+        if (SameStandaloneThemeColor(source, palette.Accent)) { normalized = (Color32)defaultPalette.Accent; return true; }
+        if (SameStandaloneThemeColor(source, palette.Control)) { normalized = (Color32)defaultPalette.Control; return true; }
+        if (SameStandaloneThemeColor(source, palette.ControlAlt)) { normalized = (Color32)defaultPalette.ControlAlt; return true; }
+        if (SameStandaloneThemeColor(source, palette.SelectedControl)) { normalized = (Color32)defaultPalette.SelectedControl; return true; }
+        if (SameStandaloneThemeColor(source, palette.Search)) { normalized = (Color32)defaultPalette.Search; return true; }
+        if (SameStandaloneThemeColor(source, palette.SearchFocused)) { normalized = (Color32)defaultPalette.SearchFocused; return true; }
+        if (SameStandaloneThemeColor(source, palette.ModalCard)) { normalized = (Color32)defaultPalette.ModalCard; return true; }
+        if (SameStandaloneThemeColor(source, palette.ModalContent)) { normalized = (Color32)defaultPalette.ModalContent; return true; }
+        if (SameStandaloneThemeColor(source, palette.Drawer)) { normalized = (Color32)defaultPalette.Drawer; return true; }
+        if (SameStandaloneThemeColor(source, palette.DrawerRow)) { normalized = (Color32)defaultPalette.DrawerRow; return true; }
+        if (SameStandaloneThemeColor(source, palette.PrimaryText)) { normalized = (Color32)defaultPalette.PrimaryText; return true; }
+        if (SameStandaloneThemeColor(source, palette.SecondaryText)) { normalized = (Color32)defaultPalette.SecondaryText; return true; }
+        normalized = source;
+        return false;
+    }
+
+    private static bool SameStandaloneThemeColor(Color32 source, Color expected)
+    {
+        var expected32 = (Color32)expected;
+        return source.r == expected32.r && source.g == expected32.g && source.b == expected32.b;
+    }
+
+    private static bool MatchesStandaloneThemeColor(byte r, byte g, byte b, byte expectedR, byte expectedG, byte expectedB)
+    {
+        return r == expectedR && g == expectedG && b == expectedB;
+    }
+
+    private static Color WithStandaloneThemeAlpha(Color color, byte alpha)
+    {
+        color.a = alpha / 255f;
+        return color;
     }
 
     /// <summary>
@@ -3370,6 +3565,9 @@ public static class StorageMenuPatch
             state.SettingsGeneralButton = CreateStandaloneActionButton(tabs, "SettingsGeneral",
                 Vector2.zero, Vector2.zero, Vector2.zero, Vector2.zero,
                 "GENERAL", 9, out _);
+            state.SettingsThemeButton = CreateStandaloneActionButton(tabs, "SettingsTheme",
+                Vector2.zero, Vector2.zero, Vector2.zero, Vector2.zero,
+                "THEME", 9, out _);
             state.SettingsTiersButton = CreateStandaloneActionButton(tabs, "SettingsTiers",
                 Vector2.zero, Vector2.zero, Vector2.zero, Vector2.zero,
                 "TIERS", 9, out _);
@@ -3382,14 +3580,17 @@ public static class StorageMenuPatch
             state.SettingsMetricsButton = CreateStandaloneActionButton(tabs, "SettingsMetrics",
                 Vector2.zero, Vector2.zero, Vector2.zero, Vector2.zero,
                 "METRICS", 9, out _);
-            ConfigureStandaloneDesktopTab(state.SettingsGeneralButton, 0, 5);
-            ConfigureStandaloneDesktopTab(state.SettingsTiersButton, 1, 5);
-            ConfigureStandaloneDesktopTab(state.SettingsLayoutButton, 2, 5);
-            ConfigureStandaloneDesktopTab(state.SettingsRoutingButton, 3, 5);
-            ConfigureStandaloneDesktopTab(state.SettingsMetricsButton, 4, 5);
+            ConfigureStandaloneDesktopTab(state.SettingsGeneralButton, 0, 6);
+            ConfigureStandaloneDesktopTab(state.SettingsThemeButton, 1, 6);
+            ConfigureStandaloneDesktopTab(state.SettingsTiersButton, 2, 6);
+            ConfigureStandaloneDesktopTab(state.SettingsLayoutButton, 3, 6);
+            ConfigureStandaloneDesktopTab(state.SettingsRoutingButton, 4, 6);
+            ConfigureStandaloneDesktopTab(state.SettingsMetricsButton, 5, 6);
             state.SettingsTabIndicator = CreateStandaloneSettingsTabIndicator(tabs);
             EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.General),
                 state.SettingsGeneralButton.onClick);
+            EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.Theme),
+                state.SettingsThemeButton.onClick);
             EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.Tiers),
                 state.SettingsTiersButton.onClick);
             EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.Layout),
@@ -3405,6 +3606,7 @@ public static class StorageMenuPatch
             contentImage.color = new Color32(16, 32, 43, 238);
             state.SettingsContentRoot = content;
             state.SettingsGeneralPage = CreateStandaloneSettingsPage(content, "GeneralPage");
+            state.SettingsThemePage = CreateStandaloneSettingsPage(content, "ThemePage");
             state.SettingsTiersPage = CreateStandaloneSettingsPage(content, "TiersPage");
             state.SettingsLayoutPage = CreateStandaloneSettingsPage(content, "LayoutPage");
             state.SettingsRoutingPage = CreateStandaloneSettingsPage(content, "RoutingPage");
@@ -3670,6 +3872,9 @@ public static class StorageMenuPatch
         UpdateStandaloneSettingsPageVisibility(state);
         switch (state.SettingsPage)
         {
+            case StandaloneBackpackSettingsPage.Theme:
+                BuildStandaloneThemeSettings(state);
+                break;
             case StandaloneBackpackSettingsPage.Tiers:
                 BuildStandaloneTierSettings(state);
                 break;
@@ -3688,6 +3893,7 @@ public static class StorageMenuPatch
         }
 
         RefreshStandaloneSettingsKeyboardFocusPresentation(state);
+        ApplyStandaloneBackpackTheme(state);
     }
 
     private static void ClearStandaloneSettingsRows(StandaloneBackpackState state)
@@ -3706,6 +3912,7 @@ public static class StorageMenuPatch
     private static void UpdateStandaloneSettingsTabs(StandaloneBackpackState state)
     {
         UpdateStandaloneSettingsTab(state.SettingsGeneralButton, state.SettingsPage == StandaloneBackpackSettingsPage.General);
+        UpdateStandaloneSettingsTab(state.SettingsThemeButton, state.SettingsPage == StandaloneBackpackSettingsPage.Theme);
         UpdateStandaloneSettingsTab(state.SettingsTiersButton, state.SettingsPage == StandaloneBackpackSettingsPage.Tiers);
         UpdateStandaloneSettingsTab(state.SettingsLayoutButton, state.SettingsPage == StandaloneBackpackSettingsPage.Layout);
         UpdateStandaloneSettingsTab(state.SettingsRoutingButton, state.SettingsPage == StandaloneBackpackSettingsPage.Routing);
@@ -3728,7 +3935,7 @@ public static class StorageMenuPatch
             return;
 
         var page = (int)state.SettingsPage;
-        const int tabCount = 5;
+        const int tabCount = 6;
         var target = new Vector2((width / tabCount * page) + 4f, 0f);
         indicator.sizeDelta = new Vector2((width / tabCount) - 8f, 3f);
         indicator.gameObject.SetActive(true);
@@ -3829,6 +4036,7 @@ public static class StorageMenuPatch
             return;
 
         SetStandaloneSettingsPageActive(state.SettingsGeneralPage, state.SettingsPage == StandaloneBackpackSettingsPage.General);
+        SetStandaloneSettingsPageActive(state.SettingsThemePage, state.SettingsPage == StandaloneBackpackSettingsPage.Theme);
         SetStandaloneSettingsPageActive(state.SettingsTiersPage, state.SettingsPage == StandaloneBackpackSettingsPage.Tiers);
         SetStandaloneSettingsPageActive(state.SettingsLayoutPage, state.SettingsPage == StandaloneBackpackSettingsPage.Layout);
         SetStandaloneSettingsPageActive(state.SettingsRoutingPage, state.SettingsPage == StandaloneBackpackSettingsPage.Routing);
@@ -3889,6 +4097,222 @@ public static class StorageMenuPatch
             config.ProtectFavoritesFromOrganization = value;
             PersistStandaloneSettings(state);
         });
+    }
+
+    /// <summary>
+    /// Selects a local visual preset. Repainting is immediate so players can compare each theme
+    /// against the active world lighting without closing the backpack or reloading the game.
+    /// </summary>
+    private static void BuildStandaloneThemeSettings(StandaloneBackpackState state)
+    {
+        var config = Configuration.Instance;
+        state.SettingsThemeValueLabel = AddStandaloneSettingsRow(state, "COLOR THEME",
+            BackpackUiThemes.GetLabel(config.BackpackUiTheme), "<", () =>
+        {
+            config.BackpackUiTheme = BackpackUiThemes.Offset(config.BackpackUiTheme, -1);
+            PersistStandaloneSettings(state);
+        }, ">", () =>
+        {
+            config.BackpackUiTheme = BackpackUiThemes.Offset(config.BackpackUiTheme, 1);
+            PersistStandaloneSettings(state);
+        });
+        AddStandaloneThemeColorPicker(state);
+    }
+
+    /// <summary>
+    /// Builds the primary-colour picker directly below the preset selector. Presets seed the
+    /// picker with their current header colour; moving a picker channel promotes that colour to
+    /// the persisted Custom preset and repaints the active backpack immediately.
+    /// </summary>
+    private static void AddStandaloneThemeColorPicker(StandaloneBackpackState state)
+    {
+        var config = Configuration.Instance;
+        var palette = BackpackUiThemes.Get(config.BackpackUiTheme, config.CustomBackpackUiPrimaryColor);
+        Color.RGBToHSV(palette.Header, out var hue, out var saturation, out var value);
+        var preview = AddStandaloneThemePreviewRow(state, palette.Header);
+        Action apply = () =>
+        {
+            var selected = Color.HSVToRGB(hue, saturation, value);
+            config.CustomBackpackUiPrimaryColor = selected;
+            config.BackpackUiTheme = BackpackUiTheme.Custom;
+            config.Save();
+            if (state.SettingsThemeValueLabel != null)
+                state.SettingsThemeValueLabel.text = BackpackUiThemes.GetLabel(BackpackUiTheme.Custom);
+            if (preview.ValueLabel != null)
+                preview.ValueLabel.text = FormatStandaloneThemeColor(selected);
+            if (preview.Swatch != null)
+                preview.Swatch.color = selected;
+            RefreshActiveUiThemes();
+            RefreshActiveStorageBackpackLayouts();
+            StationBackpackPanelPatch.RefreshActiveLayouts();
+            HandoverScreenPatch.RefreshActiveLayouts();
+        };
+
+        AddStandaloneThemeSliderRow(state, "HUE", hue, valueChanged =>
+        {
+            hue = valueChanged;
+            apply();
+        }, current => Mathf.RoundToInt(current * 360f) + "°");
+        AddStandaloneThemeSliderRow(state, "SATURATION", saturation, valueChanged =>
+        {
+            saturation = valueChanged;
+            apply();
+        }, current => Mathf.RoundToInt(current * 100f) + "%");
+        AddStandaloneThemeSliderRow(state, "BRIGHTNESS", value, valueChanged =>
+        {
+            value = valueChanged;
+            apply();
+        }, current => Mathf.RoundToInt(current * 100f) + "%");
+    }
+
+    private sealed class StandaloneThemePreview
+    {
+        public Image Swatch;
+        public Text ValueLabel;
+    }
+
+    private static StandaloneThemePreview AddStandaloneThemePreviewRow(StandaloneBackpackState state, Color color)
+    {
+        var pageRoot = GetStandaloneSettingsPageRoot(state);
+        if (pageRoot == null)
+            return new StandaloneThemePreview();
+
+        var rowGo = new GameObject("ThemePrimaryPreview");
+        var row = rowGo.AddComponent<RectTransform>();
+        row.SetParent(pageRoot, worldPositionStays: false);
+        var background = rowGo.AddComponent<Image>();
+        background.color = new Color32(20, 33, 44, 248);
+        ApplyRoundedButtonPresentation(background);
+        AddStandaloneLayoutElement(rowGo, minHeight: 30f, preferredHeight: 30f);
+        var layout = rowGo.AddComponent<HorizontalLayoutGroup>();
+        layout.padding = new RectOffset(8, 8, 3, 3);
+        layout.spacing = 6f;
+        layout.childAlignment = TextAnchor.MiddleLeft;
+        layout.childControlWidth = true;
+        layout.childControlHeight = true;
+        layout.childForceExpandWidth = false;
+        layout.childForceExpandHeight = false;
+
+        var label = CreateSearchText(row, "Label", new Color32(188, 216, 235, 255));
+        label.text = "PRIMARY COLOR";
+        label.fontSize = 9;
+        label.fontStyle = FontStyle.Bold;
+        AddStandaloneLayoutElement(label.gameObject, preferredWidth: 100f);
+
+        var swatchGo = new GameObject("Swatch");
+        var swatchRect = swatchGo.AddComponent<RectTransform>();
+        swatchRect.SetParent(row, worldPositionStays: false);
+        var swatch = swatchGo.AddComponent<Image>();
+        swatch.color = color;
+        ApplyPillButtonPresentation(swatch);
+        AddStandaloneLayoutElement(swatchGo, preferredWidth: 48f, preferredHeight: 20f);
+
+        var value = CreateSearchText(row, "Value", new Color32(245, 248, 251, 255));
+        value.text = FormatStandaloneThemeColor(color);
+        value.fontSize = 9;
+        value.fontStyle = FontStyle.Bold;
+        value.alignment = TextAnchor.MiddleRight;
+        AddStandaloneLayoutElement(value.gameObject, flexibleWidth: 1f);
+        state.SettingsRows.Add(rowGo);
+        return new StandaloneThemePreview { Swatch = swatch, ValueLabel = value };
+    }
+
+    private static void AddStandaloneThemeSliderRow(StandaloneBackpackState state, string labelText, float currentValue,
+        Action<float> changedAction, Func<float, string> valueFormatter)
+    {
+        var pageRoot = GetStandaloneSettingsPageRoot(state);
+        if (pageRoot == null)
+            return;
+
+        var rowGo = new GameObject("Theme" + labelText + "Row");
+        var row = rowGo.AddComponent<RectTransform>();
+        row.SetParent(pageRoot, worldPositionStays: false);
+        var background = rowGo.AddComponent<Image>();
+        background.color = new Color32(20, 33, 44, 248);
+        ApplyRoundedButtonPresentation(background);
+        AddStandaloneLayoutElement(rowGo, minHeight: 28f, preferredHeight: 28f);
+        var layout = rowGo.AddComponent<HorizontalLayoutGroup>();
+        layout.padding = new RectOffset(8, 8, 3, 3);
+        layout.spacing = 6f;
+        layout.childAlignment = TextAnchor.MiddleLeft;
+        layout.childControlWidth = true;
+        layout.childControlHeight = true;
+        layout.childForceExpandWidth = false;
+        layout.childForceExpandHeight = false;
+
+        var label = CreateSearchText(row, "Label", new Color32(188, 216, 235, 255));
+        label.text = labelText;
+        label.fontSize = 9;
+        label.fontStyle = FontStyle.Bold;
+        AddStandaloneLayoutElement(label.gameObject, preferredWidth: 78f);
+
+        var sliderGo = new GameObject("Slider");
+        var sliderRect = sliderGo.AddComponent<RectTransform>();
+        sliderRect.SetParent(row, worldPositionStays: false);
+        AddStandaloneLayoutElement(sliderGo, minWidth: 84f, flexibleWidth: 1f, preferredHeight: 18f);
+        var slider = sliderGo.AddComponent<Slider>();
+        slider.minValue = 0f;
+        slider.maxValue = 1f;
+        slider.wholeNumbers = false;
+        slider.direction = Slider.Direction.LeftToRight;
+
+        var trackGo = new GameObject("Track");
+        var track = trackGo.AddComponent<RectTransform>();
+        track.SetParent(sliderRect, worldPositionStays: false);
+        track.anchorMin = new Vector2(0f, 0.5f);
+        track.anchorMax = new Vector2(1f, 0.5f);
+        track.offsetMin = new Vector2(6f, -4f);
+        track.offsetMax = new Vector2(-6f, 4f);
+        var trackImage = trackGo.AddComponent<Image>();
+        trackImage.color = new Color32(12, 21, 30, 252);
+        ApplyPillButtonPresentation(trackImage);
+
+        var fillGo = new GameObject("Fill");
+        var fill = fillGo.AddComponent<RectTransform>();
+        fill.SetParent(track, worldPositionStays: false);
+        fill.anchorMin = Vector2.zero;
+        fill.anchorMax = new Vector2(0f, 1f);
+        fill.pivot = new Vector2(0f, 0.5f);
+        fill.offsetMin = Vector2.zero;
+        fill.offsetMax = Vector2.zero;
+        var fillImage = fillGo.AddComponent<Image>();
+        fillImage.color = new Color32(76, 173, 229, 255);
+        ApplyPillButtonPresentation(fillImage);
+        slider.fillRect = fill;
+
+        var handleGo = new GameObject("Handle");
+        var handle = handleGo.AddComponent<RectTransform>();
+        handle.SetParent(sliderRect, worldPositionStays: false);
+        handle.anchorMin = new Vector2(0f, 0.5f);
+        handle.anchorMax = new Vector2(0f, 0.5f);
+        handle.pivot = new Vector2(0.5f, 0.5f);
+        handle.sizeDelta = new Vector2(14f, 14f);
+        var handleImage = handleGo.AddComponent<Image>();
+        handleImage.color = new Color32(240, 247, 251, 255);
+        ApplyPillButtonPresentation(handleImage);
+        slider.handleRect = handle;
+        slider.targetGraphic = handleImage;
+
+        var value = CreateSearchText(row, "Value", new Color32(245, 248, 251, 255));
+        value.fontSize = 8;
+        value.fontStyle = FontStyle.Bold;
+        value.alignment = TextAnchor.MiddleRight;
+        value.text = valueFormatter(currentValue);
+        AddStandaloneLayoutElement(value.gameObject, preferredWidth: 38f);
+
+        slider.SetValueWithoutNotify(Mathf.Clamp01(currentValue));
+        EventHelper.AddListener<float>(changedValue =>
+        {
+            value.text = valueFormatter(changedValue);
+            changedAction?.Invoke(changedValue);
+        }, slider.onValueChanged);
+        state.SettingsRows.Add(rowGo);
+    }
+
+    private static string FormatStandaloneThemeColor(Color color)
+    {
+        var value = (Color32)color;
+        return "#" + value.r.ToString("X2") + value.g.ToString("X2") + value.b.ToString("X2");
     }
 
     /// <summary>
@@ -4195,13 +4619,13 @@ public static class StorageMenuPatch
         }
     }
 
-    private static void AddStandaloneSettingsRow(StandaloneBackpackState state, string labelText, string valueText,
+    private static Text AddStandaloneSettingsRow(StandaloneBackpackState state, string labelText, string valueText,
         string primaryCaption = null, Action primaryAction = null, string secondaryCaption = null,
         Action secondaryAction = null)
     {
         var pageRoot = GetStandaloneSettingsPageRoot(state);
         if (pageRoot == null)
-            return;
+            return null;
 
         var index = state.SettingsRows.Count;
         var rowGo = new GameObject("SettingRow" + index);
@@ -4257,6 +4681,7 @@ public static class StorageMenuPatch
         }
 
         state.SettingsRows.Add(rowGo);
+        return value;
     }
 
     /// <summary>
@@ -4359,6 +4784,7 @@ public static class StorageMenuPatch
 
         return state.SettingsPage switch
         {
+            StandaloneBackpackSettingsPage.Theme => state.SettingsThemePage,
             StandaloneBackpackSettingsPage.Tiers => state.SettingsTiersPage,
             StandaloneBackpackSettingsPage.Layout => state.SettingsLayoutPage,
             StandaloneBackpackSettingsPage.Routing => state.SettingsRoutingPage,
@@ -4481,6 +4907,7 @@ public static class StorageMenuPatch
 
         ModLogger.Info("[BackpackUI] Settings saved to MelonPreferences.");
         RefreshStandaloneSettingsPane(state);
+        RefreshActiveUiThemes();
         RefreshActiveStorageBackpackLayouts();
         StationBackpackPanelPatch.RefreshActiveLayouts();
         HandoverScreenPatch.RefreshActiveLayouts();
@@ -5822,6 +6249,7 @@ public static class StorageMenuPatch
         // changes sibling order to draw above the others.
         AddStandaloneKeyboardControl(controls, state.SettingsCloseButton, null);
         AddStandaloneKeyboardControl(controls, state.SettingsGeneralButton, null);
+        AddStandaloneKeyboardControl(controls, state.SettingsThemeButton, null);
         AddStandaloneKeyboardControl(controls, state.SettingsTiersButton, null);
         AddStandaloneKeyboardControl(controls, state.SettingsLayoutButton, null);
         AddStandaloneKeyboardControl(controls, state.SettingsRoutingButton, null);

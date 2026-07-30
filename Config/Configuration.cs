@@ -38,6 +38,10 @@ public class Configuration
     private readonly MelonPreferences_Entry<bool> _showProductQuantityTotalMetricEntry;
     private readonly MelonPreferences_Entry<bool> _showProductUnitPriceMetricEntry;
     private readonly MelonPreferences_Entry<bool> _showProductTotalPriceMetricEntry;
+    private readonly MelonPreferences_Entry<int> _backpackUiThemeEntry;
+    private readonly MelonPreferences_Entry<int> _backpackCustomThemeRedEntry;
+    private readonly MelonPreferences_Entry<int> _backpackCustomThemeGreenEntry;
+    private readonly MelonPreferences_Entry<int> _backpackCustomThemeBlueEntry;
     private readonly MelonPreferences_Entry<float> _backpackOverlayOffsetXEntry;
     private readonly MelonPreferences_Entry<float> _backpackOverlayOffsetYEntry;
     private readonly MelonPreferences_Entry<float> _backpackOverlayScaleEntry;
@@ -152,6 +156,17 @@ public class Configuration
             true,
             "Show total product value in the backpack metrics tray"
         );
+        _backpackUiThemeEntry = _category.CreateEntry(
+            "BackpackUiTheme",
+            (int)BackpackUiTheme.S1Blue,
+            "PackRat backpack UI color theme"
+        );
+        _backpackCustomThemeRedEntry = _category.CreateEntry("BackpackCustomThemeRed", 35,
+            "Red channel for PackRat's custom backpack UI theme");
+        _backpackCustomThemeGreenEntry = _category.CreateEntry("BackpackCustomThemeGreen", 61,
+            "Green channel for PackRat's custom backpack UI theme");
+        _backpackCustomThemeBlueEntry = _category.CreateEntry("BackpackCustomThemeBlue", 86,
+            "Blue channel for PackRat's custom backpack UI theme");
         _backpackOverlayOffsetXEntry = _category.CreateEntry(
             "BackpackOverlayOffsetX",
             0f,
@@ -268,6 +283,8 @@ public class Configuration
     public bool ShowProductQuantityTotalMetric { get; set; }
     public bool ShowProductUnitPriceMetric { get; set; }
     public bool ShowProductTotalPriceMetric { get; set; }
+    public BackpackUiTheme BackpackUiTheme { get; set; }
+    public Color CustomBackpackUiPrimaryColor { get; set; }
     public float BackpackOverlayOffsetX { get; set; }
     public float BackpackOverlayOffsetY { get; set; }
     public float BackpackOverlayScale { get; set; }
@@ -326,6 +343,13 @@ public class Configuration
         ShowProductQuantityTotalMetric = _showProductQuantityTotalMetricEntry.Value;
         ShowProductUnitPriceMetric = _showProductUnitPriceMetricEntry.Value;
         ShowProductTotalPriceMetric = _showProductTotalPriceMetricEntry.Value;
+        BackpackUiTheme = BackpackUiThemes.Clamp(_backpackUiThemeEntry.Value);
+        CustomBackpackUiPrimaryColor = new Color32(
+            (byte)Mathf.Clamp(_backpackCustomThemeRedEntry.Value, 0, 255),
+            (byte)Mathf.Clamp(_backpackCustomThemeGreenEntry.Value, 0, 255),
+            (byte)Mathf.Clamp(_backpackCustomThemeBlueEntry.Value, 0, 255),
+            255
+        );
         BackpackOverlayOffsetX = _backpackOverlayOffsetXEntry.Value;
         BackpackOverlayOffsetY = _backpackOverlayOffsetYEntry.Value;
         BackpackOverlayScale = ClampOverlayScale(_backpackOverlayScaleEntry.Value);
@@ -370,6 +394,11 @@ public class Configuration
         _showProductQuantityTotalMetricEntry.Value = ShowProductQuantityTotalMetric;
         _showProductUnitPriceMetricEntry.Value = ShowProductUnitPriceMetric;
         _showProductTotalPriceMetricEntry.Value = ShowProductTotalPriceMetric;
+        _backpackUiThemeEntry.Value = (int)BackpackUiThemes.Clamp((int)BackpackUiTheme);
+        var customPrimary = (Color32)CustomBackpackUiPrimaryColor;
+        _backpackCustomThemeRedEntry.Value = customPrimary.r;
+        _backpackCustomThemeGreenEntry.Value = customPrimary.g;
+        _backpackCustomThemeBlueEntry.Value = customPrimary.b;
         _backpackOverlayOffsetXEntry.Value = BackpackOverlayOffsetX;
         _backpackOverlayOffsetYEntry.Value = BackpackOverlayOffsetY;
         _backpackOverlayScaleEntry.Value = ClampOverlayScale(BackpackOverlayScale);
@@ -443,6 +472,11 @@ public class Configuration
         sb.AppendLine("[PackRat]");
         sb.AppendLine($"ToggleKey = \"{ToggleKey}\"");
         sb.AppendLine($"EnableSearch = {EnableSearch.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"BackpackUiTheme = {(int)BackpackUiThemes.Clamp((int)BackpackUiTheme)}");
+        var customPrimary = (Color32)CustomBackpackUiPrimaryColor;
+        sb.AppendLine($"BackpackCustomThemeRed = {customPrimary.r}");
+        sb.AppendLine($"BackpackCustomThemeGreen = {customPrimary.g}");
+        sb.AppendLine($"BackpackCustomThemeBlue = {customPrimary.b}");
         sb.AppendLine($"BackpackOverlayOffsetX = {BackpackOverlayOffsetX.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
         sb.AppendLine($"BackpackOverlayOffsetY = {BackpackOverlayOffsetY.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
         sb.AppendLine($"BackpackOverlayScale = {ClampOverlayScale(BackpackOverlayScale).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}");

@@ -46,6 +46,12 @@ public static class HandoverScreenPatch
     private const string VehicleHeaderTitle = "Vehicle";
     private const string VehicleHeaderSubtitle = "This is the vehicle you last drove.\nMust be within 20 meters.";
 
+    private static BackpackUiThemePalette GetCurrentBackpackThemePalette()
+    {
+        var config = Configuration.Instance;
+        return BackpackUiThemes.Get(config.BackpackUiTheme, config.CustomBackpackUiPrimaryColor);
+    }
+
     private sealed class PanelState
     {
         public RectTransform BackpackContainer;
@@ -1063,7 +1069,7 @@ public static class HandoverScreenPatch
             header.offsetMin = new Vector2(10f, -62f);
             header.offsetMax = new Vector2(-10f, -8f);
             var headerImage = headerGo.AddComponent<Image>();
-            headerImage.color = new Color32(35, 61, 86, 248);
+            headerImage.color = GetCurrentBackpackThemePalette().Header;
             headerImage.raycastTarget = false;
 
             var accentGo = new GameObject("Accent");
@@ -1075,7 +1081,7 @@ public static class HandoverScreenPatch
             accent.offsetMin = Vector2.zero;
             accent.offsetMax = new Vector2(0f, 3f);
             var accentImage = accentGo.AddComponent<Image>();
-            accentImage.color = new Color32(76, 173, 229, 255);
+            accentImage.color = GetCurrentBackpackThemePalette().Accent;
             accentImage.raycastTarget = false;
 
             state.VisualTitleLabel = EnsureVisualLabel(header, "Title", new Vector2(0f, -16f), 18, FontStyle.Bold);
@@ -2207,7 +2213,7 @@ public static class HandoverScreenPatch
         var rootImage = root.GetComponent<Image>();
         if (rootImage != null)
         {
-            rootImage.color = new Color32(15, 21, 28, 238);
+            rootImage.color = GetCurrentBackpackThemePalette().Card;
             rootImage.raycastTarget = false;
         }
 
@@ -2228,7 +2234,7 @@ public static class HandoverScreenPatch
         var headerImage = header.GetComponent<Image>();
         if (headerImage != null)
         {
-            headerImage.color = new Color32(35, 61, 86, 248);
+            headerImage.color = GetCurrentBackpackThemePalette().Header;
             headerImage.raycastTarget = false;
         }
 
@@ -2249,7 +2255,7 @@ public static class HandoverScreenPatch
         var accentImage = accent.GetComponent<Image>();
         if (accentImage != null)
         {
-            accentImage.color = new Color32(76, 173, 229, 255);
+            accentImage.color = GetCurrentBackpackThemePalette().Accent;
             accentImage.raycastTarget = false;
         }
 
