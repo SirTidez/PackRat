@@ -28,6 +28,11 @@ public class Configuration
     private readonly MelonPreferences_Entry<bool> _enableUiAnimationsEntry;
     private readonly MelonPreferences_Entry<bool> _reduceUiMotionEntry;
     private readonly MelonPreferences_Entry<bool> _protectFavoritesFromOrganizationEntry;
+    private readonly MelonPreferences_Entry<bool> _enableSmartRoutingEntry;
+    private readonly MelonPreferences_Entry<bool> _routeProductsEntry;
+    private readonly MelonPreferences_Entry<bool> _routeSeedsEntry;
+    private readonly MelonPreferences_Entry<bool> _routeMixersEntry;
+    private readonly MelonPreferences_Entry<bool> _routeReagentsEntry;
     private readonly MelonPreferences_Entry<float> _backpackOverlayOffsetXEntry;
     private readonly MelonPreferences_Entry<float> _backpackOverlayOffsetYEntry;
     private readonly MelonPreferences_Entry<float> _backpackOverlayScaleEntry;
@@ -91,6 +96,31 @@ public class Configuration
             "ProtectFavoritesFromOrganization",
             true,
             "Keep favorited backpack items unchanged by PackRat's organize and stack actions"
+        );
+        _enableSmartRoutingEntry = _category.CreateEntry(
+            "EnableSmartRouting",
+            false,
+            "Prefer routing configured quick-move categories into the backpack"
+        );
+        _routeProductsEntry = _category.CreateEntry(
+            "RouteProducts",
+            true,
+            "Route drug products into the backpack during quick move when Smart Routing is enabled"
+        );
+        _routeSeedsEntry = _category.CreateEntry(
+            "RouteSeeds",
+            true,
+            "Route seeds into the backpack during quick move when Smart Routing is enabled"
+        );
+        _routeMixersEntry = _category.CreateEntry(
+            "RouteMixers",
+            false,
+            "Route mixers into the backpack during quick move when Smart Routing is enabled"
+        );
+        _routeReagentsEntry = _category.CreateEntry(
+            "RouteReagents",
+            false,
+            "Route reagents into the backpack during quick move when Smart Routing is enabled"
         );
         _backpackOverlayOffsetXEntry = _category.CreateEntry(
             "BackpackOverlayOffsetX",
@@ -198,6 +228,11 @@ public class Configuration
     public bool EnableUiAnimations { get; set; }
     public bool ReduceUiMotion { get; set; }
     public bool ProtectFavoritesFromOrganization { get; set; }
+    public bool EnableSmartRouting { get; set; }
+    public bool RouteProducts { get; set; }
+    public bool RouteSeeds { get; set; }
+    public bool RouteMixers { get; set; }
+    public bool RouteReagents { get; set; }
     public float BackpackOverlayOffsetX { get; set; }
     public float BackpackOverlayOffsetY { get; set; }
     public float BackpackOverlayScale { get; set; }
@@ -246,6 +281,11 @@ public class Configuration
         EnableUiAnimations = _enableUiAnimationsEntry.Value;
         ReduceUiMotion = _reduceUiMotionEntry.Value;
         ProtectFavoritesFromOrganization = _protectFavoritesFromOrganizationEntry.Value;
+        EnableSmartRouting = _enableSmartRoutingEntry.Value;
+        RouteProducts = _routeProductsEntry.Value;
+        RouteSeeds = _routeSeedsEntry.Value;
+        RouteMixers = _routeMixersEntry.Value;
+        RouteReagents = _routeReagentsEntry.Value;
         BackpackOverlayOffsetX = _backpackOverlayOffsetXEntry.Value;
         BackpackOverlayOffsetY = _backpackOverlayOffsetYEntry.Value;
         BackpackOverlayScale = ClampOverlayScale(_backpackOverlayScaleEntry.Value);
@@ -280,6 +320,11 @@ public class Configuration
         _enableUiAnimationsEntry.Value = EnableUiAnimations;
         _reduceUiMotionEntry.Value = ReduceUiMotion;
         _protectFavoritesFromOrganizationEntry.Value = ProtectFavoritesFromOrganization;
+        _enableSmartRoutingEntry.Value = EnableSmartRouting;
+        _routeProductsEntry.Value = RouteProducts;
+        _routeSeedsEntry.Value = RouteSeeds;
+        _routeMixersEntry.Value = RouteMixers;
+        _routeReagentsEntry.Value = RouteReagents;
         _backpackOverlayOffsetXEntry.Value = BackpackOverlayOffsetX;
         _backpackOverlayOffsetYEntry.Value = BackpackOverlayOffsetY;
         _backpackOverlayScaleEntry.Value = ClampOverlayScale(BackpackOverlayScale);
@@ -384,6 +429,11 @@ public class Configuration
         sb.AppendLine($"EnableUiAnimations = {EnableUiAnimations.ToString().ToLowerInvariant()}");
         sb.AppendLine($"ReduceUiMotion = {ReduceUiMotion.ToString().ToLowerInvariant()}");
         sb.AppendLine($"ProtectFavoritesFromOrganization = {ProtectFavoritesFromOrganization.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"EnableSmartRouting = {EnableSmartRouting.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"RouteProducts = {RouteProducts.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"RouteSeeds = {RouteSeeds.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"RouteMixers = {RouteMixers.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"RouteReagents = {RouteReagents.ToString().ToLowerInvariant()}");
         return sb.ToString();
     }
 
