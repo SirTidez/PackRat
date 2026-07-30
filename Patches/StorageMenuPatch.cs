@@ -130,6 +130,59 @@ public static class StorageMenuPatch
         public int SlotsPerPage;
         public int LastPageInputFrame;
         public bool Initialized;
+        public Func<List<ItemSlot>> StorageSlotProvider;
+        public RectTransform BulkTransferRoot;
+        public Button BulkSelectorButton;
+        public Text BulkSelectorLabel;
+        public Button MoveToStorageButton;
+        public Button MoveToBackpackButton;
+        public Text BulkTransferStatusLabel;
+        public RectTransform BulkTransferActionsRoot;
+        public CanvasGroup BulkTransferActionsCanvasGroup;
+        public RectTransform BulkDropdownRoot;
+        public RectTransform BulkDropdownContent;
+        public readonly List<Button> BulkDropdownOptionButtons = new List<Button>();
+        public readonly List<Text> BulkDropdownOptionLabels = new List<Text>();
+        public readonly List<Action> BulkDropdownOptionActions = new List<Action>();
+        public readonly List<BulkTransferSelection> BulkTransferOptions = new List<BulkTransferSelection>();
+        public BulkTransferSelection BulkTransferSelection;
+        public Action BulkSelectorAction;
+        public Action MoveToStorageAction;
+        public Action MoveToBackpackAction;
+        public string BulkTransferStatus;
+        public bool SupportsStorageBulkTransfer;
+        public bool BulkTransferPresentationInitialized;
+        public bool BulkTransferExpanded;
+        public int BulkTransferMotionGeneration;
+    }
+
+    private enum BulkTransferMatchKind
+    {
+        Category,
+        Definition,
+        WeedStrain
+    }
+
+    /// <summary>
+    /// The independently selected criteria for a storage bulk move. It deliberately does not
+    /// borrow the shared browser's search or display filters, which are presentation-only.
+    /// </summary>
+    private sealed class BulkTransferSelection
+    {
+        public BulkTransferMatchKind Kind;
+        public string Key;
+        public string Label;
+    }
+
+    /// <summary>
+    /// A marijuana product's original strain. Mixed products keep a recipe pointing at their
+    /// input product, allowing PackRat to group every derived mix with its parent strain even
+    /// when the player gave the mix a completely different display name.
+    /// </summary>
+    private sealed class WeedStrainOption
+    {
+        public string Id;
+        public string Name;
     }
 
     /// <summary>
@@ -336,6 +389,11 @@ public static class StorageMenuPatch
     private const int StorageBackpackSlotsPerPage = 20;
     private const int StorageBackpackGridRows = 4;
     private const float CompactPanelMargin = 24f;
+    private const float StorageBulkTransferPagerGap = 12f;
+    private const float StorageBulkTransferCompactWidth = 132f;
+    private const float StorageBulkTransferCompactHeight = 26f;
+    private const float StorageBulkTransferExpandedHeight = 64f;
+    private const float StorageBulkTransferMotionDuration = 0.14f;
 
     private static readonly Dictionary<int, BackpackPanelState> BackpackPanels = new Dictionary<int, BackpackPanelState>();
     private static readonly Dictionary<int, StorageMenuSlotCapacityState> StorageMenuSlotCapacities =
@@ -4639,6 +4697,11 @@ public static class StorageMenuPatch
                 panel.PagingRoot.gameObject.SetActive(false);
             ApplyEmbeddedBackpackBrowser(panel.Container, panel.SlotContainer, panel.SlotGridLayout, panel.SlotUIs,
                 layoutView: (int)StandaloneBackpackLayoutView.Storage);
+            panel.StorageSlotProvider = () => openedOwner.ItemSlots.AsEnumerable().Where(slot => slot != null).ToList();
+            // This path is owned by StorageMenu. Station screens use their own station-interface
+            // patch and must never inherit storage bulk-transfer actions.
+            panel.SupportsStorageBulkTransfer = true;
+            EnsureStorageBulkTransferControls(panel);
             RebuildStorageQuickMove(openedOwner, GetBackpackSlots());
         }
         catch (Exception ex)
@@ -4843,12 +4906,683 @@ public static class StorageMenuPatch
 
             ApplyEmbeddedBackpackBrowser(panel.Container, panel.SlotContainer, panel.SlotGridLayout, panel.SlotUIs,
                 layoutView: (int)StandaloneBackpackLayoutView.Storage);
+            panel.StorageSlotProvider = () => openedEntity.ItemSlots.AsEnumerable().Where(slot => slot != null).ToList();
+            panel.SupportsStorageBulkTransfer = true;
+            EnsureStorageBulkTransferControls(panel);
             RebuildStorageEntityQuickMove(openedEntity, GetBackpackSlots());
         }
         catch (Exception ex)
         {
             ModLogger.Error("StorageMenuPatch.ApplyBackpackSidePanel(StorageEntity)", ex);
         }
+    }
+
+    /// <summary>
+    /// Adds a storage-only bulk-transfer surface beneath the shared backpack browser. The target
+    /// selector has intentionally separate state from search and display filters, so narrowing
+    /// the browser never changes the set of items a player is about to move.
+    /// </summary>
+    private static void EnsureStorageBulkTransferControls(BackpackPanelState panel)
+    {
+        if (panel?.Container == null || panel.SlotContainer == null || panel.StorageSlotProvider == null ||
+            !panel.SupportsStorageBulkTransfer)
+            return;
+
+        if (panel.BulkTransferRoot == null)
+        {
+            var rootGo = new GameObject("PackRat_StorageBulkTransferControls");
+            var root = rootGo.AddComponent<RectTransform>();
+            root.SetParent(panel.Container, worldPositionStays: false);
+            root.anchorMin = new Vector2(0.5f, 0.5f);
+            root.anchorMax = new Vector2(0.5f, 0.5f);
+            root.pivot = new Vector2(0.5f, 1f);
+            var layoutElement = rootGo.AddComponent<LayoutElement>();
+            layoutElement.ignoreLayout = true;
+            var background = rootGo.AddComponent<Image>();
+            background.color = new Color32(15, 26, 35, 238);
+            background.raycastTarget = false;
+            panel.BulkTransferRoot = root;
+
+            panel.BulkSelectorButton = CreateStandaloneActionButton(root, "BulkSelector",
+                new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(4f, -26f), new Vector2(-4f, -3f),
+                "BULK MOVE", 9, out panel.BulkSelectorLabel);
+            panel.BulkSelectorLabel.alignment = TextAnchor.MiddleCenter;
+
+            var actionsGo = new GameObject("BulkActions");
+            var actionsRoot = actionsGo.AddComponent<RectTransform>();
+            actionsRoot.SetParent(root, worldPositionStays: false);
+            actionsRoot.anchorMin = Vector2.zero;
+            actionsRoot.anchorMax = Vector2.one;
+            actionsRoot.offsetMin = Vector2.zero;
+            actionsRoot.offsetMax = Vector2.zero;
+            panel.BulkTransferActionsRoot = actionsRoot;
+            panel.BulkTransferActionsCanvasGroup = actionsGo.AddComponent<CanvasGroup>();
+
+            panel.MoveToStorageButton = CreateStandaloneActionButton(actionsRoot, "MoveToStorage",
+                new Vector2(0f, 0f), new Vector2(0.5f, 1f), new Vector2(4f, 21f), new Vector2(-2f, -28f),
+                "TO STORAGE", 8, out _);
+            panel.MoveToBackpackButton = CreateStandaloneActionButton(actionsRoot, "MoveToBackpack",
+                new Vector2(0.5f, 0f), new Vector2(1f, 1f), new Vector2(2f, 21f), new Vector2(-4f, -28f),
+                "TO BACKPACK", 8, out _);
+
+            var statusGo = new GameObject("Status");
+            var statusRect = statusGo.AddComponent<RectTransform>();
+            statusRect.SetParent(actionsRoot, worldPositionStays: false);
+            statusRect.anchorMin = new Vector2(0f, 0f);
+            statusRect.anchorMax = new Vector2(1f, 0f);
+            statusRect.pivot = new Vector2(0.5f, 0f);
+            statusRect.offsetMin = new Vector2(4f, 3f);
+            statusRect.offsetMax = new Vector2(-4f, 18f);
+            panel.BulkTransferStatusLabel = statusGo.AddComponent<Text>();
+            panel.BulkTransferStatusLabel.font = ResolveUiFont(root);
+            panel.BulkTransferStatusLabel.fontSize = 8;
+            panel.BulkTransferStatusLabel.fontStyle = FontStyle.Bold;
+            panel.BulkTransferStatusLabel.alignment = TextAnchor.MiddleCenter;
+            panel.BulkTransferStatusLabel.color = new Color32(168, 207, 229, 255);
+            panel.BulkTransferStatusLabel.raycastTarget = false;
+
+            panel.BulkSelectorAction = () => ToggleStorageBulkDropdown(panel);
+            panel.MoveToStorageAction = () => ExecuteStorageBulkTransfer(panel, moveToStorage: true);
+            panel.MoveToBackpackAction = () => ExecuteStorageBulkTransfer(panel, moveToStorage: false);
+            EventHelper.AddListener(panel.BulkSelectorAction, panel.BulkSelectorButton.onClick);
+            EventHelper.AddListener(panel.MoveToStorageAction, panel.MoveToStorageButton.onClick);
+            EventHelper.AddListener(panel.MoveToBackpackAction, panel.MoveToBackpackButton.onClick);
+
+            CreateStorageBulkDropdown(panel);
+        }
+
+        panel.BulkTransferRoot.gameObject.SetActive(true);
+        RefreshStorageBulkTransferControls(panel);
+    }
+
+    private static void PositionStorageBulkTransferControls(BackpackPanelState panel)
+    {
+        if (panel?.BulkTransferRoot == null || panel.SlotContainer == null)
+            return;
+
+        Canvas.ForceUpdateCanvases();
+        var scale = GetStandaloneBackpackScale(StandaloneBackpackLayoutView.Storage);
+        var gridBottom = panel.SlotContainer.anchoredPosition.y - panel.SlotContainer.rect.height * scale * 0.5f;
+
+        // The embedded browser owns a separate pager state keyed to the PackRat panel root.
+        // Its RectTransform is the authoritative bottom boundary: anchoring the bulk rail to the
+        // grid alone made the two independent controls overlap at some responsive scales.
+        var bulkTop = gridBottom - 92f * scale;
+        if (panel.Container != null &&
+            StandaloneBackpackPanels.TryGetValue(panel.Container.GetInstanceID(), out var embeddedState) &&
+            embeddedState?.PagingRoot != null)
+        {
+            var pager = embeddedState.PagingRoot;
+            var pagerScale = Mathf.Max(0.01f, pager.localScale.y);
+            var pagerBottom = pager.anchoredPosition.y - pager.rect.height * pagerScale;
+            bulkTop = pagerBottom - StorageBulkTransferPagerGap * scale;
+        }
+
+        panel.BulkTransferRoot.anchoredPosition = new Vector2(panel.SlotContainer.anchoredPosition.x,
+            bulkTop);
+        panel.BulkTransferRoot.localScale = Vector3.one * scale;
+        panel.BulkTransferRoot.SetAsLastSibling();
+    }
+
+    /// <summary>
+    /// Keeps bulk transfer unobtrusive until the player has chosen an independent transfer
+    /// selection. The selector stays available in the compact state; the destination control and
+    /// feedback surface only appear after a selection makes that action meaningful.
+    /// </summary>
+    private static void UpdateStorageBulkTransferPresentation(BackpackPanelState panel, bool expanded)
+    {
+        if (panel?.BulkTransferRoot == null || panel.SlotContainer == null)
+            return;
+
+        PositionStorageBulkTransferControls(panel);
+        var scale = GetStandaloneBackpackScale(StandaloneBackpackLayoutView.Storage);
+        var expandedWidth = Mathf.Clamp(panel.SlotContainer.rect.width * scale, 280f, 440f);
+        var targetSize = expanded
+            ? new Vector2(expandedWidth, StorageBulkTransferExpandedHeight)
+            : new Vector2(StorageBulkTransferCompactWidth * scale, StorageBulkTransferCompactHeight);
+
+        var shouldAnimate = panel.BulkTransferPresentationInitialized && panel.BulkTransferExpanded != expanded &&
+            Configuration.Instance.EnableUiAnimations && !Configuration.Instance.ReduceUiMotion;
+        panel.BulkTransferExpanded = expanded;
+        panel.BulkTransferPresentationInitialized = true;
+
+        if (panel.BulkTransferActionsRoot != null && expanded)
+            panel.BulkTransferActionsRoot.gameObject.SetActive(true);
+
+        if (!shouldAnimate)
+        {
+            SnapStorageBulkTransferPresentation(panel, targetSize, expanded);
+            return;
+        }
+
+        var generation = ++panel.BulkTransferMotionGeneration;
+        var startSize = panel.BulkTransferRoot.sizeDelta;
+        var startAlpha = panel.BulkTransferActionsCanvasGroup?.alpha ?? (expanded ? 0f : 1f);
+        MelonCoroutines.Start(RunStorageBulkTransferPresentation(panel, generation, startSize, targetSize,
+            startAlpha, expanded));
+    }
+
+    private static IEnumerator RunStorageBulkTransferPresentation(BackpackPanelState panel, int generation,
+        Vector2 startSize, Vector2 targetSize, float startActionsAlpha, bool expanded)
+    {
+        var elapsed = 0f;
+        while (panel != null && panel.BulkTransferMotionGeneration == generation && elapsed < StorageBulkTransferMotionDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            var rawT = Mathf.Clamp01(elapsed / StorageBulkTransferMotionDuration);
+            var t = EaseOutCubic(rawT);
+            if (panel.BulkTransferRoot != null)
+                panel.BulkTransferRoot.sizeDelta = Vector2.Lerp(startSize, targetSize, t);
+            if (panel.BulkTransferActionsCanvasGroup != null)
+            {
+                var targetAlpha = expanded ? 1f : 0f;
+                var actionT = expanded ? Mathf.Clamp01((rawT - 0.35f) / 0.65f) : rawT;
+                panel.BulkTransferActionsCanvasGroup.alpha = Mathf.Lerp(startActionsAlpha, targetAlpha, actionT);
+                panel.BulkTransferActionsCanvasGroup.interactable = expanded;
+                panel.BulkTransferActionsCanvasGroup.blocksRaycasts = expanded;
+            }
+
+            yield return null;
+        }
+
+        if (panel == null || panel.BulkTransferMotionGeneration != generation)
+            yield break;
+
+        SnapStorageBulkTransferPresentation(panel, targetSize, expanded);
+    }
+
+    private static void SnapStorageBulkTransferPresentation(BackpackPanelState panel, Vector2 targetSize, bool expanded)
+    {
+        if (panel?.BulkTransferRoot != null)
+            panel.BulkTransferRoot.sizeDelta = targetSize;
+
+        if (panel?.BulkTransferActionsCanvasGroup != null)
+        {
+            panel.BulkTransferActionsCanvasGroup.alpha = expanded ? 1f : 0f;
+            panel.BulkTransferActionsCanvasGroup.interactable = expanded;
+            panel.BulkTransferActionsCanvasGroup.blocksRaycasts = expanded;
+        }
+
+        if (panel?.BulkTransferActionsRoot != null)
+            panel.BulkTransferActionsRoot.gameObject.SetActive(expanded);
+    }
+
+    private static void CreateStorageBulkDropdown(BackpackPanelState panel)
+    {
+        if (panel?.Container == null || panel.BulkDropdownRoot != null)
+            return;
+
+        var dropdownGo = new GameObject("PackRat_StorageBulkTransferDropdown");
+        var dropdown = dropdownGo.AddComponent<RectTransform>();
+        dropdown.SetParent(panel.Container, worldPositionStays: false);
+        dropdown.anchorMin = new Vector2(0.5f, 0.5f);
+        dropdown.anchorMax = new Vector2(0.5f, 0.5f);
+        dropdown.pivot = new Vector2(0.5f, 1f);
+        var background = dropdownGo.AddComponent<Image>();
+        background.color = new Color32(11, 20, 29, 254);
+
+        var canvas = Utils.AddComponentSafe<Canvas>(dropdownGo);
+        if (canvas != null)
+        {
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = 3300;
+        }
+
+        var raycaster = Utils.AddComponentSafe<GraphicRaycaster>(dropdownGo);
+        RegisterItemUiRaycaster(raycaster);
+
+        var viewportGo = new GameObject("Viewport");
+        var viewport = viewportGo.AddComponent<RectTransform>();
+        viewport.SetParent(dropdown, worldPositionStays: false);
+        viewport.anchorMin = Vector2.zero;
+        viewport.anchorMax = Vector2.one;
+        viewport.offsetMin = new Vector2(3f, 3f);
+        viewport.offsetMax = new Vector2(-3f, -3f);
+        var viewportImage = viewportGo.AddComponent<Image>();
+        viewportImage.color = Color.white;
+        var mask = viewportGo.AddComponent<Mask>();
+        mask.showMaskGraphic = false;
+
+        var contentGo = new GameObject("Content");
+        var content = contentGo.AddComponent<RectTransform>();
+        content.SetParent(viewport, worldPositionStays: false);
+        content.anchorMin = new Vector2(0f, 1f);
+        content.anchorMax = new Vector2(1f, 1f);
+        content.pivot = new Vector2(0.5f, 1f);
+        content.offsetMin = Vector2.zero;
+        content.offsetMax = Vector2.zero;
+        var layout = contentGo.AddComponent<VerticalLayoutGroup>();
+        layout.padding = new RectOffset(0, 0, 0, 0);
+        layout.spacing = 3f;
+        layout.childAlignment = TextAnchor.UpperCenter;
+        layout.childControlWidth = true;
+        layout.childControlHeight = true;
+        layout.childForceExpandWidth = true;
+        layout.childForceExpandHeight = false;
+        var fitter = contentGo.AddComponent<ContentSizeFitter>();
+        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        var scroll = dropdownGo.AddComponent<ScrollRect>();
+        scroll.viewport = viewport;
+        scroll.content = content;
+        scroll.horizontal = false;
+        scroll.vertical = true;
+        scroll.movementType = ScrollRect.MovementType.Clamped;
+        scroll.scrollSensitivity = 24f;
+
+        panel.BulkDropdownRoot = dropdown;
+        panel.BulkDropdownContent = content;
+        dropdown.gameObject.SetActive(false);
+    }
+
+    private static void ToggleStorageBulkDropdown(BackpackPanelState panel)
+    {
+        if (panel?.BulkDropdownRoot == null)
+            return;
+
+        if (panel.BulkDropdownRoot.gameObject.activeSelf)
+        {
+            panel.BulkDropdownRoot.gameObject.SetActive(false);
+            return;
+        }
+
+        RefreshStorageBulkTransferOptions(panel);
+        if (panel.BulkTransferOptions.Count == 0)
+        {
+            SetStorageBulkTransferStatus(panel, "NO MOVABLE ITEMS FOUND", new Color32(220, 190, 105, 255));
+            return;
+        }
+
+        PositionStorageBulkDropdown(panel);
+        panel.BulkDropdownRoot.gameObject.SetActive(true);
+        panel.BulkDropdownRoot.SetAsLastSibling();
+    }
+
+    private static void PositionStorageBulkDropdown(BackpackPanelState panel)
+    {
+        if (panel?.BulkDropdownRoot == null || panel.BulkTransferRoot == null || panel.Container == null)
+            return;
+
+        Canvas.ForceUpdateCanvases();
+        var source = panel.BulkTransferRoot;
+        var left = source.TransformPoint(new Vector3(source.rect.xMin, source.rect.yMin, 0f));
+        var right = source.TransformPoint(new Vector3(source.rect.xMax, source.rect.yMin, 0f));
+        var bottom = source.TransformPoint(new Vector3(0f, source.rect.yMin, 0f));
+        var width = Mathf.Clamp(Vector3.Distance(left, right), 260f, 440f);
+        var height = Mathf.Min(216f, 6f + panel.BulkTransferOptions.Count * 27f);
+        panel.BulkDropdownRoot.sizeDelta = new Vector2(width, Mathf.Max(30f, height));
+        panel.BulkDropdownRoot.anchoredPosition = panel.Container.InverseTransformPoint(bottom) + new Vector3(0f, -3f, 0f);
+        panel.BulkDropdownRoot.localScale = Vector3.one;
+    }
+
+    private static void RefreshStorageBulkTransferControls(BackpackPanelState panel)
+    {
+        if (panel == null)
+            return;
+
+        RefreshStorageBulkTransferOptions(panel, rebuildVisibleButtons: false);
+        var hasSelection = panel.BulkTransferSelection != null;
+        UpdateStorageBulkTransferPresentation(panel, hasSelection);
+        if (panel.BulkSelectorLabel != null)
+        {
+            panel.BulkSelectorLabel.text = !hasSelection
+                ? "BULK MOVE"
+                : "BULK: " + panel.BulkTransferSelection.Label;
+        }
+
+        if (panel.MoveToStorageButton != null)
+            panel.MoveToStorageButton.interactable = hasSelection &&
+                HasStorageBulkTransferMatches(GetBackpackSlots(), panel.StorageSlotProvider?.Invoke(), panel.BulkTransferSelection);
+        if (panel.MoveToBackpackButton != null)
+            panel.MoveToBackpackButton.interactable = hasSelection &&
+                HasStorageBulkTransferMatches(panel.StorageSlotProvider?.Invoke(), GetBackpackSlots(), panel.BulkTransferSelection);
+
+        if (panel.BulkTransferStatusLabel != null)
+        {
+            panel.BulkTransferStatusLabel.gameObject.SetActive(hasSelection &&
+                !string.IsNullOrWhiteSpace(panel.BulkTransferStatus));
+            panel.BulkTransferStatusLabel.text = panel.BulkTransferStatus ?? string.Empty;
+        }
+    }
+
+    private static void RefreshStorageBulkTransferOptions(BackpackPanelState panel, bool rebuildVisibleButtons = true)
+    {
+        if (panel == null)
+            return;
+
+        panel.BulkTransferOptions.Clear();
+        var allSlots = new List<ItemSlot>();
+        allSlots.AddRange(GetBackpackSlots().Where(slot => slot?.ItemInstance != null));
+        var storageSlots = panel.StorageSlotProvider?.Invoke();
+        if (storageSlots != null)
+            allSlots.AddRange(storageSlots.Where(slot => slot?.ItemInstance != null));
+
+        if (allSlots.Count > 0)
+        {
+            panel.BulkTransferOptions.Add(new BulkTransferSelection
+            {
+                Kind = BulkTransferMatchKind.Category,
+                Key = string.Empty,
+                Label = "ALL ITEMS"
+            });
+
+            var categories = allSlots.Select(GetSlotType)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            for (var i = 0; i < categories.Count; i++)
+            {
+                var category = categories[i];
+                panel.BulkTransferOptions.Add(new BulkTransferSelection
+                {
+                    Kind = BulkTransferMatchKind.Category,
+                    Key = category,
+                    Label = string.Equals(category, "Products", StringComparison.OrdinalIgnoreCase)
+                        ? "ALL DRUGS"
+                        : "ALL " + category.ToUpperInvariant()
+                });
+            }
+
+            // Keep the strain groups separate from the browser's visual filters. A strain
+            // selection follows the product's recipe ancestry, so "GRANDDADDY PURPLE" includes
+            // named mixes and effect variants made from that strain as well as the base product.
+            var weedStrains = GetWeedStrainOptions(allSlots);
+            for (var i = 0; i < weedStrains.Count; i++)
+            {
+                var strain = weedStrains[i];
+                panel.BulkTransferOptions.Add(new BulkTransferSelection
+                {
+                    Kind = BulkTransferMatchKind.WeedStrain,
+                    Key = strain.Id,
+                    Label = "STRAIN: " + strain.Name.ToUpperInvariant()
+                });
+            }
+
+            var definitions = allSlots
+                .Select(slot => new { Id = GetSlotDefinitionId(slot), Name = GetSlotName(slot) })
+                .Where(value => !string.IsNullOrWhiteSpace(value.Id))
+                .GroupBy(value => value.Id, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .OrderBy(value => value.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            for (var i = 0; i < definitions.Count; i++)
+            {
+                var definition = definitions[i];
+                panel.BulkTransferOptions.Add(new BulkTransferSelection
+                {
+                    Kind = BulkTransferMatchKind.Definition,
+                    Key = definition.Id,
+                    Label = (string.IsNullOrWhiteSpace(definition.Name) ? definition.Id : definition.Name).ToUpperInvariant()
+                });
+            }
+        }
+
+        if (panel.BulkTransferSelection != null && !panel.BulkTransferOptions.Any(option =>
+                option.Kind == panel.BulkTransferSelection.Kind &&
+                string.Equals(option.Key, panel.BulkTransferSelection.Key, StringComparison.OrdinalIgnoreCase)))
+        {
+            panel.BulkTransferSelection = null;
+        }
+
+        if (!rebuildVisibleButtons || panel.BulkDropdownContent == null)
+            return;
+
+        for (var index = 0; index < panel.BulkTransferOptions.Count; index++)
+        {
+            while (panel.BulkDropdownOptionButtons.Count <= index)
+                CreateStorageBulkDropdownOption(panel);
+
+            var option = panel.BulkTransferOptions[index];
+            var button = panel.BulkDropdownOptionButtons[index];
+            var label = panel.BulkDropdownOptionLabels[index];
+            label.text = option.Label;
+            button.gameObject.SetActive(true);
+            var buttonImage = button.targetGraphic as Image;
+            if (buttonImage != null)
+            {
+                var selected = panel.BulkTransferSelection != null &&
+                    panel.BulkTransferSelection.Kind == option.Kind &&
+                    string.Equals(panel.BulkTransferSelection.Key, option.Key, StringComparison.OrdinalIgnoreCase);
+                buttonImage.color = selected ? new Color32(45, 109, 146, 255) : new Color32(24, 43, 57, 255);
+            }
+
+            var oldAction = panel.BulkDropdownOptionActions[index];
+            if (oldAction != null)
+                EventHelper.RemoveListener(oldAction, button.onClick);
+            var optionIndex = index;
+            var action = new Action(() => SelectStorageBulkTransferOption(panel, optionIndex));
+            panel.BulkDropdownOptionActions[index] = action;
+            EventHelper.AddListener(action, button.onClick);
+        }
+
+        for (var index = panel.BulkTransferOptions.Count; index < panel.BulkDropdownOptionButtons.Count; index++)
+            panel.BulkDropdownOptionButtons[index].gameObject.SetActive(false);
+
+        LayoutRebuilder.ForceRebuildLayoutImmediate(panel.BulkDropdownContent);
+    }
+
+    private static void CreateStorageBulkDropdownOption(BackpackPanelState panel)
+    {
+        var optionGo = new GameObject("Option" + panel.BulkDropdownOptionButtons.Count);
+        var optionRect = optionGo.AddComponent<RectTransform>();
+        optionRect.SetParent(panel.BulkDropdownContent, worldPositionStays: false);
+        var image = optionGo.AddComponent<Image>();
+        image.color = new Color32(24, 43, 57, 255);
+        ApplyPillButtonPresentation(image);
+        var button = optionGo.AddComponent<Button>();
+        button.targetGraphic = image;
+        var layoutElement = optionGo.AddComponent<LayoutElement>();
+        layoutElement.preferredHeight = 24f;
+        layoutElement.minHeight = 24f;
+        var label = CreateSearchText(optionRect, "Label", new Color32(223, 239, 248, 255));
+        label.fontSize = 10;
+        label.fontStyle = FontStyle.Bold;
+        label.alignment = TextAnchor.MiddleCenter;
+
+        panel.BulkDropdownOptionButtons.Add(button);
+        panel.BulkDropdownOptionLabels.Add(label);
+        panel.BulkDropdownOptionActions.Add(null);
+    }
+
+    private static void SelectStorageBulkTransferOption(BackpackPanelState panel, int optionIndex)
+    {
+        if (panel == null || optionIndex < 0 || optionIndex >= panel.BulkTransferOptions.Count)
+            return;
+
+        var selected = panel.BulkTransferOptions[optionIndex];
+        panel.BulkTransferSelection = new BulkTransferSelection
+        {
+            Kind = selected.Kind,
+            Key = selected.Key,
+            Label = selected.Label
+        };
+        panel.BulkTransferStatus = null;
+        if (panel.BulkDropdownRoot != null)
+            panel.BulkDropdownRoot.gameObject.SetActive(false);
+        RefreshStorageBulkTransferControls(panel);
+    }
+
+    private static bool HasStorageBulkTransferMatches(IEnumerable<ItemSlot> sourceSlots, IEnumerable<ItemSlot> destinationSlots,
+        BulkTransferSelection selection)
+    {
+        if (sourceSlots == null || destinationSlots == null || selection == null)
+            return false;
+
+        var destinations = destinationSlots.Where(slot => slot != null).ToList();
+        foreach (var source in sourceSlots)
+        {
+            if (!DoesStorageBulkSelectionMatch(source, selection) || source.IsRemovalLocked ||
+                GetWholeStandaloneSlotQuantity(source) <= 0)
+                continue;
+
+            var item = source.ItemInstance;
+            if (item == null)
+                continue;
+
+            for (var index = 0; index < destinations.Count; index++)
+            {
+                var destination = destinations[index];
+                if (!CanStorageBulkMoveToSlot(source, destination))
+                    continue;
+                if (destination.GetCapacityForItem(item, checkPlayerFilters: false) > 0)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool DoesStorageBulkSelectionMatch(ItemSlot slot, BulkTransferSelection selection)
+    {
+        if (slot?.ItemInstance == null || selection == null)
+            return false;
+
+        if (selection.Kind == BulkTransferMatchKind.Definition)
+            return string.Equals(GetSlotDefinitionId(slot), selection.Key, StringComparison.OrdinalIgnoreCase);
+
+        if (selection.Kind == BulkTransferMatchKind.WeedStrain)
+        {
+            var strains = GetWeedBaseStrains(slot);
+            return strains.Any(strain => string.Equals(strain.Id, selection.Key, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return string.IsNullOrWhiteSpace(selection.Key) ||
+            string.Equals(GetSlotType(slot), selection.Key, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void ExecuteStorageBulkTransfer(BackpackPanelState panel, bool moveToStorage)
+    {
+        if (panel?.BulkTransferSelection == null)
+            return;
+
+        try
+        {
+            var backpackSlots = GetBackpackSlots();
+            var storageSlots = panel.StorageSlotProvider?.Invoke();
+            if (storageSlots == null)
+                return;
+
+            var sources = moveToStorage ? backpackSlots : storageSlots;
+            var destinations = moveToStorage ? storageSlots : backpackSlots;
+            var totalMoved = 0;
+            var movedStacks = 0;
+            var sourceSnapshot = sources.Where(slot => slot?.ItemInstance != null).ToList();
+            for (var index = 0; index < sourceSnapshot.Count; index++)
+            {
+                var source = sourceSnapshot[index];
+                if (!DoesStorageBulkSelectionMatch(source, panel.BulkTransferSelection))
+                    continue;
+
+                var moved = MoveStorageBulkSourceToDestinations(source, destinations);
+                if (moved <= 0)
+                    continue;
+
+                totalMoved += moved;
+                movedStacks++;
+            }
+
+            if (totalMoved <= 0)
+            {
+                SetStorageBulkTransferStatus(panel, "NO MATCHING ITEMS COULD BE MOVED", new Color32(220, 190, 105, 255));
+                return;
+            }
+
+            // One authoritative backpack sync covers the entire batch, including moves out of
+            // the bag, instead of emitting a network update for every source stack.
+            BackpackStateSyncManager.CompleteLocalBackpackEdit();
+            var destinationLabel = moveToStorage ? "STORAGE" : "BACKPACK";
+            SetStorageBulkTransferStatus(panel,
+                $"MOVED {totalMoved} ITEM{(totalMoved == 1 ? string.Empty : "S")} FROM {movedStacks} STACK" +
+                $"{(movedStacks == 1 ? string.Empty : "S")} → {destinationLabel}", new Color32(105, 209, 140, 255));
+            ModLogger.Info($"[BackpackUI] Bulk moved {totalMoved} items from {movedStacks} matching stacks to {destinationLabel}. " +
+                $"Selection='{panel.BulkTransferSelection.Label}'.");
+            RefreshStorageBulkTransferSurface(panel);
+        }
+        catch (Exception ex)
+        {
+            SetStorageBulkTransferStatus(panel, "BULK MOVE FAILED — SEE LOG", new Color32(238, 125, 112, 255));
+            ModLogger.Error("StorageMenuPatch.ExecuteStorageBulkTransfer", ex);
+        }
+    }
+
+    private static int MoveStorageBulkSourceToDestinations(ItemSlot source, List<ItemSlot> destinations)
+    {
+        if (source?.ItemInstance == null || source.IsRemovalLocked || destinations == null)
+            return 0;
+
+        var movedTotal = 0;
+        var sourceItem = source.ItemInstance;
+        var remaining = GetWholeStandaloneSlotQuantity(source);
+        for (var index = 0; index < destinations.Count && remaining > 0; index++)
+        {
+            var destination = destinations[index];
+            if (!CanStorageBulkMoveToSlot(source, destination))
+                continue;
+
+            var capacity = Mathf.Max(0, destination.GetCapacityForItem(sourceItem, checkPlayerFilters: false));
+            var requestedMove = Mathf.Min(remaining, capacity);
+            if (requestedMove <= 0)
+                continue;
+
+            var transfer = sourceItem.GetCopy(requestedMove);
+            if (transfer == null)
+                continue;
+
+            var destinationBefore = GetWholeStandaloneSlotQuantity(destination);
+            destination.AddItem(transfer);
+            var moved = Mathf.Clamp(GetWholeStandaloneSlotQuantity(destination) - destinationBefore, 0, requestedMove);
+            if (moved <= 0)
+                continue;
+
+            var sourceBefore = GetWholeStandaloneSlotQuantity(source);
+            source.ChangeQuantity(-moved);
+            if (GetWholeStandaloneSlotQuantity(source) != sourceBefore - moved)
+            {
+                ModLogger.Warn("[BackpackUI] Bulk move aborted: source did not acknowledge the transfer.");
+                break;
+            }
+
+            movedTotal += moved;
+            remaining -= moved;
+        }
+
+        return movedTotal;
+    }
+
+    private static bool CanStorageBulkMoveToSlot(ItemSlot source, ItemSlot destination)
+    {
+        if (source?.ItemInstance == null || destination == null || ReferenceEquals(source, destination) ||
+            destination.IsLocked || destination.IsAddLocked || destination.IsRemovalLocked ||
+            !destination.DoesItemMatchHardFilters(source.ItemInstance))
+            return false;
+
+        return destination.ItemInstance == null || destination.ItemInstance.CanStackWith(source.ItemInstance,
+            checkQuantities: false);
+    }
+
+    private static void RefreshStorageBulkTransferSurface(BackpackPanelState panel)
+    {
+        if (panel?.Container == null || panel.SlotContainer == null || panel.SlotGridLayout == null || panel.SlotUIs == null)
+            return;
+
+        ApplyEmbeddedBackpackBrowser(panel.Container, panel.SlotContainer, panel.SlotGridLayout, panel.SlotUIs,
+            layoutView: (int)StandaloneBackpackLayoutView.Storage);
+        EnsureStorageBulkTransferControls(panel);
+    }
+
+    private static void SetStorageBulkTransferStatus(BackpackPanelState panel, string text, Color color)
+    {
+        if (panel == null)
+            return;
+
+        panel.BulkTransferStatus = text;
+        if (panel.BulkTransferStatusLabel == null)
+            return;
+
+        panel.BulkTransferStatusLabel.gameObject.SetActive(!string.IsNullOrWhiteSpace(text));
+        panel.BulkTransferStatusLabel.text = text ?? string.Empty;
+        panel.BulkTransferStatusLabel.color = color;
     }
 
     private static void EnsureOverlaySorting(RectTransform root, RectTransform sourceContainer)
@@ -5264,6 +5998,11 @@ public static class StorageMenuPatch
 
         if (panel.Container != null)
             panel.Container.gameObject.SetActive(false);
+
+        if (panel.BulkDropdownRoot != null)
+            panel.BulkDropdownRoot.gameObject.SetActive(false);
+        panel.BulkTransferMotionGeneration++;
+        panel.BulkTransferStatus = null;
     }
 
     private static void RefreshActiveStorageBackpackLayouts()
@@ -5276,7 +6015,23 @@ public static class StorageMenuPatch
             ConfigureCompactSidePanel(panel.Menu, panel);
             ApplyEmbeddedBackpackBrowser(panel.Container, panel.SlotContainer, panel.SlotGridLayout, panel.SlotUIs,
                 layoutView: (int)StandaloneBackpackLayoutView.Storage);
+            if (panel.SupportsStorageBulkTransfer)
+                EnsureStorageBulkTransferControls(panel);
+            else
+                HideStorageBulkTransferControls(panel);
         }
+    }
+
+    private static void HideStorageBulkTransferControls(BackpackPanelState panel)
+    {
+        if (panel == null)
+            return;
+
+        panel.BulkTransferMotionGeneration++;
+        if (panel.BulkTransferRoot != null)
+            panel.BulkTransferRoot.gameObject.SetActive(false);
+        if (panel.BulkDropdownRoot != null)
+            panel.BulkDropdownRoot.gameObject.SetActive(false);
     }
 
     private static void RebuildStorageQuickMove(IItemSlotOwner openedOwner, List<ItemSlot> backpackSlots)
@@ -5712,6 +6467,149 @@ public static class StorageMenuPatch
         {
             return string.Empty;
         }
+    }
+
+    /// <summary>
+    /// Produces one selector entry per original marijuana strain represented by the provided
+    /// slots. A selected strain includes its base product and every mixed product whose recipe
+    /// ancestry leads back to that base product.
+    /// </summary>
+    private static List<WeedStrainOption> GetWeedStrainOptions(IEnumerable<ItemSlot> slots)
+    {
+        var strainsById = new Dictionary<string, WeedStrainOption>(StringComparer.OrdinalIgnoreCase);
+        if (slots == null)
+            return new List<WeedStrainOption>();
+
+        foreach (var slot in slots)
+        {
+            var strains = GetWeedBaseStrains(slot);
+            for (var index = 0; index < strains.Count; index++)
+            {
+                var strain = strains[index];
+                if (string.IsNullOrWhiteSpace(strain?.Id) || strainsById.ContainsKey(strain.Id))
+                    continue;
+
+                strainsById[strain.Id] = strain;
+            }
+        }
+
+        return strainsById.Values
+            .OrderBy(strain => strain.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Resolves the base marijuana product(s) for a slot by walking the game's persisted mix
+    /// recipes. Product definitions own the recipes that created them; each such recipe includes
+    /// the preceding product and a mixer ingredient. This avoids relying on custom mix names.
+    /// </summary>
+    private static List<WeedStrainOption> GetWeedBaseStrains(ItemSlot slot)
+    {
+        var definition = slot?.ItemInstance?.Definition;
+        if (!IsMarijuanaProductDefinition(definition))
+            return new List<WeedStrainOption>();
+
+        var strainsById = new Dictionary<string, WeedStrainOption>(StringComparer.OrdinalIgnoreCase);
+        ResolveWeedBaseStrains(definition, new HashSet<string>(StringComparer.OrdinalIgnoreCase), strainsById);
+        return strainsById.Values.ToList();
+    }
+
+    private static void ResolveWeedBaseStrains(object productDefinition, HashSet<string> recursionPath,
+        IDictionary<string, WeedStrainOption> strainsById)
+    {
+        if (!IsMarijuanaProductDefinition(productDefinition) || recursionPath == null || strainsById == null)
+            return;
+
+        var definitionId = GetReflectedDefinitionId(productDefinition);
+        if (string.IsNullOrWhiteSpace(definitionId) || !recursionPath.Add(definitionId))
+            return;
+
+        try
+        {
+            var hasParentProduct = false;
+            var recipes = ReflectionUtils.TryGetFieldOrProperty(productDefinition, "Recipes");
+            var recipeCount = ReflectionUtils.TryGetListCount(recipes);
+            for (var recipeIndex = 0; recipeIndex < recipeCount; recipeIndex++)
+            {
+                var recipe = ReflectionUtils.TryGetListItem(recipes, recipeIndex);
+                var ingredients = ReflectionUtils.TryGetFieldOrProperty(recipe, "Ingredients");
+                var ingredientCount = ReflectionUtils.TryGetListCount(ingredients);
+                for (var ingredientIndex = 0; ingredientIndex < ingredientCount; ingredientIndex++)
+                {
+                    var ingredient = ReflectionUtils.TryGetListItem(ingredients, ingredientIndex);
+                    var items = ReflectionUtils.TryGetFieldOrProperty(ingredient, "Items");
+                    var itemCount = ReflectionUtils.TryGetListCount(items);
+                    for (var itemIndex = 0; itemIndex < itemCount; itemIndex++)
+                    {
+                        var inputDefinition = ReflectionUtils.TryGetListItem(items, itemIndex);
+                        if (!IsMarijuanaProductDefinition(inputDefinition))
+                            continue;
+
+                        hasParentProduct = true;
+                        ResolveWeedBaseStrains(inputDefinition, recursionPath, strainsById);
+                    }
+                }
+            }
+
+            if (!hasParentProduct)
+            {
+                strainsById[definitionId] = new WeedStrainOption
+                {
+                    Id = definitionId,
+                    Name = GetReflectedDefinitionName(productDefinition, definitionId)
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            // Product definitions can be rebuilt as a client receives product data. A failed
+            // read should leave this one slot out of the optional grouping rather than breaking
+            // the storage UI or a bulk transfer.
+            ModLogger.Debug("Unable to resolve marijuana strain ancestry: " + ex.Message);
+        }
+        finally
+        {
+            recursionPath.Remove(definitionId);
+        }
+    }
+
+    private static bool IsMarijuanaProductDefinition(object definition)
+    {
+        if (definition == null)
+            return false;
+
+        try
+        {
+            var drugType = ReflectionUtils.TryGetFieldOrProperty(definition, "DrugType")?.ToString();
+            if (string.Equals(drugType, "Marijuana", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // The game uses WeedDefinition for its marijuana product subtype. This fallback
+            // keeps the grouping available while an in-flight generated product is exposing its
+            // base members through a different IL2CPP wrapper layer.
+            var typeName = definition.GetType().Name ?? string.Empty;
+            return typeName.IndexOf("WeedDefinition", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string GetReflectedDefinitionId(object definition)
+    {
+        var id = ReflectionUtils.TryGetFieldOrProperty(definition, "ID")
+            ?? ReflectionUtils.TryGetFieldOrProperty(definition, "Id")
+            ?? ReflectionUtils.TryGetFieldOrProperty(definition, "id");
+        return id?.ToString()?.Trim() ?? string.Empty;
+    }
+
+    private static string GetReflectedDefinitionName(object definition, string fallback)
+    {
+        var name = ReflectionUtils.TryGetFieldOrProperty(definition, "Name")
+            ?? ReflectionUtils.TryGetFieldOrProperty(definition, "name");
+        var value = name?.ToString()?.Trim();
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
 
     /// <summary>
