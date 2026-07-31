@@ -8358,16 +8358,125 @@ public static class StorageMenuPatch
 
         try
         {
+            // ProductDefinition is not always exposed through the same concrete wrapper after
+            // the game generates a mixed product. Prefer the common member first so the search
+            // surface remains stable in both Mono and IL2CPP.
+            var reflectedDrugType = ReflectionUtils.TryGetFieldOrProperty(definition, "DrugType")
+                ?? ReflectionUtils.TryGetFieldOrProperty(definition, "drugType")
+                ?? ReflectionUtils.TryGetFieldOrProperty(item, "DrugType")
+                ?? ReflectionUtils.TryGetFieldOrProperty(item, "drugType");
+            if (!string.IsNullOrWhiteSpace(reflectedDrugType?.ToString()))
+                return reflectedDrugType.ToString();
+
 #if MONO
             var productDefinition = definition as ProductDefinition;
 #else
-            var productDefinition = definition.TryCast<ProductDefinition>();
+            var il2CppDefinition = definition as Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase;
+            var productDefinition = il2CppDefinition?.TryCast<ProductDefinition>();
 #endif
-            return productDefinition?.DrugType.ToString() ?? string.Empty;
+            if (productDefinition != null)
+                return productDefinition.DrugType.ToString();
+
+            // Generated products can temporarily report only their concrete definition type.
+            // Preserve their player-facing drug family as a final fallback.
+            if (IsMarijuanaProductDefinition(definition))
+                return "Marijuana";
+
+            var identity = string.Join(" ", new[]
+            {
+                GetReflectedDefinitionName(definition, string.Empty),
+                GetReflectedDefinitionId(definition),
+                definition.GetType().Name ?? string.Empty
+            });
+            if (ContainsTypeToken(identity, "methamphetamine", "meth", "pseudo"))
+                return "Methamphetamine";
+            if (ContainsTypeToken(identity, "cocaine", "coke"))
+                return "Cocaine";
+            if (ContainsTypeToken(identity, "mushroom", "shroom"))
+                return "Mushrooms";
+
+            return string.Empty;
         }
         catch
         {
             return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Returns search-only product terms without changing the backing inventory or visual
+    /// filters. Mixed marijuana products include their original strain names so a search for a
+    /// base strain finds every derivative made from that strain.
+    /// </summary>
+    private static IEnumerable<string> GetProductSearchAliases(ItemSlot slot)
+    {
+        var item = slot?.ItemInstance;
+        var definition = item?.Definition;
+        if (item == null || definition == null || !IsProductItemInstance(item))
+            yield break;
+
+        var drugType = GetProductDrugType(item);
+        if (!string.IsNullOrWhiteSpace(drugType))
+            yield return drugType;
+
+        foreach (var alias in GetDrugTypeSearchAliases(drugType))
+            yield return alias;
+
+        // A recipe-derived marijuana product may not include its original strain in its own
+        // display name. Reuse the ancestry resolver used by the bulk-move selector so search
+        // and transfer semantics agree.
+        var baseStrains = GetWeedBaseStrains(slot);
+        for (var index = 0; index < baseStrains.Count; index++)
+        {
+            var strain = baseStrains[index];
+            if (strain == null)
+                continue;
+
+            if (!string.IsNullOrWhiteSpace(strain.Name))
+                yield return strain.Name;
+            if (!string.IsNullOrWhiteSpace(strain.Id))
+                yield return strain.Id;
+        }
+    }
+
+    private static IEnumerable<string> GetDrugTypeSearchAliases(string drugType)
+    {
+        if (string.IsNullOrWhiteSpace(drugType))
+            yield break;
+
+        if (drugType.IndexOf("marijuana", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            drugType.IndexOf("weed", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            yield return "weed";
+            yield return "marijuana";
+            yield return "cannabis";
+            yield return "pot";
+            yield break;
+        }
+
+        if (drugType.IndexOf("meth", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            yield return "meth";
+            yield return "methamphetamine";
+            yield return "pseudo";
+            yield break;
+        }
+
+        if (drugType.IndexOf("cocaine", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            drugType.IndexOf("coke", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            yield return "cocaine";
+            yield return "coke";
+            yield break;
+        }
+
+        if (drugType.IndexOf("mushroom", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            drugType.IndexOf("shroom", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            yield return "mushroom";
+            yield return "mushrooms";
+            yield return "shroom";
+            yield return "shrooms";
         }
     }
 
@@ -8429,28 +8538,21 @@ public static class StorageMenuPatch
         try
         {
             var hasParentProduct = false;
-            var recipes = ReflectionUtils.TryGetFieldOrProperty(productDefinition, "Recipes");
+            var recipes = GetWeedProductRecipes(productDefinition, definitionId);
             var recipeCount = ReflectionUtils.TryGetListCount(recipes);
             for (var recipeIndex = 0; recipeIndex < recipeCount; recipeIndex++)
             {
                 var recipe = ReflectionUtils.TryGetListItem(recipes, recipeIndex);
-                var ingredients = ReflectionUtils.TryGetFieldOrProperty(recipe, "Ingredients");
-                var ingredientCount = ReflectionUtils.TryGetListCount(ingredients);
-                for (var ingredientIndex = 0; ingredientIndex < ingredientCount; ingredientIndex++)
-                {
-                    var ingredient = ReflectionUtils.TryGetListItem(ingredients, ingredientIndex);
-                    var items = ReflectionUtils.TryGetFieldOrProperty(ingredient, "Items");
-                    var itemCount = ReflectionUtils.TryGetListCount(items);
-                    for (var itemIndex = 0; itemIndex < itemCount; itemIndex++)
-                    {
-                        var inputDefinition = ReflectionUtils.TryGetListItem(items, itemIndex);
-                        if (!IsMarijuanaProductDefinition(inputDefinition))
-                            continue;
+                hasParentProduct |= ResolveWeedRecipeInputs(recipe, recursionPath, strainsById);
+            }
 
-                        hasParentProduct = true;
-                        ResolveWeedBaseStrains(inputDefinition, recursionPath, strainsById);
-                    }
-                }
+            // The game's save/network format owns mix recipes as Product -> Mixer -> Output.
+            // Some runtime definitions don't retain their producing recipe locally, so look up
+            // every known recipe whose output is this product and walk back to its parent.
+            if (!hasParentProduct)
+            {
+                foreach (var recipe in GetWeedRecipesProducing(definitionId))
+                    hasParentProduct |= ResolveWeedRecipeInputs(recipe, recursionPath, strainsById);
             }
 
             if (!hasParentProduct)
@@ -8475,6 +8577,180 @@ public static class StorageMenuPatch
         }
     }
 
+    private static bool ResolveWeedRecipeInputs(object recipe, HashSet<string> recursionPath,
+        IDictionary<string, WeedStrainOption> strainsById)
+    {
+        if (recipe == null)
+            return false;
+
+        var foundParentProduct = false;
+        var ingredients = ReflectionUtils.TryGetFieldOrProperty(recipe, "Ingredients");
+        var ingredientCount = ReflectionUtils.TryGetListCount(ingredients);
+        for (var ingredientIndex = 0; ingredientIndex < ingredientCount; ingredientIndex++)
+        {
+            var ingredient = ReflectionUtils.TryGetListItem(ingredients, ingredientIndex);
+            var items = ReflectionUtils.TryGetFieldOrProperty(ingredient, "Items");
+            var itemCount = ReflectionUtils.TryGetListCount(items);
+            var foundMarijuanaInput = false;
+            for (var itemIndex = 0; itemIndex < itemCount; itemIndex++)
+            {
+                var inputDefinition = ReflectionUtils.TryGetListItem(items, itemIndex);
+                if (!IsMarijuanaProductDefinition(inputDefinition))
+                    continue;
+
+                foundParentProduct = true;
+                foundMarijuanaInput = true;
+                ResolveWeedBaseStrains(inputDefinition, recursionPath, strainsById);
+            }
+
+            // Recipes created at runtime can persist the chosen ingredient as Item rather than
+            // leave it in the selectable Items list.
+            if (foundMarijuanaInput)
+                continue;
+
+            var resolvedInput = ReflectionUtils.TryGetFieldOrProperty(ingredient, "Item")
+                ?? ReflectionUtils.TryGetFieldOrProperty(ingredient, "ingredientVariant");
+            if (!IsMarijuanaProductDefinition(resolvedInput))
+                continue;
+
+            foundParentProduct = true;
+            ResolveWeedBaseStrains(resolvedInput, recursionPath, strainsById);
+        }
+
+        return foundParentProduct;
+    }
+
+    private static IEnumerable<object> GetWeedRecipesProducing(string outputDefinitionId)
+    {
+        if (string.IsNullOrWhiteSpace(outputDefinitionId))
+            yield break;
+
+        // ProductDefinition.Recipes is useful for authored recipes, but generated mixes are
+        // recorded by the live ProductManager instead. This is the same Product -> Mixer ->
+        // Output graph that the save data serializes, so it is the authoritative source for
+        // a player-created name such as Alaskan Snorlax.
+        var foundRuntimeRecipe = false;
+        foreach (var recipe in GetRuntimeMixRecipes())
+        {
+            var product = ReflectionUtils.TryGetFieldOrProperty(recipe, "Product");
+            var outputDefinition = ReflectionUtils.TryGetFieldOrProperty(product, "Item");
+            if (!string.Equals(GetReflectedDefinitionId(outputDefinition), outputDefinitionId,
+                    StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            foundRuntimeRecipe = true;
+            yield return recipe;
+        }
+
+        if (foundRuntimeRecipe)
+            yield break;
+
+        foreach (var productDefinition in GetKnownRuntimeProductDefinitions())
+        {
+            var recipes = ReflectionUtils.TryGetFieldOrProperty(productDefinition, "Recipes")
+                ?? ReflectionUtils.TryGetFieldOrProperty(productDefinition, "recipes");
+            var recipeCount = ReflectionUtils.TryGetListCount(recipes);
+            for (var recipeIndex = 0; recipeIndex < recipeCount; recipeIndex++)
+            {
+                var recipe = ReflectionUtils.TryGetListItem(recipes, recipeIndex);
+                var product = ReflectionUtils.TryGetFieldOrProperty(recipe, "Product");
+                var outputDefinition = ReflectionUtils.TryGetFieldOrProperty(product, "Item");
+                if (string.Equals(GetReflectedDefinitionId(outputDefinition), outputDefinitionId,
+                        StringComparison.OrdinalIgnoreCase))
+                    yield return recipe;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns the live mix recipes maintained by ProductManager. Runtime-generated products
+    /// do not necessarily retain their ancestry on their individual definitions.
+    /// </summary>
+    private static IEnumerable<object> GetRuntimeMixRecipes()
+    {
+        ProductManager productManager = null;
+        try
+        {
+            productManager = ProductManager.Instance ?? Utils.FindObjectOfTypeSafe<ProductManager>();
+        }
+        catch
+        {
+            // ProductManager is unavailable while a scene is being torn down or before the
+            // product save data is loaded. The caller will fall back to definition recipes.
+        }
+
+        if (productManager == null)
+            yield break;
+
+        // This property is present in both generated API sets. Access it through the typed
+        // wrapper instead of reflection: IL2CPP's wrapper can expose the backing member but
+        // reject a reflected getter even though the list is fully populated in-game.
+        var recipes = productManager.mixRecipes;
+        if (recipes == null)
+            yield break;
+
+        var recipeCount = recipes.Count;
+        for (var recipeIndex = 0; recipeIndex < recipeCount; recipeIndex++)
+        {
+            var recipe = recipes[recipeIndex];
+            if (recipe != null)
+                yield return recipe;
+        }
+    }
+
+    private static IEnumerable<object> GetKnownRuntimeProductDefinitions()
+    {
+        ProductManager productManager;
+        try
+        {
+            productManager = ProductManager.Instance ?? Utils.FindObjectOfTypeSafe<ProductManager>();
+        }
+        catch
+        {
+            yield break;
+        }
+
+        if (productManager == null)
+            yield break;
+
+        var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var memberName in new[] { "AllProducts", "createdProducts", "DefaultKnownProducts" })
+        {
+            var definitions = ReflectionUtils.TryGetFieldOrProperty(productManager, memberName);
+            var definitionCount = ReflectionUtils.TryGetListCount(definitions);
+            for (var index = 0; index < definitionCount; index++)
+            {
+                var definition = ReflectionUtils.TryGetListItem(definitions, index);
+                var definitionId = GetReflectedDefinitionId(definition);
+                if (string.IsNullOrWhiteSpace(definitionId) || !seenIds.Add(definitionId))
+                    continue;
+
+                yield return definition;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns the recipe collection from a runtime product definition. Saved/generated products
+    /// may expose a lightweight definition with no recipes, while the registry retains the full
+    /// recipe graph under the same item ID.
+    /// </summary>
+    private static object GetWeedProductRecipes(object productDefinition, string definitionId)
+    {
+        var recipes = ReflectionUtils.TryGetFieldOrProperty(productDefinition, "Recipes")
+            ?? ReflectionUtils.TryGetFieldOrProperty(productDefinition, "recipes");
+        if (ReflectionUtils.TryGetListCount(recipes) > 0 || string.IsNullOrWhiteSpace(definitionId))
+            return recipes;
+
+        var registeredDefinition = GetStandaloneRegisteredItemDefinition(definitionId);
+        if (registeredDefinition == null)
+            return recipes;
+
+        var registeredRecipes = ReflectionUtils.TryGetFieldOrProperty(registeredDefinition, "Recipes")
+            ?? ReflectionUtils.TryGetFieldOrProperty(registeredDefinition, "recipes");
+        return ReflectionUtils.TryGetListCount(registeredRecipes) > 0 ? registeredRecipes : recipes;
+    }
+
     private static bool IsMarijuanaProductDefinition(object definition)
     {
         if (definition == null)
@@ -8482,6 +8758,18 @@ public static class StorageMenuPatch
 
         try
         {
+#if MONO
+            var productDefinition = definition as ProductDefinition;
+#else
+            var il2CppDefinition = definition as Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase;
+            var productDefinition = il2CppDefinition?.TryCast<ProductDefinition>();
+#endif
+            // Generated mixes are general ProductDefinitions rather than WeedDefinitions. Their
+            // typed DrugType is the stable discriminator on both Mono and IL2CPP.
+            if (productDefinition != null && string.Equals(productDefinition.DrugType.ToString(), "Marijuana",
+                    StringComparison.OrdinalIgnoreCase))
+                return true;
+
             var drugType = ReflectionUtils.TryGetFieldOrProperty(definition, "DrugType")?.ToString();
             if (string.Equals(drugType, "Marijuana", StringComparison.OrdinalIgnoreCase))
                 return true;
@@ -8591,7 +8879,7 @@ public static class StorageMenuPatch
             case "Mixers":
                 return "mixer additive effect ingredient";
             case "Products":
-                return "product drug";
+                return "product products drug drugs";
             case "Reagents":
                 return "reagent chemical chemistry";
             case "Seeds":
@@ -8700,7 +8988,7 @@ public static class StorageMenuPatch
                 definition?.Name ?? string.Empty,
                 definition?.ID ?? string.Empty
             };
-            var metadata = new[]
+            var metadata = new List<string>
             {
                 definition != null ? definition.Category.ToString() : string.Empty,
                 definition?.GetType().Name ?? string.Empty,
@@ -8711,6 +8999,7 @@ public static class StorageMenuPatch
                 GetEquippableTypeName(definition),
                 GetProductDrugType(item)
             };
+            metadata.AddRange(GetProductSearchAliases(slot));
 
             var terms = searchTerm.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             for (var i = 0; i < terms.Length; i++)
