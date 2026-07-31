@@ -49,6 +49,12 @@ Backpack tiers are **purchased at the Hardware Store** (not automatic). Each tie
 ### Extra Storage
 Open your backpack at any time with the toggle key (default: **B**). Your backpack is separate from your hotbar and inventory, giving you dedicated space for stockpiling product, supplies, or anything else you need to haul around.
 
+### Backpack Browser and Organization
+The backpack browser is built for large, paged bags. Search by item name, quality, category, drug type, base strain, or derived mixed product; filter and sort the visible contents; mark favorite items; and use recent-item history to return to what you just handled. `Organize` groups contents by type, name, and quality, while `Stack` consolidates compatible stacks into the earliest available slots.
+
+### Settings and Appearance
+Use the in-game settings cog to configure per-view position and scale, keyboard navigation, themes, a custom primary color, smart routing, and the optional product-metrics drawer. Settings are mirrored to `UserData/PackRat.cfg` and apply live while the backpack is open.
+
 ### Hardware Store Tiers
 Backpack tiers are bought at the **Hardware Store** (both locations). Once you've reached the required rank for a tier, it appears in the store; purchase it with **account funds** (not cash). You receive a backpack item in your inventory. **Select that item in your hotbar and press B** to consume it, apply the tier to your backpack, and open the backpack. Each tier brings more slots; the game logs the upgrade when you use the item.
 
@@ -59,7 +65,13 @@ Everything in your backpack is saved to disk when you save your game. Load back 
 When visiting a shop to sell, your backpack slots appear alongside your hotbar items. You can sell directly out of the backpack without shuffling things into your inventory first.
 
 ### Deal Handover Integration
-During deal handovers, your backpack storage is injected into the handover UI so you can move required items directly from your bag. Larger tiers are paged, with `<` and `>` controls plus a page indicator under the backpack panel. If your last driven vehicle is within 20 meters (the same condition the base game uses for vehicle storage access), a `Show Vehicle` toggle appears so you can switch between backpack and vehicle storage views. Recent handover updates keep paging and item movement responsive by restricting UI work to the local storage panel instead of broad handover-wide scans.
+During deal handovers, the backpack browser appears alongside the deal UI so you can move required items directly from your bag. Required products are highlighted, and the `Auto-Fill Deal` control can fill matching deal slots from the available sources. If your last driven vehicle is within 20 meters (the same condition the base game uses for vehicle storage access), a vehicle/backpack source toggle appears in the browser header.
+
+### Storage Transfers and Smart Routing
+Storage containers include bulk-move controls for selected product/category groups in either direction between the container and backpack. Marijuana strain selections include their derived mixed products. Smart routing can also direct products, seeds, mixers, and reagents into the backpack during supported quick-move actions.
+
+### Product Metrics
+An optional expandable metrics drawer lists product quantities, values, and active-order quantities for matching strains. Choose which metrics appear from the in-game backpack settings.
 
 ### Cart-Aware Purchasing
 When buying from a shop, the purchase warning accounts for your backpack space. If your hotbar is full but the backpack has room, the game will let you know items will spill into it rather than falsely warning you that everything won't fit.
@@ -82,7 +94,7 @@ In a multiplayer session, the host's configuration is automatically pushed to al
 | Open / close backpack | `B` | When the backpack is already unlocked. |
 | **Use** backpack item (apply tier) | `B` | When a backpack tier item is in your hotbar, select it and press **B** to consume it, apply that tier to your backpack, and open the backpack. |
 
-Handover paging and storage view switching use on-screen UI buttons.
+Pagination supports the left/right and up/down arrow keys. Keyboard navigation covers PackRat controls and settings; item drag/drop remains mouse-driven.
 
 The toggle key is fully configurable. See [Configuration](#configuration) below.
 
@@ -91,8 +103,11 @@ The toggle key is fully configurable. See [Configuration](#configuration) below.
 ## Installation
 
 1. Install [MelonLoader](https://melonwiki.xyz/) v0.7.0 or newer into Schedule One.
-2. Drop `PackRat.dll` into your `Schedule One/Mods/` folder.
-3. Launch the game. A config file will be created automatically at `UserData/PackRat.cfg` on first run.
+2. Choose the correct runtime build and place its DLL in `Schedule One/Mods/`:
+   - **Current/Main/Beta Schedule One (IL2CPP):** `PackRat-IL2CPP.dll`
+   - **Alternate/Alternate Beta Schedule One (Mono):** `PackRat-Mono.dll`
+3. Nexus users can select the matching runtime in the FOMOD installer. Thunderstore bundles both runtime DLLs; install the DLL that matches your game runtime when performing a manual installation.
+4. Launch the game. A config file will be created automatically at `UserData/PackRat.cfg` on first run.
 
 ---
 
@@ -106,7 +121,9 @@ UserData/PackRat.cfg
 
 Edit this file while the game is closed. In a multiplayer session, only the **host's** config is used — changes made by clients while in-session have no effect.
 
-### Full Example Config
+The browser, layout, appearance, routing, and metrics options are best adjusted through the in-game settings cog; PackRat mirrors those changes directly to this config file.
+
+### Core Config Example
 
 ```ini
 [PackRat]

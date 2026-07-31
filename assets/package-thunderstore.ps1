@@ -3,7 +3,7 @@
     Creates a Thunderstore package for PackRat.
 .DESCRIPTION
     Packages the mod for Thunderstore with version in filename.
-    Requires both IL2CPP and Mono builds. Updates manifest.json with version from MainMod.cs.
+    Requires both Release IL2CPP and Release Mono builds. Updates manifest.json with version from MainMod.cs.
 .PARAMETER ProjectRoot
     Path to the project root directory.
 .PARAMETER Version
@@ -27,17 +27,9 @@ $ErrorActionPreference = "Stop"
 $ModName = "PackRat"
 $AssetDir = Join-Path $ProjectRoot "assets"
 
-# Resolve assembly paths - PackRat uses "Debug IL2CPP" and "Debug Mono" configurations
-$IL2CPPAssembly = Join-Path $ProjectRoot "bin\Debug IL2CPP\net6\$ModName-IL2CPP.dll"
-$MonoAssembly = Join-Path $ProjectRoot "bin\Debug Mono\netstandard2.1\$ModName-Mono.dll"
-
-# Fallback to alternate bin structure if primary doesn't exist
-if (-not (Test-Path -LiteralPath $IL2CPPAssembly)) {
-    $IL2CPPAssembly = Join-Path $ProjectRoot "bin\Debug\net6\$ModName-IL2CPP.dll"
-}
-if (-not (Test-Path -LiteralPath $MonoAssembly)) {
-    $MonoAssembly = Join-Path $ProjectRoot "bin\Debug\netstandard2.1\$ModName-Mono.dll"
-}
+# Resolve release assembly paths.
+$IL2CPPAssembly = Join-Path $ProjectRoot "bin\Release IL2CPP\net6\$ModName-IL2CPP.dll"
+$MonoAssembly = Join-Path $ProjectRoot "bin\Release Mono\netstandard2.1\$ModName-Mono.dll"
 
 # Get build info from MainMod.cs if not provided
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -74,10 +66,10 @@ if (Test-Path -LiteralPath $manifestPath) {
 }
 
 if (-not (Test-Path -LiteralPath $IL2CPPAssembly)) {
-    throw "IL2CPP assembly not found. Build with 'dotnet build -c ""Debug IL2CPP""'. Expected: $IL2CPPAssembly"
+    throw "Release IL2CPP assembly not found. Build with 'dotnet build -c ""Release IL2CPP""'. Expected: $IL2CPPAssembly"
 }
 if (-not (Test-Path -LiteralPath $MonoAssembly)) {
-    throw "Mono assembly not found. Build with 'dotnet build -c ""Debug Mono""'. Expected: $MonoAssembly"
+    throw "Release Mono assembly not found. Build with 'dotnet build -c ""Release Mono""'. Expected: $MonoAssembly"
 }
 
 $TSZip = Join-Path $AssetDir "$ModName-TS-$Version.zip"

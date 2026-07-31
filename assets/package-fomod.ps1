@@ -36,8 +36,8 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 }
 
 # Resolve assembly paths
-$il2cppConfigs = @("Debug IL2CPP", "Release IL2CPP")
-$monoConfigs = @("Debug Mono", "Release Mono")
+$il2cppConfigs = @("Release IL2CPP")
+$monoConfigs = @("Release Mono")
 
 $il2cppAssembly = $null
 $monoAssembly = $null
@@ -58,10 +58,10 @@ foreach ($config in $monoConfigs) {
 }
 
 if (-not $il2cppAssembly) {
-    throw "IL2CPP assembly not found. Build with 'dotnet build -c ""Debug IL2CPP""'."
+    throw "Release IL2CPP assembly not found. Build with 'dotnet build -c ""Release IL2CPP""'."
 }
 if (-not $monoAssembly) {
-    throw "Mono assembly not found. Build with 'dotnet build -c ""Debug Mono""'."
+    throw "Release Mono assembly not found. Build with 'dotnet build -c ""Release Mono""'."
 }
 
 function Ensure-Directory {

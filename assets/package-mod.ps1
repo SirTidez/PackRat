@@ -2,7 +2,7 @@
 .SYNOPSIS
     Builds Thunderstore and Nexus FOMOD packages for PackRat.
 .DESCRIPTION
-    Ensures both IL2CPP and Mono builds exist, updates manifest.json with version from MainMod.cs,
+    Ensures current Release IL2CPP and Mono builds exist, updates manifest.json with version from MainMod.cs,
     then runs package-thunderstore.ps1 and package-fomod.ps1.
 .EXAMPLE
     .\assets\package-mod.ps1
@@ -194,12 +194,10 @@ $IL2CPPAssembly = $null
 $MonoAssembly = $null
 
 $il2cppPaths = @(
-    (Join-Path $ProjectRoot "bin\Debug IL2CPP\net6\PackRat-IL2CPP.dll"),
-    (Join-Path $ProjectRoot "bin\Debug\net6\PackRat-IL2CPP.dll")
+    (Join-Path $ProjectRoot "bin\Release IL2CPP\net6\PackRat-IL2CPP.dll")
 )
 $monoPaths = @(
-    (Join-Path $ProjectRoot "bin\Debug Mono\netstandard2.1\PackRat-Mono.dll"),
-    (Join-Path $ProjectRoot "bin\Debug\netstandard2.1\PackRat-Mono.dll")
+    (Join-Path $ProjectRoot "bin\Release Mono\netstandard2.1\PackRat-Mono.dll")
 )
 
 foreach ($p in $il2cppPaths) {
@@ -210,12 +208,18 @@ foreach ($p in $monoPaths) {
 }
 
 if (-not $IL2CPPAssembly) {
-    Write-Host "IL2CPP build not found. Building..."
-    dotnet build -c "Debug IL2CPP"
+    Write-Host "Release IL2CPP build not found. Building..."
+    dotnet build -c "Release IL2CPP"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Release IL2CPP build failed."
+    }
 }
 if (-not $MonoAssembly) {
-    Write-Host "Mono build not found. Building..."
-    dotnet build -c "Debug Mono"
+    Write-Host "Release Mono build not found. Building..."
+    dotnet build -c "Release Mono"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Release Mono build failed."
+    }
 }
 
 $IL2CPPAssembly = Resolve-FirstExistingPath -Candidates $il2cppPaths -MissingMessage "IL2CPP assembly not found after build."
