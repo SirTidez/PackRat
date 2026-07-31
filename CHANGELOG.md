@@ -1,5 +1,45 @@
 # Changelog
 
+## 2.0.0
+
+### Redesigned backpack browser
+- Replaced the standalone backpack display with a responsive, Schedule One-style backpack browser designed for large bags, multiple pages, and varied display resolutions and UI scales.
+- Added live partial-match search across item names, qualities, categories, drug types, base strains, and derived mixed products.
+- Added type and quality filters; sort tabs for all items, favorites, name, quantity, quality, type, and recent items; and ascending or descending ordering.
+- Added favorites and recent-item views, persistent favorite state, keyboard navigation for PackRat controls, and safe focus handling for text entry and mouse interaction.
+- Added opening, closing, filter/search, tab, and pagination animations, including directional page wipes.
+- Added `Organize` to group items by type, name, and quality, plus `Stack` to consolidate compatible stacks into the earliest available slots across pages.
+
+### In-game settings and appearance
+- Added a backpack settings modal with live per-view X/Y positioning and scale controls for the hotkey, storage, station, and deal-handover views.
+- Added settings for search, sync diagnostics, organization, smart routing, product metrics, and backpack tiers.
+- Added built-in visual themes and a custom primary-color picker that derives the remaining backpack UI colors from the selected color.
+
+### Integrated storage and deal views
+- Reused the backpack browser in storage containers, stations, and deal handovers with independent layout scaling and positioning.
+- Improved deal-handover lifecycle handling so the backpack browser appears and closes with its owning UI without interfering with vanilla storage containers.
+- Added vehicle/backpack source switching in deal handovers when an eligible vehicle is available.
+- Added highlighted deal matches, reliable tooltip layering, source feedback, and one-click deal autofill from the available item sources.
+
+### Transfer and routing quality of life
+- Added bulk transfers in storage menus for selected item categories and products in either direction between storage and the backpack.
+- Expanded marijuana bulk selection to include derivative mixed products for the selected base strain.
+- Added smart quick-move routing with configurable category rules for products, seeds, mixers, and reagents.
+
+### Product metrics
+- Added an expandable product metrics drawer with grouped product quantities, unit and total values, and active-order quantities when applicable.
+- Added settings that control the product metrics shown in the drawer.
+
+### Reliability and compatibility
+- Hardened backpack state synchronization so completed backpack changes are queued after the menu closes, improving client restore and reconnection behavior.
+- Improved UI cleanup, modal responsiveness, layout isolation, input handling, and cross-view rendering stability.
+- Updated current beta and alternate-beta game references while retaining Mono and IL2CPP compatibility.
+
+### Release metadata
+- Bumped the mod version to `2.0.0`.
+
+---
+
 ## 1.1.2
 
 ### Backpack UI integration
