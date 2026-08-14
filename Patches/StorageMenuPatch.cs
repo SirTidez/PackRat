@@ -211,6 +211,7 @@ public static class StorageMenuPatch
         public bool BulkTransferPresentationInitialized;
         public bool BulkTransferExpanded;
         public int BulkTransferMotionGeneration;
+        public int EmbeddedOwnerId;
     }
 
     private enum BulkTransferMatchKind
@@ -422,6 +423,14 @@ public static class StorageMenuPatch
         public bool IsBackpackInventory;
         public bool IsHotkeyBackpack;
         public bool IsConsolidating;
+        public readonly EmbeddedPanelSession EmbeddedSession = new EmbeddedPanelSession();
+        public readonly List<GameObject> EmbeddedHiddenObjects = new List<GameObject>();
+        public RectTransform EmbeddedHostRoot;
+        public RectTransform EmbeddedSlotRoot;
+        public Button EmbeddedHideButton;
+        public Button EmbeddedShowButton;
+        public Action EmbeddedHideAction;
+        public Action EmbeddedShowAction;
         public string SearchTerm;
         public string TypeFilter;
         public string QualityFilter;
@@ -448,6 +457,7 @@ public static class StorageMenuPatch
         public bool PositionCloseControl;
         public Func<List<ItemSlot>> SlotProvider;
         public string DisplayTitle;
+        public int OwnerId;
         /// <summary>Optional fixed grid capacity for an embedded alternate inventory.</summary>
         public int VisualSlotCapacity;
     }
@@ -1230,6 +1240,8 @@ public static class StorageMenuPatch
             : null;
         state.RefreshAction = () => ApplyStandaloneBackpackSurface(surface);
         state.IsOpen = true;
+        if (!state.IsHotkeyBackpack)
+            state.EmbeddedSession.Open(surface.OwnerId != 0 ? surface.OwnerId : surface.Id);
         CaptureStandaloneRecentBaseline(state, backpackSlots);
         var displaySlots = GetDisplayBackpackSlots(backpackSlots, state);
         var totalPages = Mathf.Max(1, Mathf.CeilToInt(displaySlots.Count / (float)StandaloneBackpackSlotsPerPage));
@@ -1338,6 +1350,7 @@ public static class StorageMenuPatch
         PositionStandalonePaging(surface, state, gridSize);
         UpdateStandalonePager(state, totalPages);
         RefreshStandaloneKeyboardFocusPresentation(state);
+        EnsureEmbeddedVisibilityControls(surface, state);
 
         ModLogger.Debug(
             $"[BackpackUI] Standalone layout applied: capacitySlots={gridSlotCount}, visibleSlots={visibleSlotCount}, gridSize={gridSize}, " +
@@ -1358,7 +1371,7 @@ public static class StorageMenuPatch
     /// only PackRat's browser presentation and its filtered projection of backpack slots.
     /// </summary>
     internal static void ApplyEmbeddedBackpackBrowser(RectTransform hostRoot, RectTransform slotContainer,
-        GridLayoutGroup slotGridLayout, ItemSlotUI[] slotUis, int layoutView)
+        GridLayoutGroup slotGridLayout, ItemSlotUI[] slotUis, int layoutView, int ownerId = 0)
     {
         if (hostRoot == null || slotContainer == null || slotGridLayout == null || slotUis == null)
             return;
@@ -1388,7 +1401,8 @@ public static class StorageMenuPatch
             SlotGridLayout = slotGridLayout,
             SlotUIs = localSlotUis.ToArray(),
             LayoutView = requestedView,
-            PositionCloseControl = false
+            PositionCloseControl = false,
+            OwnerId = ownerId
         });
     }
 
@@ -1398,7 +1412,7 @@ public static class StorageMenuPatch
     /// </summary>
     internal static void ApplyEmbeddedInventoryBrowser(RectTransform hostRoot, RectTransform slotContainer,
         GridLayoutGroup slotGridLayout, ItemSlotUI[] slotUis, int layoutView, Func<List<ItemSlot>> slotProvider,
-        string displayTitle)
+        string displayTitle, int ownerId = 0)
     {
         if (hostRoot == null || slotContainer == null || slotGridLayout == null || slotUis == null ||
             slotProvider == null)
@@ -1430,8 +1444,91 @@ public static class StorageMenuPatch
             PositionCloseControl = false,
             SlotProvider = slotProvider,
             DisplayTitle = displayTitle,
+            OwnerId = ownerId,
             VisualSlotCapacity = StandaloneBackpackSlotsPerPage
         });
+    }
+
+    private static void EnsureEmbeddedVisibilityControls(StandaloneBackpackSurface surface,
+        StandaloneBackpackState state)
+    {
+        if (surface == null || state == null || state.IsHotkeyBackpack)
+            return;
+
+        state.EmbeddedHostRoot = surface.Container;
+        state.EmbeddedSlotRoot = surface.SlotContainer;
+        if (state.EmbeddedHideButton == null && state.HeaderRoot != null)
+        {
+            state.EmbeddedHideButton = CreateStandaloneActionButton(state.HeaderRoot, "HideEmbedded",
+                new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-164f, -31f),
+                new Vector2(-91f, -8f), "HIDE PACK", 8, out _);
+            state.EmbeddedHideAction = () =>
+            {
+                state.EmbeddedSession.Hide();
+                ApplyEmbeddedVisibility(state);
+            };
+            EventHelper.AddListener(state.EmbeddedHideAction, state.EmbeddedHideButton.onClick);
+        }
+
+        if (state.EmbeddedShowButton == null && surface.Container != null)
+        {
+            state.EmbeddedShowButton = CreateStandaloneActionButton(surface.Container, "ShowEmbedded",
+                new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-112f, -36f),
+                new Vector2(-8f, -8f), "SHOW PACK", 8, out _);
+            state.EmbeddedShowAction = () =>
+            {
+                state.EmbeddedSession.Show();
+                ApplyEmbeddedVisibility(state);
+            };
+            EventHelper.AddListener(state.EmbeddedShowAction, state.EmbeddedShowButton.onClick);
+        }
+
+        ApplyEmbeddedVisibility(state);
+    }
+
+    private static void ApplyEmbeddedVisibility(StandaloneBackpackState state)
+    {
+        if (state?.EmbeddedHostRoot == null || state.EmbeddedSlotRoot == null)
+            return;
+
+        if (state.EmbeddedSession.IsHidden)
+        {
+            if (state.EmbeddedHiddenObjects.Count == 0)
+            {
+                AddEmbeddedHiddenObject(state, state.EmbeddedSlotRoot.gameObject);
+                for (var index = 0; index < state.EmbeddedHostRoot.childCount; index++)
+                {
+                    var child = state.EmbeddedHostRoot.GetChild(index);
+                    if (child == null || child == state.EmbeddedShowButton?.transform ||
+                        !child.name.StartsWith("PackRat_", StringComparison.Ordinal) ||
+                        !child.gameObject.activeSelf)
+                        continue;
+                    AddEmbeddedHiddenObject(state, child.gameObject);
+                }
+            }
+
+            for (var index = 0; index < state.EmbeddedHiddenObjects.Count; index++)
+                state.EmbeddedHiddenObjects[index]?.SetActive(false);
+            if (state.EmbeddedShowButton != null)
+            {
+                state.EmbeddedShowButton.gameObject.SetActive(true);
+                state.EmbeddedShowButton.transform.SetAsLastSibling();
+            }
+            return;
+        }
+
+        for (var index = 0; index < state.EmbeddedHiddenObjects.Count; index++)
+            state.EmbeddedHiddenObjects[index]?.SetActive(true);
+        state.EmbeddedHiddenObjects.Clear();
+        state.EmbeddedSlotRoot.gameObject.SetActive(true);
+        if (state.EmbeddedShowButton != null)
+            state.EmbeddedShowButton.gameObject.SetActive(false);
+    }
+
+    private static void AddEmbeddedHiddenObject(StandaloneBackpackState state, GameObject candidate)
+    {
+        if (candidate != null && candidate.activeSelf && !state.EmbeddedHiddenObjects.Contains(candidate))
+            state.EmbeddedHiddenObjects.Add(candidate);
     }
 
     private static List<ItemSlot> GetSurfaceSlots(StandaloneBackpackSurface surface)
@@ -1513,14 +1610,32 @@ public static class StorageMenuPatch
             return desired;
 
         const float margin = 24f;
-        var visualWidth = (gridSize.x + (StandaloneCardPadding * 2f)) * scale;
-        var visualHeight = (gridSize.y + StandaloneHeaderHeight + (StandaloneCardPadding * 2f)) * scale;
-        var halfWidth = Mathf.Max(0f, host.rect.width * 0.5f - visualWidth * 0.5f - margin);
-        var halfHeight = Mathf.Max(0f, host.rect.height * 0.5f - visualHeight * 0.5f - margin);
-        return new Vector2(
-            Mathf.Clamp(desired.x, -halfWidth, halfWidth),
-            Mathf.Clamp(desired.y, -halfHeight, halfHeight)
-        );
+        var safe = new FloatRect(host.rect.xMin + margin, host.rect.yMin + margin,
+            Mathf.Max(0f, host.rect.width - margin * 2f),
+            Mathf.Max(0f, host.rect.height - margin * 2f));
+        var canvas = host.GetComponentInParent<Canvas>();
+        var camera = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay
+            ? canvas.worldCamera
+            : null;
+        if (RectTransformUtility.ScreenPointToLocalPointInRectangle(host, Screen.safeArea.min, camera,
+                out var safeMin) &&
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(host, Screen.safeArea.max, camera,
+                out var safeMax))
+        {
+            var left = Mathf.Max(safe.Left, Mathf.Min(safeMin.x, safeMax.x) + margin);
+            var right = Mathf.Min(safe.Right, Mathf.Max(safeMin.x, safeMax.x) - margin);
+            var bottom = Mathf.Max(safe.Bottom, Mathf.Min(safeMin.y, safeMax.y) + margin);
+            var top = Mathf.Min(safe.Top, Mathf.Max(safeMin.y, safeMax.y) - margin);
+            if (right > left && top > bottom)
+                safe = new FloatRect(left, bottom, right - left, top - bottom);
+        }
+
+        var visualWidth = (gridSize.x + StandaloneCardPadding * 2f) * scale;
+        var visualHeight = (gridSize.y + StandaloneHeaderHeight + StandaloneCardPadding * 2f) * scale;
+        var desiredBounds = new FloatRect(desired.x - visualWidth * 0.5f,
+            desired.y - visualHeight * 0.5f, visualWidth, visualHeight);
+        var clamped = UiBoundsPolicy.Clamp(desiredBounds, safe);
+        return desired + new Vector2(clamped.X - desiredBounds.X, clamped.Y - desiredBounds.Y);
     }
 
     /// <summary>
@@ -6930,10 +7045,11 @@ public static class StorageMenuPatch
                 return;
 
             panel.Container.gameObject.SetActive(true);
+            panel.EmbeddedOwnerId = openedOwner.GetHashCode();
             if (panel.PagingRoot != null)
                 panel.PagingRoot.gameObject.SetActive(false);
             ApplyEmbeddedBackpackBrowser(panel.Container, panel.SlotContainer, panel.SlotGridLayout, panel.SlotUIs,
-                layoutView: (int)StandaloneBackpackLayoutView.Storage);
+                layoutView: (int)StandaloneBackpackLayoutView.Storage, ownerId: panel.EmbeddedOwnerId);
             panel.StorageSlotProvider = () => openedOwner.ItemSlots.AsEnumerable().Where(slot => slot != null).ToList();
             // This path is owned by StorageMenu. Station screens use their own station-interface
             // patch and must never inherit storage bulk-transfer actions.
@@ -7138,11 +7254,12 @@ public static class StorageMenuPatch
                 return;
 
             panel.Container.gameObject.SetActive(true);
+            panel.EmbeddedOwnerId = openedEntity.GetInstanceID();
             if (panel.PagingRoot != null)
                 panel.PagingRoot.gameObject.SetActive(false);
 
             ApplyEmbeddedBackpackBrowser(panel.Container, panel.SlotContainer, panel.SlotGridLayout, panel.SlotUIs,
-                layoutView: (int)StandaloneBackpackLayoutView.Storage);
+                layoutView: (int)StandaloneBackpackLayoutView.Storage, ownerId: panel.EmbeddedOwnerId);
             panel.StorageSlotProvider = () => openedEntity.ItemSlots.AsEnumerable().Where(slot => slot != null).ToList();
             panel.SupportsStorageBulkTransfer = true;
             EnsureStorageBulkTransferControls(panel);
@@ -7804,7 +7921,7 @@ public static class StorageMenuPatch
             return;
 
         ApplyEmbeddedBackpackBrowser(panel.Container, panel.SlotContainer, panel.SlotGridLayout, panel.SlotUIs,
-            layoutView: (int)StandaloneBackpackLayoutView.Storage);
+            layoutView: (int)StandaloneBackpackLayoutView.Storage, ownerId: panel.EmbeddedOwnerId);
         EnsureStorageBulkTransferControls(panel);
     }
 
@@ -8254,7 +8371,7 @@ public static class StorageMenuPatch
 
             ConfigureCompactSidePanel(panel.Menu, panel);
             ApplyEmbeddedBackpackBrowser(panel.Container, panel.SlotContainer, panel.SlotGridLayout, panel.SlotUIs,
-                layoutView: (int)StandaloneBackpackLayoutView.Storage);
+                layoutView: (int)StandaloneBackpackLayoutView.Storage, ownerId: panel.EmbeddedOwnerId);
             if (panel.SupportsStorageBulkTransfer)
                 EnsureStorageBulkTransferControls(panel);
             else

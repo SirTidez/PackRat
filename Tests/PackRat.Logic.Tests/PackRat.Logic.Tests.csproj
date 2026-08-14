@@ -12,5 +12,6 @@
     <Compile Include="../../Logic/AutoFillPlanner.cs" Link="Logic/AutoFillPlanner.cs" />
     <Compile Include="../../Logic/UiBoundsPolicy.cs" Link="Logic/UiBoundsPolicy.cs" />
     <Compile Include="../../Logic/StackPlanBuilder.cs" Link="Logic/StackPlanBuilder.cs" />
+    <Compile Include="../../Logic/EmbeddedPanelSession.cs" Link="Logic/EmbeddedPanelSession.cs" />
   </ItemGroup>
 </Project>

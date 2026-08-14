@@ -1229,12 +1229,12 @@ public static class HandoverScreenPatch
         if (state.ShowingVehicle)
         {
             StorageMenuPatch.ApplyEmbeddedInventoryBrowser(state.DedicatedCard, grid, layout, state.SlotUIs,
-                layoutView: 3, () => GetNearbyVehicleSlots(state), "VEHICLE STORAGE");
+                layoutView: 3, () => GetNearbyVehicleSlots(state), "VEHICLE STORAGE", screen.GetInstanceID());
         }
         else
         {
             StorageMenuPatch.ApplyEmbeddedBackpackBrowser(state.DedicatedCard, grid, layout, state.SlotUIs,
-                layoutView: 3);
+                layoutView: 3, ownerId: screen.GetInstanceID());
         }
 
         UpdateDedicatedDealMatchAccents(screen, state);

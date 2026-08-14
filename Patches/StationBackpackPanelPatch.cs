@@ -53,6 +53,7 @@ public static class StationBackpackPanelPatch
         public int CurrentPage;
         public int LastPageInputFrame;
         public bool Initialized;
+        public int OwnerId;
     }
 
     private const int SlotsPerPage = 16;
@@ -134,10 +135,11 @@ public static class StationBackpackPanelPatch
                 return;
 
             panel.Root.gameObject.SetActive(true);
+            panel.OwnerId = stationCanvas.GetInstanceID();
             if (panel.PagingRoot != null)
                 panel.PagingRoot.gameObject.SetActive(false);
             StorageMenuPatch.ApplyEmbeddedBackpackBrowser(panel.Root, panel.SlotContainer, panel.Grid,
-                panel.SlotUIs, layoutView: 2);
+                panel.SlotUIs, layoutView: 2, ownerId: panel.OwnerId);
             var backpackSlots = GetBackpackSlots();
             RebuildQuickMove(stationSlots, backpackSlots);
         }
@@ -194,7 +196,7 @@ public static class StationBackpackPanelPatch
                     continue;
 
                 StorageMenuPatch.ApplyEmbeddedBackpackBrowser(panel.Root, panel.SlotContainer, panel.Grid,
-                    panel.SlotUIs, layoutView: 2);
+                    panel.SlotUIs, layoutView: 2, ownerId: panel.OwnerId);
             }
         }
         catch (Exception ex)
