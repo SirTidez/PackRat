@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- Keep xUnit assemblies outside PackRat's source tree so the mod reference resolver cannot discover them. -->
+    <BaseOutputPath>$(MSBuildThisFileDirectory)..\..\PackRatTestArtifacts\bin\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)..\..\PackRatTestArtifacts\obj\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>

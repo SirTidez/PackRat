@@ -4,6 +4,7 @@ using HarmonyLib;
 using PackRat.Config;
 using PackRat.Extensions;
 using PackRat.Helpers;
+using PackRat.Logic;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -12,6 +13,7 @@ using TMPro;
 using ScheduleOne.DevUtilities;
 using ScheduleOne.ItemFramework;
 using ScheduleOne.PlayerScripts;
+using ScheduleOne.Product;
 using ScheduleOne.Storage;
 using ScheduleOne.UI;
 using ScheduleOne.UI.Handover;
@@ -23,6 +25,7 @@ using Il2CppTMPro;
 using Il2CppScheduleOne.DevUtilities;
 using Il2CppScheduleOne.ItemFramework;
 using Il2CppScheduleOne.PlayerScripts;
+using Il2CppScheduleOne.Product;
 using Il2CppScheduleOne.Storage;
 using Il2CppScheduleOne.UI;
 using Il2CppScheduleOne.UI.Handover;
@@ -118,7 +121,7 @@ public static class HandoverScreenPatch
     {
         public string Name;
         public List<ItemSlot> Slots;
-        public int Moved;
+        public int MovedUnits;
     }
 
     private sealed class HeaderCandidate
@@ -1549,37 +1552,69 @@ public static class HandoverScreenPatch
                 new HandoverTransferSource { Name = "INVENTORY", Slots = GetPlayerInventorySlots() }
             };
 
-            var movedTotal = 0;
+            var movedTotalUnits = 0;
+            var oversuppliedUnits = 0;
             for (var requirementIndex = 0; requirementIndex < requirements.Count; requirementIndex++)
             {
                 var requirement = requirements[requirementIndex];
-                for (var sourceIndex = 0; sourceIndex < sources.Count && requirement.Remaining > 0; sourceIndex++)
+                var candidates = new List<AutoFillCandidate>();
+                for (var sourceIndex = 0; sourceIndex < sources.Count; sourceIndex++)
                 {
                     var source = sources[sourceIndex];
                     if (source.Slots == null)
                         continue;
 
-                    for (var slotIndex = 0; slotIndex < source.Slots.Count && requirement.Remaining > 0; slotIndex++)
+                    for (var slotIndex = 0; slotIndex < source.Slots.Count; slotIndex++)
                     {
                         var sourceSlot = source.Slots[slotIndex];
-                        if (!ItemMatchesRequirement(sourceSlot?.ItemInstance, requirement))
+                        var item = sourceSlot?.ItemInstance;
+                        if (!ItemMatchesRequirement(item, requirement) ||
+                            !TryGetPackagedProductAmount(item, out var packageAmount))
                             continue;
 
-                        var moved = MoveMatchingItemToDeal(sourceSlot, customerSlots, requirement.Remaining);
-                        if (moved <= 0)
-                            continue;
-
-                        requirement.Remaining -= moved;
-                        source.Moved += moved;
-                        movedTotal += moved;
+                        TryGetItemQuality(item, out _, out var qualityRank);
+                        candidates.Add(new AutoFillCandidate(source.Name, slotIndex, requirement.ProductId,
+                            qualityRank, packageAmount, Mathf.Max(0, sourceSlot.Quantity),
+                            isPackaged: true,
+                            isNativeAcceptable: !sourceSlot.IsRemovalLocked &&
+                                CanMoveItemToAnyCustomerSlot(item, customerSlots)));
                     }
+                }
+
+                var plan = AutoFillPlanner.Plan(
+                    new AutoFillRequirement(requirement.ProductId, requirement.QualityRank,
+                        requirement.Remaining),
+                    candidates);
+                oversuppliedUnits += plan.OversuppliedUnits;
+                for (var moveIndex = 0; moveIndex < plan.Moves.Count; moveIndex++)
+                {
+                    var move = plan.Moves[moveIndex];
+                    var source = sources.FirstOrDefault(candidate =>
+                        string.Equals(candidate.Name, move.Source, StringComparison.OrdinalIgnoreCase));
+                    if (source?.Slots == null || move.SourceSlotIndex < 0 ||
+                        move.SourceSlotIndex >= source.Slots.Count)
+                        continue;
+
+                    var sourceSlot = source.Slots[move.SourceSlotIndex];
+                    if (!ItemMatchesRequirement(sourceSlot?.ItemInstance, requirement) ||
+                        !TryGetPackagedProductAmount(sourceSlot.ItemInstance, out var packageAmount))
+                        continue;
+
+                    var movedPackages = MoveMatchingItemToDeal(sourceSlot, customerSlots, move.PackageCount);
+                    if (movedPackages <= 0)
+                        continue;
+
+                    var movedUnits = movedPackages * packageAmount;
+                    requirement.Remaining = Mathf.Max(0, requirement.Remaining - movedUnits);
+                    source.MovedUnits += movedUnits;
+                    movedTotalUnits += movedUnits;
                 }
             }
 
             NotifyHandoverItemsChanged(screen);
             UpdateDedicatedOverlayLayout(screen, state);
 
-            if (movedTotal <= 0)
+            if (movedTotalUnits <= 0)
             {
                 LogAutoFillMatchDiagnostics(requirements, sources);
                 SetTransferStatus(state, "NO MATCHING PRODUCTS FOUND", new Color32(220, 190, 105, 255));
@@ -1590,20 +1625,22 @@ public static class HandoverScreenPatch
             for (var sourceIndex = 0; sourceIndex < sources.Count; sourceIndex++)
             {
                 var source = sources[sourceIndex];
-                if (source.Moved > 0)
-                    sourceReceipt.Add($"{source.Name} {source.Moved}");
+                if (source.MovedUnits > 0)
+                    sourceReceipt.Add($"{source.Name} {source.MovedUnits} UNITS");
             }
 
-            var remaining = 0;
-            for (var requirementIndex = 0; requirementIndex < requirements.Count; requirementIndex++)
-                remaining += requirements[requirementIndex].Remaining;
+            var refreshedRequirements = GetHandoverRequirements(screen, customerSlots);
+            var remaining = refreshedRequirements.Sum(requirement => requirement.Remaining);
 
             var outcome = remaining > 0
-                ? $"MOVED {movedTotal}  •  {remaining} STILL NEEDED"
-                : $"FILLED {movedTotal}";
+                ? $"MOVED {movedTotalUnits} UNITS  •  {remaining} STILL NEEDED"
+                : $"FILLED {movedTotalUnits} UNITS";
+            if (oversuppliedUnits > 0)
+                outcome += $"  •  {oversuppliedUnits} EXTRA";
             SetTransferStatus(state, $"{outcome}  •  {string.Join(" / ", sourceReceipt)}  →  DEAL",
                 remaining > 0 ? new Color32(220, 190, 105, 255) : new Color32(105, 225, 142, 255));
-            ModLogger.Info($"[HandoverUI] Auto-fill completed: moved={movedTotal}, remaining={remaining}, " +
+            ModLogger.Info($"[HandoverUI] Auto-fill completed: movedUnits={movedTotalUnits}, " +
+                $"remainingUnits={remaining}, oversuppliedUnits={oversuppliedUnits}, " +
                 $"sources={string.Join(", ", sourceReceipt)}.");
         }
         catch (Exception ex)
@@ -1687,8 +1724,12 @@ public static class HandoverScreenPatch
                 for (var slotIndex = 0; slotIndex < customerSlots.Count; slotIndex++)
                 {
                     var slot = customerSlots[slotIndex];
-                    if (ItemMatchesRequirement(slot?.ItemInstance, requirement))
-                        requirement.Remaining = Mathf.Max(0, requirement.Remaining - Mathf.Max(0, slot.Quantity));
+                    if (ItemMatchesRequirement(slot?.ItemInstance, requirement) &&
+                        TryGetPackagedProductAmount(slot.ItemInstance, out var packageAmount))
+                    {
+                        var productUnits = Mathf.Max(0, slot.Quantity) * packageAmount;
+                        requirement.Remaining = Mathf.Max(0, requirement.Remaining - productUnits);
+                    }
                 }
             }
         }
@@ -1933,6 +1974,45 @@ public static class HandoverScreenPatch
         }
 
         return 0;
+    }
+
+    private static bool TryGetPackagedProductAmount(ItemInstance item, out int packageAmount)
+    {
+        packageAmount = 0;
+        if (item == null)
+            return false;
+
+#if MONO
+        var product = item as ProductItemInstance;
+#else
+        var product = item.TryCast<ProductItemInstance>();
+#endif
+        if (product?.AppliedPackaging == null)
+            return false;
+
+        packageAmount = Mathf.Max(1, product.Amount);
+        return true;
+    }
+
+    private static bool CanMoveItemToAnyCustomerSlot(ItemInstance item, List<ItemSlot> customerSlots)
+    {
+        if (item == null || customerSlots == null)
+            return false;
+
+        for (var index = 0; index < customerSlots.Count; index++)
+        {
+            var destination = customerSlots[index];
+            if (destination == null || destination.IsAddLocked ||
+                !destination.DoesItemMatchHardFilters(item))
+                continue;
+            if (destination.ItemInstance != null &&
+                !destination.ItemInstance.CanStackWith(item, checkQuantities: false))
+                continue;
+            if (destination.GetCapacityForItem(item, checkPlayerFilters: false) > 0)
+                return true;
+        }
+
+        return false;
     }
 
     private static bool TryConvertToInt(object value, out int result)

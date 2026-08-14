@@ -21,6 +21,7 @@
     <ItemGroup>
         <!--<ModList Include="$(CommonDir)\Mods\DisclaimerSkipMono.dll" />-->
         <!--<ModList Include="$(CommonDir)\Mods\DisclaimerSkipIL2CPP.dll" />-->
+        <Compile Remove="Tests/**/*.cs" />
     </ItemGroup>
 
     <PropertyGroup Condition="'$(Configuration)' == 'Debug Mono'">
