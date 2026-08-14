@@ -101,7 +101,8 @@ public static class AutoFillPlanner
         for (var oversupply = 0; oversupply < maxPackageAmount; oversupply++)
         {
             var counts = new int[eligible.Length];
-            if (!TryFillExact(eligible, 0, requirement.RemainingUnits + oversupply, counts))
+            var failedStates = new HashSet<long>();
+            if (!TryFillExact(eligible, 0, requirement.RemainingUnits + oversupply, counts, failedStates))
                 continue;
 
             var moves = eligible.Select((candidate, index) => new { candidate, count = counts[index] })
@@ -119,11 +120,19 @@ public static class AutoFillPlanner
     }
 
     private static bool TryFillExact(IReadOnlyList<AutoFillCandidate> candidates, int index,
-        int remainingUnits, int[] counts)
+        int remainingUnits, int[] counts, HashSet<long> failedStates)
     {
         if (remainingUnits == 0)
+        {
+            if (index < counts.Length)
+                Array.Clear(counts, index, counts.Length - index);
             return true;
+        }
         if (index >= candidates.Count || remainingUnits < 0)
+            return false;
+
+        var stateKey = ((long)index << 32) | (uint)remainingUnits;
+        if (failedStates.Contains(stateKey))
             return false;
 
         var candidate = candidates[index];
@@ -133,11 +142,12 @@ public static class AutoFillPlanner
         {
             counts[index] = count;
             if (TryFillExact(candidates, index + 1,
-                    remainingUnits - count * candidate.PackageAmount, counts))
+                    remainingUnits - count * candidate.PackageAmount, counts, failedStates))
                 return true;
         }
 
         counts[index] = 0;
+        failedStates.Add(stateKey);
         return false;
     }
 }
