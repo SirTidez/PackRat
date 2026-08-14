@@ -18,6 +18,7 @@ using ScheduleOne.DevUtilities;
 using ScheduleOne.ItemFramework;
 using ScheduleOne.Levelling;
 using ScheduleOne.Money;
+using S1NpcInventory = ScheduleOne.NPCs.NPCInventory;
 using ScheduleOne.PlayerScripts;
 using ScheduleOne.Product;
 using S1Contract = ScheduleOne.Quests.Contract;
@@ -33,6 +34,7 @@ using Il2CppScheduleOne.DevUtilities;
 using Il2CppScheduleOne.ItemFramework;
 using Il2CppScheduleOne.Levelling;
 using Il2CppScheduleOne.Money;
+using S1NpcInventory = Il2CppScheduleOne.NPCs.NPCInventory;
 using Il2CppScheduleOne.PlayerScripts;
 using Il2CppScheduleOne.Product;
 using S1Contract = Il2CppScheduleOne.Quests.Contract;
@@ -113,6 +115,17 @@ public static class StorageMenuPatch
         public Action SelectAction;
         public bool ShowQualityStar;
         public Color QualityStarColor;
+    }
+
+    /// <summary>
+    /// Records the game slot and item instance rendered by a pooled browser view. Keeping this
+    /// association lets a filter change move only the views whose content actually changed,
+    /// rather than destroying every native ItemUI on every filter click.
+    /// </summary>
+    private sealed class StandaloneBackpackSlotBinding
+    {
+        public ItemSlot Slot;
+        public ItemInstance ItemInstance;
     }
 
     private sealed class StandaloneBackpackFavoriteControl
@@ -270,6 +283,7 @@ public static class StorageMenuPatch
         public RectTransform SlotsPanelRoot;
         public Image HeaderAccent;
         public RectTransform DropdownRoot;
+        public RectTransform DropdownHost;
         public Vector2 DropdownAnchor;
         public float DropdownWidth;
         public RectTransform SettingsRoot;
@@ -312,6 +326,7 @@ public static class StorageMenuPatch
         public RectTransform MetricsTrayRoot;
         public RectTransform MetricsTrayPanel;
         public RectTransform MetricsTrayContent;
+        public Text MetricsTrayTitle;
         public Text MetricsTraySummary;
         public Button MetricsTrayToggleButton;
         public Text MetricsTrayToggleLabel;
@@ -324,6 +339,7 @@ public static class StorageMenuPatch
         public int MetricsTrayMotionGeneration;
         public string MetricsTrayFingerprint;
         public float NextMetricsTrayRefreshTime;
+        public float NextSourceStateRefreshTime;
         public Button SettingsButton;
         public Text SettingsLabel;
         public Button DoneButton;
@@ -343,6 +359,7 @@ public static class StorageMenuPatch
         public StandaloneBackpackSettingsPage SettingsPage;
         public StandaloneBackpackLayoutView LayoutView;
         public bool SearchListenerBound;
+        public bool FilterControlsBound;
         public bool SearchFocusPresented;
         public StandaloneBackpackDropdown ActiveDropdown;
         public int KeyboardDropdownOptionIndex = -1;
@@ -351,6 +368,8 @@ public static class StorageMenuPatch
         public readonly List<Image> DropdownOptionQualityStars = new List<Image>();
         public readonly List<Action> DropdownOptionActions = new List<Action>();
         public readonly List<StandaloneBackpackDropdownOption> DropdownOptions = new List<StandaloneBackpackDropdownOption>();
+        public readonly Dictionary<ItemSlotUI, StandaloneBackpackSlotBinding> SlotBindings =
+            new Dictionary<ItemSlotUI, StandaloneBackpackSlotBinding>();
         public readonly List<StandaloneBackpackSortTab> SortTabs = new List<StandaloneBackpackSortTab>();
         public readonly List<StandaloneBackpackFavoriteControl> FavoriteSlotControls =
             new List<StandaloneBackpackFavoriteControl>();
@@ -453,6 +472,7 @@ public static class StorageMenuPatch
     private const float PageWipeDuration = 0.14f;
     private const float MetricsTrayWidth = 190f;
     private const float MetricsTrayMotionDuration = 0.16f;
+    private const float MetricsFontScaleStep = 0.1f;
     private const int PillSpriteSize = 32;
     private const int PillSpriteBorder = 8;
     private const float PillSpriteCornerRadius = 7f;
@@ -515,7 +535,7 @@ public static class StorageMenuPatch
             return;
         }
 
-        ApplyOpenedStorageMenu(__instance, owner);
+        ApplyOpenedStorageMenu(__instance, owner, title);
     }
 
     /// <summary>
@@ -544,13 +564,23 @@ public static class StorageMenuPatch
     /// Restores the native storage menu's item binding before placing the PackRat-owned browser
     /// alongside it. This is shared by the owner and storage-entity Open overloads.
     /// </summary>
-    private static void ApplyOpenedStorageMenu(StorageMenu menu, IItemSlotOwner owner)
+    private static void ApplyOpenedStorageMenu(StorageMenu menu, IItemSlotOwner owner, string title)
     {
         if (menu == null)
             return;
 
         RestoreStandaloneBackpackSlotCapacity(menu);
         RestoreStandaloneBackpackLabels(menu);
+
+        // Employee inventories use StorageMenu, but their title, native slots, and close button
+        // are already positioned by the employee interaction. Keep that game-owned layout intact
+        // and add only PackRat's independent side panel. Running the generic storage geometry
+        // below moves the employee slot container into the PackRat card on some IL2CPP clients.
+        if (IsNpcInventoryOwner(owner, title))
+        {
+            ApplyBackpackSidePanel(menu, owner, allowNpcInventory: true);
+            return;
+        }
 
         if (owner != null)
         {
@@ -611,7 +641,6 @@ public static class StorageMenuPatch
         HideBackpackSidePanel(__instance);
         HideStandaloneBackpackPaging(__instance);
         RestoreStandaloneBackpackLabels(__instance);
-        __instance.Container.localPosition = Vector3.zero;
         _quickMoveActive = false;
         _backpackQuickMoveEditSessionActive = false;
         ActiveInventorySlots.Clear();
@@ -628,6 +657,12 @@ public static class StorageMenuPatch
 #endif
     {
         if (!_quickMoveActive || sourceSlot == null || sourceSlot.ItemInstance == null)
+            return;
+
+        // Cash has a dedicated vanilla quick-move path (including CashSlots and employee
+        // lockers). It must never be redirected into PackRat storage, regardless of the Smart
+        // Routing setting, so preserve the game's original target list unchanged.
+        if (sourceSlot.ItemInstance is CashInstance)
             return;
 
         var targets = new List<ItemSlot>();
@@ -729,6 +764,16 @@ public static class StorageMenuPatch
         if (state == null || slotUi == null)
             return;
 
+        // Favorite editing belongs to the player's direct backpack view. Embedded browsers are
+        // projections inside storage, station, and handover UIs; hiding the hit target there
+        // keeps it from covering a game-owned slot/filter surface while preserving favorites
+        // and the FAV sort tab on the main backpack.
+        if (!state.IsHotkeyBackpack)
+        {
+            SetStandaloneFavoriteControlVisible(state, slotUi, false);
+            return;
+        }
+
         var definitionId = GetSlotDefinitionId(slot);
         var control = GetStandaloneFavoriteControl(state, slotUi);
         if (control == null)
@@ -751,6 +796,14 @@ public static class StorageMenuPatch
             ? new Color32(255, 201, 53, 255)
             : new Color32(146, 168, 181, 230);
         control.Label.text = favorited ? "★" : "☆";
+    }
+
+    private static void SetStandaloneFavoriteControlVisible(StandaloneBackpackState state,
+        ItemSlotUI slotUi, bool visible)
+    {
+        var control = GetStandaloneFavoriteControl(state, slotUi);
+        if (control?.Button != null)
+            control.Button.gameObject.SetActive(visible);
     }
 
     private static StandaloneBackpackFavoriteControl GetStandaloneFavoriteControl(StandaloneBackpackState state,
@@ -837,15 +890,22 @@ public static class StorageMenuPatch
             !state.RecentBaselineCaptured)
             return;
 
-        UpdateStandaloneRecentChanges(state);
+        UpdateStandaloneRecentChanges(state, force: true);
         state.OpenItemQuantities.Clear();
         state.RecentBaselineCaptured = false;
     }
 
-    private static void UpdateStandaloneRecentChanges(StandaloneBackpackState state)
+    private static void UpdateStandaloneRecentChanges(StandaloneBackpackState state, bool force = false)
     {
-        if (state == null || !state.RecentBaselineCaptured)
+        if (state == null || !state.IsOpen || !state.RecentBaselineCaptured)
             return;
+
+        // Slot contents are game-owned, so there is no reliable PackRat event for ordinary
+        // drag/drop or quick-move. Poll at a short bounded interval instead of scanning every
+        // frame; this keeps the filters live after a transfer without adding a large-bag cost.
+        if (!force && Time.unscaledTime < state.NextSourceStateRefreshTime)
+            return;
+        state.NextSourceStateRefreshTime = Time.unscaledTime + 0.12f;
 
         var currentQuantities = new Dictionary<string, float>();
         AddStandaloneItemQuantities(currentQuantities, GetStandaloneSourceSlots(state));
@@ -873,6 +933,17 @@ public static class StorageMenuPatch
             state.NextMetricsTrayRefreshTime = Time.unscaledTime + 1f;
             RefreshStandaloneMetricsTray(state, GetStandaloneSourceSlots(state));
         }
+
+        if (!quantitiesChanged)
+            return;
+
+        // Newly transferred items must make disabled filter controls and any open option menu
+        // immediately reflect the backing inventory. Preserve the open menu rather than making
+        // the player close and reopen the backpack after every transfer.
+        var activeDropdown = state.ActiveDropdown;
+        state.RefreshAction?.Invoke();
+        if (activeDropdown != StandaloneBackpackDropdown.None && state.IsOpen)
+            ShowStandaloneDropdown(state, activeDropdown, toggleIfAlreadyOpen: false);
     }
 
     private static void AddStandaloneItemQuantities(Dictionary<string, float> quantities, List<ItemSlot> slots)
@@ -1175,11 +1246,11 @@ public static class StorageMenuPatch
         var chromeMilliseconds = timing?.ElapsedMilliseconds ?? 0L;
         var revealPageWipe = BeginStandalonePageWipe(surface, state);
 
-        // Bind only the views whose game-owned slot actually changed. StorageMenu.Open has
-        // already correctly bound the first native views for an unfiltered hotkey open; tearing
-        // those down and recreating every ItemUI delayed the first visible backpack by more than
-        // the entire intended entry animation. Changed, filtered, and paged projections still
-        // receive a full reset so no stale slot visuals survive.
+        // Keep native ItemUIs alive while filters, sort tabs, and pages change. The previous
+        // implementation destroyed every visible ItemUI then forced two global canvas rebuilds
+        // for each click; IL2CPP retains those deferred Unity destroys long enough to turn a
+        // few filter changes into escalating hitches and eventual crashes.
+        var projectionChanged = false;
         for (var i = 0; i < surface.SlotUIs.Length; i++)
         {
             var slotUi = surface.SlotUIs[i];
@@ -1190,11 +1261,22 @@ public static class StorageMenuPatch
             if (i < StandaloneBackpackSlotsPerPage && slotIndex < displaySlots.Count)
             {
                 var targetSlot = displaySlots[slotIndex];
-                var alreadyBound = slotUi.assignedSlot == targetSlot;
+                var targetItem = targetSlot?.ItemInstance;
+                var alreadyBound = state.SlotBindings.TryGetValue(slotUi, out var binding)
+                    && binding.Slot == targetSlot
+                    && binding.ItemInstance == targetItem;
                 if (!alreadyBound)
                 {
                     ResetSlotUi(slotUi);
                     slotUi.ClearSlot();
+                    slotUi.gameObject.SetActive(true);
+                    slotUi.AssignSlot(targetSlot);
+                    state.SlotBindings[slotUi] = new StandaloneBackpackSlotBinding
+                    {
+                        Slot = targetSlot,
+                        ItemInstance = targetItem
+                    };
+                    projectionChanged = true;
                 }
 
                 // Some game-owned ItemSlotUI prefabs only construct their visual children while
@@ -1203,31 +1285,23 @@ public static class StorageMenuPatch
                 // ItemSlot so the shared browser can render the same native slot surface on
                 // every owner panel without disrupting the page-wipe overlay order.
                 slotUi.gameObject.SetActive(true);
-                if (!alreadyBound)
-                    slotUi.AssignSlot(targetSlot);
                 ConfigureStandaloneFavoriteControl(state, slotUi, targetSlot);
+                continue;
             }
-            else
-            {
-                if (slotUi.assignedSlot != null || slotUi.gameObject.activeSelf)
-                {
-                    ResetSlotUi(slotUi);
-                    slotUi.ClearSlot();
-                }
 
-                slotUi.gameObject.SetActive(false);
+            if (state.SlotBindings.Remove(slotUi) || slotUi.gameObject.activeSelf)
+            {
+                ResetSlotUi(slotUi);
+                slotUi.ClearSlot();
+                projectionChanged = true;
             }
+            SetStandaloneFavoriteControlVisible(state, slotUi, false);
+            slotUi.gameObject.SetActive(false);
         }
 
         CaptureStandaloneQualityStarSprite(surface.SlotUIs, state);
-        // The grid itself owns cell placement. Request its regular-frame rebuild rather than
-        // forcing every canvas in the scene to rebuild synchronously during a hotkey press.
-        // Embedded deal/storage surfaces retain their immediate local rebuild because their
-        // source slot roots can be activated by the game after the current layout pass.
-        if (surface.LayoutView == StandaloneBackpackLayoutView.Backpack)
+        if (projectionChanged)
             LayoutRebuilder.MarkLayoutForRebuild(surface.SlotContainer);
-        else
-            LayoutRebuilder.ForceRebuildLayoutImmediate(surface.SlotContainer);
         var slotBindMilliseconds = timing?.ElapsedMilliseconds ?? 0L;
 
         if (surface.LayoutView == StandaloneBackpackLayoutView.Deal)
@@ -1263,7 +1337,7 @@ public static class StorageMenuPatch
         UpdateStandalonePager(state, totalPages);
         RefreshStandaloneKeyboardFocusPresentation(state);
 
-        ModLogger.Info(
+        ModLogger.Debug(
             $"[BackpackUI] Standalone layout applied: capacitySlots={gridSlotCount}, visibleSlots={visibleSlotCount}, gridSize={gridSize}, " +
             $"gridPosition={surface.SlotContainer.anchoredPosition}, view={surface.LayoutView}."
         );
@@ -1896,12 +1970,12 @@ public static class StorageMenuPatch
         panelImage.raycastTarget = true;
         state.MetricsTrayPanel = panel;
 
-        var title = CreateSearchText(panel, "Title", new Color32(217, 236, 248, 255));
-        title.text = "PRODUCT METRICS";
-        title.fontSize = 9;
-        title.fontStyle = FontStyle.Bold;
-        title.alignment = TextAnchor.MiddleLeft;
-        var titleRect = title.GetComponent<RectTransform>();
+        state.MetricsTrayTitle = CreateSearchText(panel, "Title", new Color32(217, 236, 248, 255));
+        state.MetricsTrayTitle.text = "PRODUCT METRICS";
+        state.MetricsTrayTitle.fontSize = GetStandaloneMetricsFontSize(11);
+        state.MetricsTrayTitle.fontStyle = FontStyle.Bold;
+        state.MetricsTrayTitle.alignment = TextAnchor.MiddleLeft;
+        var titleRect = state.MetricsTrayTitle.GetComponent<RectTransform>();
         titleRect.anchorMin = new Vector2(0f, 1f);
         titleRect.anchorMax = new Vector2(1f, 1f);
         titleRect.pivot = new Vector2(0.5f, 1f);
@@ -1909,7 +1983,7 @@ public static class StorageMenuPatch
         titleRect.offsetMax = new Vector2(-10f, -7f);
 
         state.MetricsTraySummary = CreateSearchText(panel, "Summary", new Color32(135, 191, 222, 255));
-        state.MetricsTraySummary.fontSize = 7;
+        state.MetricsTraySummary.fontSize = GetStandaloneMetricsFontSize(9);
         state.MetricsTraySummary.fontStyle = FontStyle.Bold;
         state.MetricsTraySummary.alignment = TextAnchor.MiddleLeft;
         var summaryRect = state.MetricsTraySummary.GetComponent<RectTransform>();
@@ -2069,6 +2143,10 @@ public static class StorageMenuPatch
             return;
 
         state.MetricsTrayFingerprint = fingerprint;
+        if (state.MetricsTrayTitle != null)
+            state.MetricsTrayTitle.fontSize = GetStandaloneMetricsFontSize(11);
+        if (state.MetricsTraySummary != null)
+            state.MetricsTraySummary.fontSize = GetStandaloneMetricsFontSize(9);
         for (var i = 0; i < state.MetricsTrayRows.Count; i++)
         {
             if (state.MetricsTrayRows[i] != null)
@@ -2083,7 +2161,7 @@ public static class StorageMenuPatch
         {
             var empty = CreateSearchText(state.MetricsTrayContent, "Empty", new Color32(144, 171, 188, 255));
             empty.text = "NO PRODUCTS IN BACKPACK";
-            empty.fontSize = 7;
+            empty.fontSize = GetStandaloneMetricsFontSize(8);
             empty.fontStyle = FontStyle.Bold;
             empty.alignment = TextAnchor.MiddleCenter;
             var emptyRect = empty.GetComponent<RectTransform>();
@@ -2113,7 +2191,8 @@ public static class StorageMenuPatch
         // Avoid ContentSizeFitter here. It is rebuilt by the host game's menu while this
         // injected card is animating, which can collapse the viewport to zero. Explicit row
         // geometry keeps the content scrollable and visible on every scale.
-        state.MetricsTrayContent.sizeDelta = new Vector2(0f, Mathf.Max(1f, 2f + (state.MetricsTrayRows.Count * 40f)));
+        state.MetricsTrayContent.sizeDelta = new Vector2(0f,
+            Mathf.Max(1f, 2f + (state.MetricsTrayRows.Count * GetStandaloneMetricsRowStride())));
         Canvas.ForceUpdateCanvases();
         LayoutRebuilder.ForceRebuildLayoutImmediate(state.MetricsTrayContent);
     }
@@ -2372,7 +2451,9 @@ public static class StorageMenuPatch
             ?? Enumerable.Empty<string>();
         return string.Join("|", rows) + ";" + config.ShowProductQuantityMetric + ";" +
             config.ShowProductQuantityTotalMetric + ";" + config.ShowProductUnitPriceMetric + ";" +
-            config.ShowProductTotalPriceMetric;
+            config.ShowProductTotalPriceMetric + ";" +
+            Configuration.ClampMetricsFontScale(config.MetricsFontScale).ToString("0.00",
+                System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static void CreateStandaloneMetricsTrayRow(StandaloneBackpackState state,
@@ -2385,11 +2466,12 @@ public static class StorageMenuPatch
         var row = rowGo.AddComponent<RectTransform>();
         row.SetParent(state.MetricsTrayContent, worldPositionStays: false);
         var rowIndex = state.MetricsTrayRows.Count;
-        var rowTop = 2f + (rowIndex * 40f);
+        var rowHeight = GetStandaloneMetricsRowHeight();
+        var rowTop = 2f + (rowIndex * GetStandaloneMetricsRowStride());
         row.anchorMin = new Vector2(0f, 1f);
         row.anchorMax = new Vector2(1f, 1f);
         row.pivot = new Vector2(0.5f, 1f);
-        row.offsetMin = new Vector2(1f, -rowTop - 36f);
+        row.offsetMin = new Vector2(1f, -rowTop - rowHeight);
         row.offsetMax = new Vector2(-1f, -rowTop);
         var background = rowGo.AddComponent<Image>();
         background.color = new Color32(23, 42, 56, 238);
@@ -2398,7 +2480,7 @@ public static class StorageMenuPatch
 
         var name = CreateSearchText(row, "Name", new Color32(237, 245, 250, 255));
         name.text = string.IsNullOrWhiteSpace(metric.Name) ? metric.Id : metric.Name.ToUpperInvariant();
-        name.fontSize = 7;
+        name.fontSize = GetStandaloneMetricsFontSize(10);
         name.fontStyle = FontStyle.Bold;
         name.alignment = TextAnchor.MiddleLeft;
         var nameRect = name.GetComponent<RectTransform>();
@@ -2422,7 +2504,7 @@ public static class StorageMenuPatch
         var detail = CreateSearchText(row, "Details", new Color32(141, 196, 226, 255));
         var firstLine = primaryDetails.Count == 0 ? "PRODUCT" : string.Join("  •  ", primaryDetails);
         detail.text = secondaryDetails.Count == 0 ? firstLine : firstLine + "\n" + string.Join("  •  ", secondaryDetails);
-        detail.fontSize = 6;
+        detail.fontSize = GetStandaloneMetricsFontSize(8);
         detail.fontStyle = FontStyle.Bold;
         detail.alignment = TextAnchor.MiddleLeft;
         var detailRect = detail.GetComponent<RectTransform>();
@@ -2431,6 +2513,22 @@ public static class StorageMenuPatch
         detailRect.offsetMin = new Vector2(7f, 1f);
         detailRect.offsetMax = new Vector2(-7f, 0f);
         state.MetricsTrayRows.Add(rowGo);
+    }
+
+    private static int GetStandaloneMetricsFontSize(int baseFontSize)
+    {
+        return Mathf.Max(1, Mathf.RoundToInt(baseFontSize *
+            Configuration.ClampMetricsFontScale(Configuration.Instance.MetricsFontScale)));
+    }
+
+    private static float GetStandaloneMetricsRowHeight()
+    {
+        return Mathf.Ceil(36f * Configuration.ClampMetricsFontScale(Configuration.Instance.MetricsFontScale));
+    }
+
+    private static float GetStandaloneMetricsRowStride()
+    {
+        return GetStandaloneMetricsRowHeight() + 4f;
     }
 
     private static string FormatStandaloneProductPrice(float price)
@@ -2807,6 +2905,10 @@ public static class StorageMenuPatch
             {
                 state.SearchTerm = value ?? string.Empty;
                 state.CurrentPage = 0;
+                // Search changes the available filter values. A popup built from the previous
+                // projection is no longer authoritative and can retain an old highlight, so
+                // close it before rendering the new filter state.
+                HideStandaloneDropdown(state);
                 if (state.IsOpen)
                     state.RefreshAction?.Invoke();
             };
@@ -3092,25 +3194,20 @@ public static class StorageMenuPatch
                 RefreshStandaloneFilterView(state);
             };
 
-        // The game may rebuild or reactivate this owner panel while the backpack remains open.
-        // Rebind the permanent actions each refresh so controls cannot retain a stale listener;
-        // RemoveListener keeps this idempotent rather than stacking callbacks on each layout pass.
-        RebindHeaderButton(state.TypeFilterButton, state.TypeFilterAction);
-        RebindHeaderButton(state.QualityFilterButton, state.QualityFilterAction);
-        RebindHeaderButton(state.SortDirectionButton, state.SortDirectionAction);
-        RebindHeaderButton(state.OrganizeButton, state.OrganizeAction);
-        RebindHeaderButton(state.ConsolidateButton, state.ConsolidateAction);
-        RebindHeaderButton(state.ClearFiltersButton, state.ClearFiltersAction);
+        // These controls are PackRat-owned and persist for the life of their browser surface.
+        // Binding them once avoids allocating and replacing IL2CPP UnityEvent wrappers on every
+        // search or filter refresh.
+        if (!state.FilterControlsBound)
+        {
+            EventHelper.AddListener(state.TypeFilterAction, state.TypeFilterButton.onClick);
+            EventHelper.AddListener(state.QualityFilterAction, state.QualityFilterButton.onClick);
+            EventHelper.AddListener(state.SortDirectionAction, state.SortDirectionButton.onClick);
+            EventHelper.AddListener(state.OrganizeAction, state.OrganizeButton.onClick);
+            EventHelper.AddListener(state.ConsolidateAction, state.ConsolidateButton.onClick);
+            EventHelper.AddListener(state.ClearFiltersAction, state.ClearFiltersButton.onClick);
+            state.FilterControlsBound = true;
+        }
         UpdateStandaloneFilterLabels(state);
-    }
-
-    private static void RebindHeaderButton(Button button, Action action)
-    {
-        if (button == null || action == null)
-            return;
-
-        EventHelper.RemoveListener(action, button.onClick);
-        EventHelper.AddListener(action, button.onClick);
     }
 
     private static void RefreshStandaloneFilterView(StandaloneBackpackState state)
@@ -4446,6 +4543,20 @@ public static class StorageMenuPatch
                 state.MetricsTrayExpanded = false;
             PersistStandaloneSettings(state);
         });
+        AddStandaloneSettingsRow(state, "METRICS TEXT", FormatStandaloneMetricsFontScale(config.MetricsFontScale),
+            "-10%", () =>
+            {
+                config.MetricsFontScale = Configuration.ClampMetricsFontScale(
+                    config.MetricsFontScale - MetricsFontScaleStep);
+                RefreshStandaloneMetricsFontScale(state);
+                PersistStandaloneSettings(state);
+            }, "+10%", () =>
+            {
+                config.MetricsFontScale = Configuration.ClampMetricsFontScale(
+                    config.MetricsFontScale + MetricsFontScaleStep);
+                RefreshStandaloneMetricsFontScale(state);
+                PersistStandaloneSettings(state);
+            });
         AddStandaloneSettingsToggleRow(state, "SHOW QUANTITY", config.ShowProductQuantityMetric, value =>
         {
             config.ShowProductQuantityMetric = value;
@@ -4466,6 +4577,22 @@ public static class StorageMenuPatch
             config.ShowProductTotalPriceMetric = value;
             PersistStandaloneSettings(state);
         });
+    }
+
+    private static string FormatStandaloneMetricsFontScale(float value)
+    {
+        return Mathf.RoundToInt(Configuration.ClampMetricsFontScale(value) * 100f) + "%";
+    }
+
+    private static void RefreshStandaloneMetricsFontScale(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        // The tray rows are pooled only for an unchanged visual fingerprint. Clear that marker
+        // before the immediate refresh so a settings click updates the active tray in place.
+        state.MetricsTrayFingerprint = null;
+        RefreshStandaloneMetricsTray(state, GetStandaloneSourceSlots(state));
     }
 
     private static void BuildStandaloneTierSettings(StandaloneBackpackState state)
@@ -5029,9 +5156,10 @@ public static class StorageMenuPatch
     }
 
     /// <summary>
-    /// Moves transient controls out of the scaled grid hierarchy. Filter menus and settings
-    /// must be allowed to extend beyond the compact backpack body in handover, station, and
-    /// storage views without being obscured by the slot surface.
+    /// Moves the transient dropdown into the owner panel's overlay layer. The popup still takes
+    /// its horizontal bounds from the backpack header and its vertical anchor from the trigger
+    /// control; converting both points into this host's local space keeps it aligned at every
+    /// canvas scale and aspect ratio.
     /// </summary>
     private static void ConfigureStandaloneOverlayLayers(StandaloneBackpackSurface surface,
         StandaloneBackpackState state)
@@ -5041,32 +5169,80 @@ public static class StorageMenuPatch
 
         if (state.DropdownRoot != null && state.HeaderRoot != null)
         {
-            var header = state.HeaderRoot;
             var host = surface.Container;
-            Canvas.ForceUpdateCanvases();
-            var headerBottom = header.TransformPoint(new Vector3(0f, header.rect.yMin, 0f));
-            var headerLeft = header.TransformPoint(new Vector3(header.rect.xMin, header.rect.yMin, 0f));
-            var headerRight = header.TransformPoint(new Vector3(header.rect.xMax, header.rect.yMin, 0f));
-            state.DropdownAnchor = host.InverseTransformPoint(headerBottom) + new Vector3(0f, -4f, 0f);
-            state.DropdownWidth = Mathf.Max(140f, Vector3.Distance(headerLeft, headerRight));
-
             if (state.DropdownRoot.parent != host)
                 state.DropdownRoot.SetParent(host, worldPositionStays: false);
 
             state.DropdownRoot.anchorMin = new Vector2(0.5f, 0.5f);
             state.DropdownRoot.anchorMax = new Vector2(0.5f, 0.5f);
             state.DropdownRoot.pivot = new Vector2(0.5f, 1f);
-            state.DropdownRoot.anchoredPosition = state.DropdownAnchor;
-            state.DropdownRoot.sizeDelta = new Vector2(state.DropdownWidth, 1f);
             state.DropdownRoot.localScale = Vector3.one;
+            state.DropdownHost = host;
+            RefreshStandaloneDropdownPlacement(state,
+                state.ActiveDropdown == StandaloneBackpackDropdown.None
+                    ? StandaloneBackpackDropdown.Type
+                    : state.ActiveDropdown);
+        }
+    }
+
+    /// <summary>
+    /// Positions a popup using only RectTransform local coordinates. The old implementation
+    /// measured the header in world space but used that value as a host-local width, which made
+    /// the menu grow beyond the backpack under CanvasScaler configurations such as 16:10.
+    /// </summary>
+    private static void RefreshStandaloneDropdownPlacement(StandaloneBackpackState state,
+        StandaloneBackpackDropdown dropdown)
+    {
+        if (state?.DropdownRoot == null || state.DropdownHost == null || state.HeaderRoot == null)
+            return;
+
+        var header = state.HeaderRoot;
+        var host = state.DropdownHost;
+        var headerLeftWorld = header.TransformPoint(new Vector3(header.rect.xMin, header.rect.yMin, 0f));
+        var headerRightWorld = header.TransformPoint(new Vector3(header.rect.xMax, header.rect.yMin, 0f));
+        var headerLeft = host.InverseTransformPoint(headerLeftWorld);
+        var headerRight = host.InverseTransformPoint(headerRightWorld);
+        var trigger = GetStandaloneDropdownTrigger(state, dropdown) ?? header;
+        var triggerBottomWorld = trigger.TransformPoint(new Vector3(0f, trigger.rect.yMin, 0f));
+        var triggerBottom = host.InverseTransformPoint(triggerBottomWorld);
+
+        state.DropdownWidth = Mathf.Max(1f, Mathf.Abs(headerRight.x - headerLeft.x));
+        state.DropdownAnchor = new Vector2((headerLeft.x + headerRight.x) * 0.5f, triggerBottom.y - 3f);
+        state.DropdownRoot.anchoredPosition = state.DropdownAnchor;
+        state.DropdownRoot.sizeDelta = new Vector2(state.DropdownWidth,
+            Mathf.Max(1f, state.DropdownRoot.sizeDelta.y));
+    }
+
+    private static RectTransform GetStandaloneDropdownTrigger(StandaloneBackpackState state,
+        StandaloneBackpackDropdown dropdown)
+    {
+        if (state == null)
+            return null;
+
+        switch (dropdown)
+        {
+            case StandaloneBackpackDropdown.Type:
+                return state.TypeFilterButton?.GetComponent<RectTransform>();
+            case StandaloneBackpackDropdown.Quality:
+                return state.QualityFilterButton?.GetComponent<RectTransform>();
+            case StandaloneBackpackDropdown.SortDirection:
+                return state.SortDirectionButton?.GetComponent<RectTransform>();
+            default:
+                return null;
         }
     }
 
     private static void ShowStandaloneDropdown(StandaloneBackpackState state,
-        StandaloneBackpackDropdown dropdown)
+        StandaloneBackpackDropdown dropdown, bool toggleIfAlreadyOpen = true)
     {
         if (state?.DropdownRoot == null)
             return;
+
+        if (toggleIfAlreadyOpen && state.ActiveDropdown == dropdown && state.DropdownRoot.gameObject.activeSelf)
+        {
+            HideStandaloneDropdown(state);
+            return;
+        }
 
         var options = BuildStandaloneDropdownOptions(state, dropdown);
         if (options.Count == 0)
@@ -5079,8 +5255,8 @@ public static class StorageMenuPatch
         state.DropdownOptions.Clear();
         state.DropdownOptions.AddRange(options);
         var height = 6f + (options.Count * 24f);
-        state.DropdownRoot.sizeDelta = new Vector2(Mathf.Max(140f, state.DropdownWidth), height);
-        state.DropdownRoot.anchoredPosition = state.DropdownAnchor;
+        RefreshStandaloneDropdownPlacement(state, dropdown);
+        state.DropdownRoot.sizeDelta = new Vector2(Mathf.Max(1f, state.DropdownWidth), height);
         state.DropdownRoot.gameObject.SetActive(true);
         state.DropdownRoot.SetAsLastSibling();
 
@@ -5608,15 +5784,6 @@ public static class StorageMenuPatch
         qualityStar.enabled = option.ShowQualityStar && state.QualityStarSprite != null;
         button.gameObject.SetActive(true);
 
-        var oldAction = state.DropdownOptionActions[index];
-        if (oldAction != null)
-            EventHelper.RemoveListener(oldAction, button.onClick);
-
-        var optionIndex = index;
-        var selectAction = new Action(() => SelectStandaloneDropdownOption(state, optionIndex));
-        state.DropdownOptionActions[index] = selectAction;
-        EventHelper.AddListener(selectAction, button.onClick);
-
         var selected = IsStandaloneDropdownOptionSelected(state, dropdown, index);
         var image = button.targetGraphic as Image;
         if (image != null)
@@ -5632,6 +5799,9 @@ public static class StorageMenuPatch
         ApplyPillButtonPresentation(image);
         var button = optionGo.AddComponent<Button>();
         button.targetGraphic = image;
+        // The popup owns selected presentation. Unity's default ColorTint can otherwise leave
+        // a previously clicked option bright after the next dropdown refresh.
+        button.transition = Selectable.Transition.None;
         var label = CreateSearchText(optionRect, "Label", new Color32(223, 239, 248, 255));
         label.fontSize = 11;
         label.fontStyle = FontStyle.Bold;
@@ -5653,7 +5823,10 @@ public static class StorageMenuPatch
         state.DropdownOptionButtons.Add(button);
         state.DropdownOptionLabels.Add(label);
         state.DropdownOptionQualityStars.Add(qualityStar);
-        state.DropdownOptionActions.Add(null);
+        var optionIndex = index;
+        var selectAction = new Action(() => SelectStandaloneDropdownOption(state, optionIndex));
+        state.DropdownOptionActions.Add(selectAction);
+        EventHelper.AddListener(selectAction, button.onClick);
     }
 
     private static bool IsStandaloneDropdownOptionSelected(StandaloneBackpackState state,
@@ -5666,11 +5839,13 @@ public static class StorageMenuPatch
         switch (dropdown)
         {
             case StandaloneBackpackDropdown.Type:
-                return optionIndex == 0 ? string.IsNullOrEmpty(state.TypeFilter) :
-                    string.Equals(label, state.TypeFilter, StringComparison.OrdinalIgnoreCase);
+                return string.IsNullOrEmpty(state.TypeFilter)
+                    ? string.Equals(label, "ALL TYPES", StringComparison.OrdinalIgnoreCase)
+                    : string.Equals(label, state.TypeFilter, StringComparison.OrdinalIgnoreCase);
             case StandaloneBackpackDropdown.Quality:
-                return optionIndex == 0 ? string.IsNullOrEmpty(state.QualityFilter) :
-                    string.Equals(label, state.QualityFilter, StringComparison.OrdinalIgnoreCase);
+                return string.IsNullOrEmpty(state.QualityFilter)
+                    ? string.Equals(label, "ALL QUALITIES", StringComparison.OrdinalIgnoreCase)
+                    : string.Equals(label, state.QualityFilter, StringComparison.OrdinalIgnoreCase);
             case StandaloneBackpackDropdown.SortDirection:
                 if (label == "ASCENDING")
                     return state.SortDirection == StandaloneBackpackSortDirection.Ascending;
@@ -5714,6 +5889,7 @@ public static class StorageMenuPatch
 
         state.ActiveDropdown = StandaloneBackpackDropdown.None;
         state.KeyboardDropdownOptionIndex = -1;
+        state.DropdownOptions.Clear();
         ++state.DropdownMotionGeneration;
         if (state.DropdownRoot != null)
         {
@@ -5864,13 +6040,7 @@ public static class StorageMenuPatch
 
         if (StandaloneBackpackPanels.TryGetValue(menu.GetInstanceID(), out var state))
         {
-            SnapStandaloneMotionState(state);
-            state.IsOpen = false;
-            state.SettingsOpen = false;
-            state.SettingsClosing = false;
-            state.VisualPresented = false;
-            state.AwaitingToggleKey = false;
-            HideStandaloneDropdown(state);
+            ResetStandaloneBackpackSurfaceState(state);
             if (state.SettingsRoot != null)
                 state.SettingsRoot.gameObject.SetActive(false);
             if (state.VisualRoot != null)
@@ -5998,27 +6168,71 @@ public static class StorageMenuPatch
     private static void ResetStandaloneBackpackPage(StorageMenu menu)
     {
         if (menu != null && StandaloneBackpackPanels.TryGetValue(menu.GetInstanceID(), out var state))
+            ResetStandaloneBackpackSurfaceState(state);
+    }
+
+    /// <summary>
+    /// Resets the shared-browser state for an embedded owner such as a station. These owners
+    /// clear their cloned slot UIs on close, so the cached binding map must be cleared too or a
+    /// later reopen can incorrectly treat visually empty slots as already bound.
+    /// </summary>
+    internal static void ResetEmbeddedBackpackBrowser(RectTransform hostRoot)
+    {
+        if (hostRoot != null && StandaloneBackpackPanels.TryGetValue(hostRoot.GetInstanceID(), out var state))
+            ResetStandaloneBackpackSurfaceState(state);
+    }
+
+    /// <summary>
+    /// Refreshes only currently visible embedded browser projections. The hotkey backpack has
+    /// its own input update loop, while station, storage, and handover panels otherwise have no
+    /// PackRat-owned tick after a game-side transfer. Keeping this on the local-player update
+    /// lets a shift-moved station output immediately appear on its real backpack page and makes
+    /// newly added filter values available without reopening the panel.
+    /// </summary>
+    internal static void RefreshOpenEmbeddedBackpackBrowsers()
+    {
+        foreach (var state in StandaloneBackpackPanels.Values.ToArray())
         {
-            state.CurrentPage = 0;
-            state.SearchTerm = string.Empty;
-            state.TypeFilter = string.Empty;
-            state.QualityFilter = string.Empty;
-            state.SortMode = StandaloneBackpackSortMode.SlotOrder;
-            state.SortDirection = StandaloneBackpackSortDirection.Ascending;
-            state.RecentItemTimestamps.Clear();
-            state.OpenItemQuantities.Clear();
-            state.RecentBaselineCaptured = false;
-            state.SettingsOpen = false;
-            state.SettingsClosing = false;
-            state.VisualPresented = false;
-            state.AwaitingToggleKey = false;
-            SnapStandaloneMotionState(state);
-            HideStandaloneDropdown(state);
-            if (state.SettingsRoot != null)
-                state.SettingsRoot.gameObject.SetActive(false);
-            if (state.SearchInput != null)
-                state.SearchInput.SetTextWithoutNotify(string.Empty);
+            if (state == null || !state.IsOpen || state.IsHotkeyBackpack || state.PresentationRoot == null ||
+                !state.PresentationRoot.gameObject.activeInHierarchy)
+                continue;
+
+            UpdateStandaloneRecentChanges(state);
         }
+    }
+
+    /// <summary>
+    /// Clears transient browser state when its owner closes. Embedded storage panels have a
+    /// different dictionary key from the shared StorageMenu, so they must be reset directly or
+    /// an open filter dropdown survives into the next storage session.
+    /// </summary>
+    private static void ResetStandaloneBackpackSurfaceState(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        state.CurrentPage = 0;
+        state.SearchTerm = string.Empty;
+        state.TypeFilter = string.Empty;
+        state.QualityFilter = string.Empty;
+        state.SortMode = StandaloneBackpackSortMode.SlotOrder;
+        state.SortDirection = StandaloneBackpackSortDirection.Ascending;
+        state.RecentItemTimestamps.Clear();
+        state.OpenItemQuantities.Clear();
+        state.RecentBaselineCaptured = false;
+        state.NextSourceStateRefreshTime = 0f;
+        state.SlotBindings.Clear();
+        state.IsOpen = false;
+        state.SettingsOpen = false;
+        state.SettingsClosing = false;
+        state.VisualPresented = false;
+        state.AwaitingToggleKey = false;
+        SnapStandaloneMotionState(state);
+        HideStandaloneDropdown(state);
+        if (state.SettingsRoot != null)
+            state.SettingsRoot.gameObject.SetActive(false);
+        if (state.SearchInput != null)
+            state.SearchInput.SetTextWithoutNotify(string.Empty);
     }
 
     private static bool IsStandaloneBackpackOpen(StorageMenu menu)
@@ -6639,13 +6853,15 @@ public static class StorageMenuPatch
         }
     }
 
-    private static void ApplyBackpackSidePanel(StorageMenu menu, IItemSlotOwner openedOwner)
+    private static void ApplyBackpackSidePanel(StorageMenu menu, IItemSlotOwner openedOwner,
+        bool allowNpcInventory = false)
     {
         try
         {
             HideBackpackSidePanel(menu);
 
-            if (menu == null || openedOwner == null || IsBackpackOwner(openedOwner))
+            if (menu == null || openedOwner == null || IsBackpackOwner(openedOwner) ||
+                (!allowNpcInventory && IsNpcInventoryOwner(openedOwner)))
                 return;
 
             if (GetBackpackSlots().Count == 0)
@@ -7946,6 +8162,9 @@ public static class StorageMenuPatch
         if (!BackpackPanels.TryGetValue(menu.GetInstanceID(), out var panel))
             return;
 
+        if (panel.Container != null && StandaloneBackpackPanels.TryGetValue(panel.Container.GetInstanceID(), out var state))
+            ResetStandaloneBackpackSurfaceState(state);
+
         if (panel.SlotUIs != null)
         {
             for (var i = 0; i < panel.SlotUIs.Length; i++)
@@ -9150,6 +9369,40 @@ public static class StorageMenuPatch
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Determines whether an owner belongs to an NPC/employee inventory. The concrete owner cast
+    /// is authoritative when available. Current IL2CPP builds can expose an IItemSlotOwner proxy
+    /// that does not TryCast back to NPCInventory, so the vanilla "Name's Inventory" title is a
+    /// deliberately narrow fallback for the employee trade screen.
+    /// </summary>
+    private static bool IsNpcInventoryOwner(IItemSlotOwner owner, string title = null)
+    {
+        if (owner != null)
+        {
+#if MONO
+            if (owner is S1NpcInventory)
+                return true;
+#else
+            if (owner.TryCast<S1NpcInventory>() != null)
+                return true;
+#endif
+            try
+            {
+                var typeName = owner.GetType().FullName ?? owner.GetType().Name;
+                if (typeName.EndsWith(".NPCInventory", StringComparison.Ordinal) ||
+                    typeName.Equals("NPCInventory", StringComparison.Ordinal))
+                    return true;
+            }
+            catch
+            {
+                // Fall through to the stable game-authored title discriminator.
+            }
+        }
+
+        return !string.IsNullOrWhiteSpace(title) &&
+            title.EndsWith("'s Inventory", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void AddQuickMoveTargets(ItemSlot sourceSlot, List<ItemSlot> candidates, List<ItemSlot> targets)

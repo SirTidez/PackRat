@@ -40,6 +40,7 @@ public class Configuration
     private readonly MelonPreferences_Entry<bool> _showProductQuantityTotalMetricEntry;
     private readonly MelonPreferences_Entry<bool> _showProductUnitPriceMetricEntry;
     private readonly MelonPreferences_Entry<bool> _showProductTotalPriceMetricEntry;
+    private readonly MelonPreferences_Entry<float> _metricsFontScaleEntry;
     private readonly MelonPreferences_Entry<int> _backpackUiThemeEntry;
     private readonly MelonPreferences_Entry<int> _backpackCustomThemeRedEntry;
     private readonly MelonPreferences_Entry<int> _backpackCustomThemeGreenEntry;
@@ -162,6 +163,11 @@ public class Configuration
             "ShowProductTotalPriceMetric",
             true,
             "Show total product value in the backpack metrics tray"
+        );
+        _metricsFontScaleEntry = _category.CreateEntry(
+            "MetricsFontScale",
+            1f,
+            "Text scale for the backpack product metrics tray"
         );
         _backpackUiThemeEntry = _category.CreateEntry(
             "BackpackUiTheme",
@@ -291,6 +297,7 @@ public class Configuration
     public bool ShowProductQuantityTotalMetric { get; set; }
     public bool ShowProductUnitPriceMetric { get; set; }
     public bool ShowProductTotalPriceMetric { get; set; }
+    public float MetricsFontScale { get; set; }
     public BackpackUiTheme BackpackUiTheme { get; set; }
     public Color CustomBackpackUiPrimaryColor { get; set; }
     public float BackpackOverlayOffsetX { get; set; }
@@ -354,6 +361,7 @@ public class Configuration
         ShowProductQuantityTotalMetric = _showProductQuantityTotalMetricEntry.Value;
         ShowProductUnitPriceMetric = _showProductUnitPriceMetricEntry.Value;
         ShowProductTotalPriceMetric = _showProductTotalPriceMetricEntry.Value;
+        MetricsFontScale = ClampMetricsFontScale(_metricsFontScaleEntry.Value);
         BackpackUiTheme = BackpackUiThemes.Clamp(_backpackUiThemeEntry.Value);
         CustomBackpackUiPrimaryColor = new Color32(
             (byte)Mathf.Clamp(_backpackCustomThemeRedEntry.Value, 0, 255),
@@ -408,6 +416,7 @@ public class Configuration
         _showProductQuantityTotalMetricEntry.Value = ShowProductQuantityTotalMetric;
         _showProductUnitPriceMetricEntry.Value = ShowProductUnitPriceMetric;
         _showProductTotalPriceMetricEntry.Value = ShowProductTotalPriceMetric;
+        _metricsFontScaleEntry.Value = ClampMetricsFontScale(MetricsFontScale);
         _backpackUiThemeEntry.Value = (int)BackpackUiThemes.Clamp((int)BackpackUiTheme);
         var customPrimary = (Color32)CustomBackpackUiPrimaryColor;
         _backpackCustomThemeRedEntry.Value = customPrimary.r;
@@ -533,11 +542,20 @@ public class Configuration
         sb.AppendLine($"ShowProductQuantityTotalMetric = {ShowProductQuantityTotalMetric.ToString().ToLowerInvariant()}");
         sb.AppendLine($"ShowProductUnitPriceMetric = {ShowProductUnitPriceMetric.ToString().ToLowerInvariant()}");
         sb.AppendLine($"ShowProductTotalPriceMetric = {ShowProductTotalPriceMetric.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"MetricsFontScale = {ClampMetricsFontScale(MetricsFontScale).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}");
         return sb.ToString();
     }
 
     private static float ClampOverlayScale(float value)
     {
         return Math.Clamp(value, 0.5f, 1.5f);
+    }
+
+    /// <summary>
+    /// Keeps the metrics tray legible without allowing its compact rows to become unusably large.
+    /// </summary>
+    public static float ClampMetricsFontScale(float value)
+    {
+        return Math.Clamp(value, 0.75f, 1.5f);
     }
 }

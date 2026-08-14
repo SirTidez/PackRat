@@ -78,6 +78,12 @@ public static class StationBackpackPanelPatch
         if (!_quickMoveActive || sourceSlot == null || sourceSlot.ItemInstance == null)
             return;
 
+        // Preserve the game's cash/employee-locker routing. Station panels only extend item
+        // transfers; money must remain on the native CashSlot path and never spill into a
+        // backpack merely because one is open beside the station.
+        if (sourceSlot.ItemInstance is CashInstance)
+            return;
+
         var targets = new List<ItemSlot>();
         if (ActiveInventorySlots.Contains(sourceSlot))
         {
@@ -148,6 +154,10 @@ public static class StationBackpackPanelPatch
 
         if (!Panels.TryGetValue(stationCanvas.GetInstanceID(), out var panel))
             return;
+
+        // The shared browser owns a separate binding cache. Clear it before the station tears
+        // down its cloned ItemSlotUIs so the next Open always performs a real rebind.
+        StorageMenuPatch.ResetEmbeddedBackpackBrowser(panel.Root);
 
         if (panel.SlotUIs != null)
         {
@@ -419,7 +429,10 @@ public static class StationBackpackPanelPatch
         if (parentCanvas != null)
         {
             rootCanvas.sortingLayerID = parentCanvas.sortingLayerID;
-            rootCanvas.sortingOrder = parentCanvas.sortingOrder + 200;
+            // Keep the browser above the stationary station surface but below the game's
+            // transient drag icon. The previous +200 order made dragged items render beneath
+            // PackRat's panel even when the mouse correctly targeted a backpack slot.
+            rootCanvas.sortingOrder = parentCanvas.sortingOrder + 1;
         }
         else
         {
