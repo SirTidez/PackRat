@@ -1,4 +1,5 @@
 using HarmonyLib;
+using PackRat.Config;
 using PackRat.Helpers;
 using PackRatUtils = PackRat.Helpers.Utils;
 using UnityEngine;
@@ -35,7 +36,10 @@ public static class PlayerSpawnerPatch
         if (player == null)
             return;
 
-        EnsurePlayerBackpackSetup(player, addLocalBackpackComponent: true);
+        // Player prefabs are cloned for both the local player and remote peers. The storage
+        // component belongs on every clone, but PlayerBackpack owns a local-only static instance
+        // and is attached by PlayerPatch once ownership is known.
+        EnsurePlayerBackpackSetup(player, addLocalBackpackComponent: false);
     }
 
     public static void EnsurePlayerBackpackSetup(Player player, bool addLocalBackpackComponent)
@@ -47,8 +51,12 @@ public static class PlayerSpawnerPatch
         if (storage == null)
             return;
 
-        storage.SlotCount = PlayerBackpack.MaxStorageSlots;
-        storage.DisplayRowCount = 8;
+        // Allocate enough slots before the game's save loader restores item data. This must use the
+        // largest configured tier rather than a fixed ceiling, otherwise legacy or customized bags
+        // silently lose items above that ceiling during deserialization.
+        var bootstrapSlotCount = GetBootstrapStorageSlotCount();
+        storage.SlotCount = bootstrapSlotCount;
+        storage.DisplayRowCount = GetDisplayRowCount(bootstrapSlotCount);
         storage.StorageEntityName = PlayerBackpack.StorageName;
         storage.MaxAccessDistance = float.PositiveInfinity;
 
@@ -57,6 +65,28 @@ public static class PlayerSpawnerPatch
 
         var localGameObject = player.LocalGameObject != null ? player.LocalGameObject : player.gameObject;
         PackRatUtils.GetOrAddComponentSafe<PlayerBackpack>(localGameObject);
+    }
+
+    private static int GetBootstrapStorageSlotCount()
+    {
+        var slotCount = PlayerBackpack.MinimumStorageSlots;
+        var configuredCounts = Configuration.Instance.TierSlotCounts;
+        if (configuredCounts == null)
+            return slotCount;
+
+        for (var i = 0; i < configuredCounts.Length; i++)
+            slotCount = Math.Max(slotCount, configuredCounts[i]);
+
+        return slotCount;
+    }
+
+    private static int GetDisplayRowCount(int slotCount)
+    {
+        if (slotCount <= 20)
+            return (int)Math.Ceiling(slotCount / 5.0);
+        if (slotCount <= 80)
+            return (int)Math.Ceiling(slotCount / 10.0);
+        return (int)Math.Ceiling(slotCount / 16.0);
     }
 
     private static bool TryResolvePlayerPrefab(object spawnerInstance, out GameObject playerPrefab)

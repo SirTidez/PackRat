@@ -1,4 +1,5 @@
 using MelonLoader;
+using PackRat.Helpers;
 using UnityEngine;
 using System.Text;
 
@@ -24,6 +25,7 @@ public class Configuration
     private readonly MelonPreferences_Category _category;
     private readonly MelonPreferences_Entry<KeyCode> _toggleKeyEntry;
     private readonly MelonPreferences_Entry<bool> _enableSearchEntry;
+    private readonly MelonPreferences_Entry<bool> _enableDebugLoggingEntry;
     private readonly MelonPreferences_Entry<bool> _backpackSyncDebugLoggingEntry;
     private readonly MelonPreferences_Entry<bool> _enableUiAnimationsEntry;
     private readonly MelonPreferences_Entry<bool> _reduceUiMotionEntry;
@@ -89,7 +91,12 @@ public class Configuration
         _backpackSyncDebugLoggingEntry = _category.CreateEntry(
             "BackpackSyncDebugLogging",
             false,
-            "Enable verbose backpack sync debug logging (host/client save sync diagnostics)"
+            "Enable verbose backpack network synchronization diagnostics in release builds"
+        );
+        _enableDebugLoggingEntry = _category.CreateEntry(
+            "EnableDebugLogging",
+            false,
+            "Enable verbose PackRat UI, lifecycle, and shop diagnostics in release builds"
         );
         _enableUiAnimationsEntry = _category.CreateEntry(
             "EnableUiAnimations",
@@ -269,6 +276,7 @@ public class Configuration
 
     public KeyCode ToggleKey { get; set; }
     public bool EnableSearch { get; set; }
+    public bool EnableDebugLogging { get; set; }
     public bool BackpackSyncDebugLogging { get; set; }
     public bool EnableUiAnimations { get; set; }
     public bool ReduceUiMotion { get; set; }
@@ -329,7 +337,10 @@ public class Configuration
     {
         ToggleKey = _toggleKeyEntry.Value;
         EnableSearch = _enableSearchEntry.Value;
+        EnableDebugLogging = _enableDebugLoggingEntry.Value;
         BackpackSyncDebugLogging = _backpackSyncDebugLoggingEntry.Value;
+        ModLogger.SetDebugLoggingEnabled(EnableDebugLogging);
+        ModLogger.SetSyncDebugLoggingEnabled(BackpackSyncDebugLogging);
         EnableUiAnimations = _enableUiAnimationsEntry.Value;
         ReduceUiMotion = _reduceUiMotionEntry.Value;
         ProtectFavoritesFromOrganization = _protectFavoritesFromOrganizationEntry.Value;
@@ -367,7 +378,7 @@ public class Configuration
         {
             var rank = _tierUnlockRankEntries[i].Value;
             TierUnlockRanks[i] = new FullRank(rank.Rank, Math.Clamp(rank.Tier, 1, 5));
-            TierSlotCounts[i] = Math.Clamp(_tierSlotCountEntries[i].Value, 1, PlayerBackpack.MaxStorageSlots);
+            TierSlotCounts[i] = Math.Max(PlayerBackpack.MinimumStorageSlots, _tierSlotCountEntries[i].Value);
             TierEnabled[i] = _tierEnabledEntries[i].Value;
             TierPrices[i] = Math.Max(0f, _tierPriceEntries[i].Value);
         }
@@ -380,7 +391,10 @@ public class Configuration
     {
         _toggleKeyEntry.Value = ToggleKey;
         _enableSearchEntry.Value = EnableSearch;
+        _enableDebugLoggingEntry.Value = EnableDebugLogging;
         _backpackSyncDebugLoggingEntry.Value = BackpackSyncDebugLogging;
+        ModLogger.SetDebugLoggingEnabled(EnableDebugLogging);
+        ModLogger.SetSyncDebugLoggingEnabled(BackpackSyncDebugLogging);
         _enableUiAnimationsEntry.Value = EnableUiAnimations;
         _reduceUiMotionEntry.Value = ReduceUiMotion;
         _protectFavoritesFromOrganizationEntry.Value = ProtectFavoritesFromOrganization;
@@ -415,7 +429,7 @@ public class Configuration
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
             _tierUnlockRankEntries[i].Value = new FullRank(TierUnlockRanks[i].Rank, Math.Clamp(TierUnlockRanks[i].Tier, 1, 5));
-            _tierSlotCountEntries[i].Value = Math.Clamp(TierSlotCounts[i], 1, PlayerBackpack.MaxStorageSlots);
+            _tierSlotCountEntries[i].Value = Math.Max(PlayerBackpack.MinimumStorageSlots, TierSlotCounts[i]);
             _tierEnabledEntries[i].Value = TierEnabled[i];
             _tierPriceEntries[i].Value = Math.Max(0f, TierPrices[i]);
         }
@@ -495,7 +509,7 @@ public class Configuration
         {
             var rank = TierUnlockRanks[i];
             sb.AppendLine($"Tier{i}_UnlockRank = {{ Rank = \"{rank.Rank}\", Tier = {Math.Clamp(rank.Tier, 1, 5)} }}");
-            sb.AppendLine($"Tier{i}_SlotCount = {Math.Clamp(TierSlotCounts[i], 1, PlayerBackpack.MaxStorageSlots)}");
+            sb.AppendLine($"Tier{i}_SlotCount = {Math.Max(PlayerBackpack.MinimumStorageSlots, TierSlotCounts[i])}");
         }
 
         for (var i = 0; i < BackpackTiers.Length; i++)
@@ -504,6 +518,7 @@ public class Configuration
         for (var i = 0; i < BackpackTiers.Length; i++)
             sb.AppendLine($"Tier{i}_Price = {Math.Max(0f, TierPrices[i]).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
 
+        sb.AppendLine($"EnableDebugLogging = {EnableDebugLogging.ToString().ToLowerInvariant()}");
         sb.AppendLine($"BackpackSyncDebugLogging = {BackpackSyncDebugLogging.ToString().ToLowerInvariant()}");
         sb.AppendLine($"EnableUiAnimations = {EnableUiAnimations.ToString().ToLowerInvariant()}");
         sb.AppendLine($"ReduceUiMotion = {ReduceUiMotion.ToString().ToLowerInvariant()}");

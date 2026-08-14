@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics;
 using HarmonyLib;
 using MelonLoader;
 using PackRat.Config;
@@ -6,6 +7,7 @@ using PackRat.Extensions;
 using PackRat.Helpers;
 using PackRat.Networking;
 using PackRat.Routing;
+using PackRat.Shops;
 using PackRat.Storage;
 using UnityEngine;
 using UnityEngine.UI;
@@ -45,8 +47,8 @@ namespace PackRat.Patches;
 
 /// <summary>
 /// Harmony patches for <see cref="StorageMenu"/>.
-/// Expands the slot UI array to support up to <see cref="PlayerBackpack.MaxStorageSlots"/> slots
-/// and adjusts the menu layout for large slot counts.
+/// Paginates the backpack slot UI for any configured capacity and adjusts the menu layout for
+/// large slot counts.
 /// </summary>
 [HarmonyPatch(typeof(StorageMenu))]
 public static class StorageMenuPatch
@@ -897,8 +899,14 @@ public static class StorageMenuPatch
     /// </summary>
     private static void ApplyStandaloneBackpackMenu(StorageMenu menu)
     {
-        if (menu == null || menu.SlotGridLayout == null || !EnsureStandaloneBackpackSlotCapacity(menu))
+        if (menu == null || menu.SlotGridLayout == null)
             return;
+
+        var timing = Configuration.Instance.EnableDebugLogging ? Stopwatch.StartNew() : null;
+        if (!EnsureStandaloneBackpackSlotCapacity(menu))
+            return;
+
+        var capacityMilliseconds = timing?.ElapsedMilliseconds ?? 0L;
 
         ApplyStandaloneBackpackSurface(new StandaloneBackpackSurface
         {
@@ -913,6 +921,12 @@ public static class StorageMenuPatch
             LayoutView = StandaloneBackpackLayoutView.Backpack,
             PositionCloseControl = true
         });
+
+        if (timing != null)
+        {
+            ModLogger.Debug($"[BackpackUI] Open timing: slotCapacity={capacityMilliseconds}ms, " +
+                $"browser={timing.ElapsedMilliseconds - capacityMilliseconds}ms, total={timing.ElapsedMilliseconds}ms.");
+        }
     }
 
     /// <summary>
@@ -960,25 +974,41 @@ public static class StorageMenuPatch
         for (var i = 0; i < menu.SlotsUIs.Length && i < expandedSlots.Length; i++)
             expandedSlots[i] = menu.SlotsUIs[i];
 
+        // Keep the PackRat-owned overflow views pooled between hotkey opens. The StorageMenu
+        // instance is also used by trunks and normal storage, so RestoreStandaloneBackpackSlotCapacity
+        // removes them from the game's array before another owner opens, while their inactive
+        // GameObjects remain available for the next backpack page. Re-instantiating those native
+        // ItemSlotUI prefabs every time was the largest avoidable first/open hitch.
+        var reusableSlotIndex = 0;
         for (var i = menu.SlotsUIs.Length; i < expandedSlots.Length; i++)
         {
-            var slotObject = UnityEngine.Object.Instantiate(slotTemplate.gameObject, menu.SlotContainer);
-            slotObject.name = $"PackRat_BackpackTemporarySlot ({i + 1})";
-#if !MONO
-            var slotUi = Utils.GetComponentSafe<ItemSlotUI>(slotObject);
-#else
-            var slotUi = slotObject.GetComponent<ItemSlotUI>();
-#endif
-            if (slotUi == null)
+            ItemSlotUI slotUi = null;
+            while (reusableSlotIndex < state.AddedBackpackSlots.Count && slotUi == null)
             {
-                UnityEngine.Object.Destroy(slotObject);
-                continue;
+                slotUi = state.AddedBackpackSlots[reusableSlotIndex++];
             }
 
-            ResetSlotUi(slotUi);
-            slotUi.ClearSlot();
+            if (slotUi == null)
+            {
+                var slotObject = UnityEngine.Object.Instantiate(slotTemplate.gameObject, menu.SlotContainer);
+                slotObject.name = $"PackRat_BackpackTemporarySlot ({i + 1})";
+#if !MONO
+                slotUi = Utils.GetComponentSafe<ItemSlotUI>(slotObject);
+#else
+                slotUi = slotObject.GetComponent<ItemSlotUI>();
+#endif
+                if (slotUi == null)
+                {
+                    UnityEngine.Object.Destroy(slotObject);
+                    continue;
+                }
+
+                state.AddedBackpackSlots.Add(slotUi);
+            }
+
+            if (slotUi.transform.parent != menu.SlotContainer)
+                slotUi.transform.SetParent(menu.SlotContainer, worldPositionStays: false);
             slotUi.gameObject.SetActive(false);
-            state.AddedBackpackSlots.Add(slotUi);
             expandedSlots[i] = slotUi;
         }
 
@@ -987,9 +1017,10 @@ public static class StorageMenuPatch
     }
 
     /// <summary>
-    /// Returns the shared StorageMenu to its exact prefab slot array and destroys PackRat's
-    /// temporary hotkey-only views. This must run before a trunk opens because the game reuses
-    /// the same menu instance for every storage owner.
+    /// Returns the shared StorageMenu to its exact prefab slot array. The PackRat overflow views
+    /// are kept inactive and outside that array so they can be reused on the next hotkey open;
+    /// this must still run before a trunk opens because the game reuses the same menu instance
+    /// for every storage owner.
     /// </summary>
     private static void RestoreStandaloneBackpackSlotCapacity(StorageMenu menu)
     {
@@ -1007,11 +1038,8 @@ public static class StorageMenuPatch
             if (slotUi == null)
                 continue;
 
-            ResetSlotUi(slotUi);
-            UnityEngine.Object.Destroy(slotUi.gameObject);
+            slotUi.gameObject.SetActive(false);
         }
-
-        state.AddedBackpackSlots.Clear();
     }
 
     private static StorageMenuSlotCapacityState CaptureStorageMenuSlotCapacityState(StorageMenu menu,
@@ -1110,6 +1138,7 @@ public static class StorageMenuPatch
             surface.Container == null)
             return;
 
+        var timing = Configuration.Instance.EnableDebugLogging ? Stopwatch.StartNew() : null;
         var backpackSlots = GetSurfaceSlots(surface);
         var state = EnsureStandaloneBackpackPaging(surface);
         if (state == null)
@@ -1143,24 +1172,14 @@ public static class StorageMenuPatch
         UpdateStandaloneBackpackPresentationAnchor(surface, state);
         EnsureStandaloneBackpackVisuals(surface, state, backpackSlots.Count, CountUsedStandaloneSlots(backpackSlots),
             displaySlots.Count, totalPages);
+        var chromeMilliseconds = timing?.ElapsedMilliseconds ?? 0L;
         var revealPageWipe = BeginStandalonePageWipe(surface, state);
 
-        // First remove every previous layout child, then populate the compact projection in a
-        // second pass. Updating active and inactive GridLayoutGroup children together leaves
-        // stale positions behind for type/quality/sort projections on some game UI prefabs.
-        for (var i = 0; i < surface.SlotUIs.Length; i++)
-        {
-            var slotUi = surface.SlotUIs[i];
-            if (slotUi == null)
-                continue;
-
-            ResetSlotUi(slotUi);
-            slotUi.ClearSlot();
-            slotUi.gameObject.SetActive(false);
-        }
-
-        Canvas.ForceUpdateCanvases();
-
+        // Bind only the views whose game-owned slot actually changed. StorageMenu.Open has
+        // already correctly bound the first native views for an unfiltered hotkey open; tearing
+        // those down and recreating every ItemUI delayed the first visible backpack by more than
+        // the entire intended entry animation. Changed, filtered, and paged projections still
+        // receive a full reset so no stale slot visuals survive.
         for (var i = 0; i < surface.SlotUIs.Length; i++)
         {
             var slotUi = surface.SlotUIs[i];
@@ -1170,21 +1189,46 @@ public static class StorageMenuPatch
             var slotIndex = firstSlotIndex + i;
             if (i < StandaloneBackpackSlotsPerPage && slotIndex < displaySlots.Count)
             {
+                var targetSlot = displaySlots[slotIndex];
+                var alreadyBound = slotUi.assignedSlot == targetSlot;
+                if (!alreadyBound)
+                {
+                    ResetSlotUi(slotUi);
+                    slotUi.ClearSlot();
+                }
+
                 // Some game-owned ItemSlotUI prefabs only construct their visual children while
                 // active. This is especially visible on the handover screen, whose source slots
                 // are normally hidden by the game. Activate the clone before binding the
                 // ItemSlot so the shared browser can render the same native slot surface on
                 // every owner panel without disrupting the page-wipe overlay order.
                 slotUi.gameObject.SetActive(true);
-                slotUi.AssignSlot(displaySlots[slotIndex]);
-                slotUi.gameObject.SetActive(true);
-                ConfigureStandaloneFavoriteControl(state, slotUi, displaySlots[slotIndex]);
+                if (!alreadyBound)
+                    slotUi.AssignSlot(targetSlot);
+                ConfigureStandaloneFavoriteControl(state, slotUi, targetSlot);
+            }
+            else
+            {
+                if (slotUi.assignedSlot != null || slotUi.gameObject.activeSelf)
+                {
+                    ResetSlotUi(slotUi);
+                    slotUi.ClearSlot();
+                }
+
+                slotUi.gameObject.SetActive(false);
             }
         }
 
         CaptureStandaloneQualityStarSprite(surface.SlotUIs, state);
-        Canvas.ForceUpdateCanvases();
-        LayoutRebuilder.ForceRebuildLayoutImmediate(surface.SlotContainer);
+        // The grid itself owns cell placement. Request its regular-frame rebuild rather than
+        // forcing every canvas in the scene to rebuild synchronously during a hotkey press.
+        // Embedded deal/storage surfaces retain their immediate local rebuild because their
+        // source slot roots can be activated by the game after the current layout pass.
+        if (surface.LayoutView == StandaloneBackpackLayoutView.Backpack)
+            LayoutRebuilder.MarkLayoutForRebuild(surface.SlotContainer);
+        else
+            LayoutRebuilder.ForceRebuildLayoutImmediate(surface.SlotContainer);
+        var slotBindMilliseconds = timing?.ElapsedMilliseconds ?? 0L;
 
         if (surface.LayoutView == StandaloneBackpackLayoutView.Deal)
         {
@@ -1223,6 +1267,13 @@ public static class StorageMenuPatch
             $"[BackpackUI] Standalone layout applied: capacitySlots={gridSlotCount}, visibleSlots={visibleSlotCount}, gridSize={gridSize}, " +
             $"gridPosition={surface.SlotContainer.anchoredPosition}, view={surface.LayoutView}."
         );
+
+        if (timing != null)
+        {
+            ModLogger.Debug($"[BackpackUI] Browser timing ({surface.LayoutView}): chrome={chromeMilliseconds}ms, " +
+                $"slotBind={slotBindMilliseconds - chromeMilliseconds}ms, " +
+                $"positioning={timing.ElapsedMilliseconds - slotBindMilliseconds}ms, total={timing.ElapsedMilliseconds}ms.");
+        }
     }
 
     /// <summary>
@@ -1538,7 +1589,11 @@ public static class StorageMenuPatch
         ConfigureStandaloneOverlayLayers(surface, state);
         CreateStandaloneSettingsButton(state.HeaderRoot, state);
         CreateStandaloneConsolidateButton(state.HeaderRoot, state);
-        EnsureStandaloneSettingsPanel(surface, state);
+        // The settings modal is comparatively large and does not need to exist before its cog is
+        // selected. Creating its six pages on every first backpack open delayed the actual
+        // inventory surface without improving the initial interaction.
+        if (state.SettingsRoot != null || state.SettingsOpen)
+            EnsureStandaloneSettingsPanel(surface, state);
         EnsureStandaloneMetricsTray(state, GetStandaloneSourceSlots(state));
 
         ConfigureStandaloneHeaderLabels(state);
@@ -1580,6 +1635,19 @@ public static class StorageMenuPatch
 
         var config = Configuration.Instance;
         var palette = BackpackUiThemes.Get(config.BackpackUiTheme, config.CustomBackpackUiPrimaryColor);
+        if (state.AppliedThemePaletteCaptured && state.AppliedTheme == config.BackpackUiTheme &&
+            SameStandaloneThemeColor((Color32)state.AppliedThemePalette.Header, palette.Header) &&
+            SameStandaloneThemeColor((Color32)state.AppliedThemePalette.Accent, palette.Accent))
+        {
+            // Normal opens reuse the same PackRat-owned tree. Avoid repeatedly traversing every
+            // Graphic and Selectable in that tree when no palette changed; theme changes still
+            // come through RefreshActiveUiThemes and newly-created lazy surfaces clear the flag.
+            state.SearchBackgroundBaseColor = palette.Search;
+            if (state.SearchBackground != null && (state.SearchInput == null || !state.SearchInput.isFocused))
+                state.SearchBackground.color = palette.Search;
+            return;
+        }
+
         var previousPalette = state.AppliedThemePaletteCaptured ? state.AppliedThemePalette : BackpackUiThemes.Get(BackpackUiTheme.S1Blue);
         ApplyStandaloneThemeToRoot(state.VisualRoot, palette, previousPalette);
         ApplyStandaloneThemeToRoot(state.SettingsRoot, palette, previousPalette);
@@ -1783,8 +1851,12 @@ public static class StorageMenuPatch
 
         state.MetricsTrayRoot.gameObject.SetActive(true);
         state.MetricsTrayToggleButton.gameObject.SetActive(true);
-        RefreshStandaloneMetricsTray(state, backpackSlots);
-        if (!state.MetricsTrayExpanded)
+        // The collapsed tray needs only its attached tab. Product aggregation includes active
+        // contract inspection, so defer the rows and totals until the player actually expands
+        // the drawer rather than making every backpack open pay that cost.
+        if (state.MetricsTrayExpanded)
+            RefreshStandaloneMetricsTray(state, backpackSlots);
+        else
             SnapStandaloneMetricsTray(state);
     }
 
@@ -3615,6 +3687,10 @@ public static class StorageMenuPatch
             // overlaps it, matching a desktop tabbed window rather than a separated button row.
             tabs.SetAsLastSibling();
             state.SettingsRoot.gameObject.SetActive(false);
+            // This lazy subtree was just created after the browser's current palette was applied.
+            // Force one targeted recolour below, then normal opens can keep skipping the full
+            // Graphic/Selectable traversal.
+            state.AppliedThemePaletteCaptured = false;
         }
 
         if (state.SettingsRoot.parent != surface.Container)
@@ -4073,10 +4149,17 @@ public static class StorageMenuPatch
             AddStandaloneSettingsRow(state, "POLICE SEARCH", config.EnableSearch ? "ENABLED" : "DISABLED", "HOST ONLY");
         }
 
+        AddStandaloneSettingsToggleRow(state, "DEBUG LOGGING", config.EnableDebugLogging, value =>
+        {
+            config.EnableDebugLogging = value;
+            PersistStandaloneSettings(state);
+            ModLogger.Info($"[PackRat] Release debug logging {(value ? "enabled" : "disabled")}.");
+        });
         AddStandaloneSettingsToggleRow(state, "SYNC DIAGNOSTICS", config.BackpackSyncDebugLogging, value =>
         {
             config.BackpackSyncDebugLogging = value;
             PersistStandaloneSettings(state);
+            ModLogger.Info($"[PackRat] Backpack sync diagnostics {(value ? "enabled" : "disabled")}.");
         });
         AddStandaloneSettingsToggleRow(state, "UI ANIMATIONS", config.EnableUiAnimations, value =>
         {
@@ -4833,7 +4916,7 @@ public static class StorageMenuPatch
         if (tierIndex < 0 || tierIndex >= config.TierSlotCounts.Length)
             return;
 
-        var targetSlots = Mathf.Clamp(config.TierSlotCounts[tierIndex] + delta, 1, PlayerBackpack.MaxStorageSlots);
+        var targetSlots = Mathf.Max(PlayerBackpack.MinimumStorageSlots, config.TierSlotCounts[tierIndex] + delta);
         if (PlayerBackpack.Instance != null && tierIndex == PlayerBackpack.Instance.CurrentTierIndex)
             targetSlots = Mathf.Max(targetSlots, GetMinimumStandaloneBackpackSlots());
 
@@ -4903,7 +4986,10 @@ public static class StorageMenuPatch
         if (applyCurrentTier)
             PlayerBackpack.Instance?.EnsureCorrectTierApplied();
         if (syncSessionSettings)
+        {
             ConfigSyncManager.SyncCurrentConfigToClients();
+            BackpackShopIntegration.RefreshBackpackListingsInAllShops();
+        }
 
         ModLogger.Info("[BackpackUI] Settings saved to MelonPreferences.");
         RefreshStandaloneSettingsPane(state);

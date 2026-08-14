@@ -46,7 +46,7 @@ namespace PackRat;
 public class PlayerBackpack : MonoBehaviour
 {
     public const string StorageName = "Backpack";
-    public const int MaxStorageSlots = 40;
+    public const int MinimumStorageSlots = 1;
 
     private bool _backpackEnabled = true;
     private StorageEntity _storage;
@@ -148,7 +148,17 @@ public class PlayerBackpack : MonoBehaviour
     /// <summary>
     /// Whether the backpack storage menu is currently open.
     /// </summary>
-    public bool IsOpen => Singleton<StorageMenu>.Instance.IsOpen && Singleton<StorageMenu>.Instance.TitleLabel.text == _openTitle;
+    public bool IsOpen
+    {
+        get
+        {
+            var storageMenu = Singleton<StorageMenu>.Instance;
+            return storageMenu != null
+                && storageMenu.IsOpen
+                && storageMenu.TitleLabel != null
+                && storageMenu.TitleLabel.text == _openTitle;
+        }
+    }
 
 #if !MONO
     public Il2CppSystem.Collections.Generic.List<ItemSlot> ItemSlots =>
@@ -167,6 +177,7 @@ public class PlayerBackpack : MonoBehaviour
         }
 
         ModLogger.Info("Configuring backpack storage...");
+        ModLogger.Debug($"[BackpackUI] Awake: object='{name}', storage='{_storage.name}'.");
         // Defer configuration to next frame to avoid triggering MonoMod/Harmony detour compilation
         // during initial JIT (fatal CLR error 0x80131506 in DetourRuntimeNETCore30Platform.CompileMethodHook).
         MelonLoader.MelonCoroutines.Start(DeferredConfigureStorage(this));
@@ -182,7 +193,7 @@ public class PlayerBackpack : MonoBehaviour
             ? Configuration.Instance.TierSlotCounts[tierIdx]
             : Configuration.BackpackTiers[0].DefaultSlotCount;
         instance.UpdateSize(slotCount);
-        instance.OnStartClient(true);
+        instance.OnStartClient(instance.IsOwnedByLocalPlayer());
     }
 
     private void Update()
@@ -239,7 +250,10 @@ public class PlayerBackpack : MonoBehaviour
 
             // Otherwise open/close only if already unlocked
             if (!IsUnlocked)
+            {
+                ModLogger.Debug($"[BackpackUI] Hotkey ignored: no enabled backpack tier (equipped={_equippedTierIndex}, current={CurrentTierIndex}).");
                 return;
+            }
             if (IsOpen)
                 Close();
             else
@@ -466,8 +480,31 @@ public class PlayerBackpack : MonoBehaviour
             ModLogger.Warn("Backpack open blocked: no storage entity.");
             return;
         }
-        if (Singleton<ManagementClipboard>.Instance.IsEquipped || Singleton<StorageMenu>.Instance.IsOpen || Phone.Instance.IsOpen)
+        var clipboard = Singleton<ManagementClipboard>.Instance;
+        if (clipboard != null && clipboard.IsEquipped)
+        {
+            ModLogger.Debug("[BackpackUI] Open blocked: management clipboard is equipped.");
             return;
+        }
+
+        var storageMenu = Singleton<StorageMenu>.Instance;
+        if (storageMenu == null)
+        {
+            ModLogger.Warn("[BackpackUI] Open blocked: StorageMenu is not available yet.");
+            return;
+        }
+
+        if (storageMenu.IsOpen)
+        {
+            ModLogger.Debug("[BackpackUI] Open blocked: another storage menu is already open.");
+            return;
+        }
+
+        if (Phone.Instance != null && Phone.Instance.IsOpen)
+        {
+            ModLogger.Debug("[BackpackUI] Open blocked: phone is open.");
+            return;
+        }
 
         if (CameraLockedStateHelper.IsCameraLockedByUI())
         {
@@ -476,7 +513,6 @@ public class PlayerBackpack : MonoBehaviour
         }
 
         _openTitle = CurrentTier?.Name ?? StorageName;
-        var storageMenu = Singleton<StorageMenu>.Instance;
         ModLogger.Info($"[BackpackUI] PlayerBackpack.Open -> StorageMenu.Open: title='{_openTitle}', slots={_storage.ItemSlots.Count}.");
         BackpackStateSyncManager.BeginLocalBackpackEdit();
         // Keep the regular backpack view at a predictable four-row grid. The storage-menu patch
@@ -543,23 +579,22 @@ public class PlayerBackpack : MonoBehaviour
     }
 
     /// <summary>
-    /// Adds slots to the backpack up to <see cref="MaxStorageSlots"/>.
+    /// Adds slots to the backpack. Capacity is controlled by the configured tier slot counts.
     /// </summary>
     /// <param name="slotCount">Number of slots to add.</param>
     // TODO: This method will be invoked by the future manual upgrade mechanic (e.g., backpack item equip).
     public void Upgrade(int slotCount)
     {
-        if (slotCount is < 1 or > MaxStorageSlots)
+        if (slotCount < MinimumStorageSlots || _storage == null)
             return;
 
-        var newSlotCount = _storage.SlotCount + slotCount;
-        if (newSlotCount > MaxStorageSlots)
+        if (_storage.SlotCount > int.MaxValue - slotCount)
         {
-            ModLogger.Warn($"Cannot upgrade backpack to more than {MaxStorageSlots} slots.");
+            ModLogger.Warn("Cannot upgrade backpack: requested capacity exceeds the supported integer range.");
             return;
         }
 
-        UpdateSize(newSlotCount);
+        UpdateSize(_storage.SlotCount + slotCount);
     }
 
     /// <summary>
@@ -580,8 +615,8 @@ public class PlayerBackpack : MonoBehaviour
         }
 
         var newSlotCount = _storage.SlotCount - slotCount;
-        if (newSlotCount < 1)
-            newSlotCount = 1;
+        if (newSlotCount < MinimumStorageSlots)
+            newSlotCount = MinimumStorageSlots;
 
         if (force)
         {
@@ -616,6 +651,7 @@ public class PlayerBackpack : MonoBehaviour
 
     private void UpdateSize(int newSize)
     {
+        newSize = Math.Max(MinimumStorageSlots, newSize);
         _storage.SlotCount = newSize;
         _storage.DisplayRowCount = newSize switch
         {
@@ -671,6 +707,18 @@ public class PlayerBackpack : MonoBehaviour
 
         // Pre-resolve reflection types so the first backpack keypress doesn't stall
         CameraLockedStateHelper.PrewarmCache();
+    }
+
+    private bool IsOwnedByLocalPlayer()
+    {
+        var player = gameObject.GetComponentInParent<Player>();
+        if (player == null)
+        {
+            ModLogger.Debug("[BackpackUI] Ownership check could not find Player; retaining local component fallback.");
+            return true;
+        }
+
+        return player.IsOwner;
     }
 
     private void OnDestroy()

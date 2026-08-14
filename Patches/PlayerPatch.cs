@@ -51,6 +51,21 @@ public static class PlayerPatch
         __instance.LocalExtraFiles.Add("Backpack");
     }
 
+    /// <summary>
+    /// Attaches the local backpack component after FishNet has established ownership. Player.Awake
+    /// can run before IsOwner is accurate in IL2CPP, which would otherwise leave the local player
+    /// without the component that handles the backpack hotkey.
+    /// </summary>
+    [HarmonyPatch("OnStartClient")]
+    [HarmonyPostfix]
+    public static void OnStartClient(Player __instance)
+    {
+        if (__instance == null || !__instance.IsOwner)
+            return;
+
+        PlayerSpawnerPatch.EnsurePlayerBackpackSetup(__instance, addLocalBackpackComponent: true);
+    }
+
     [HarmonyPatch("WriteData")]
     [HarmonyPostfix]
     public static void WriteData(Player __instance, string parentFolderPath)

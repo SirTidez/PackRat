@@ -66,7 +66,7 @@ using S1ItemFramework = Il2CppScheduleOne.ItemFramework;
 | Classes | PascalCase | `PlayerBackpack` |
 | Methods | PascalCase | `GetBackpackStorage` |
 | Private fields | `_camelCase` | `_storage`, `_backpackEnabled` |
-| Constants | `PascalCase` or `UPPER_SNAKE_CASE` | `MaxStorageSlots` |
+| Constants | `PascalCase` or `UPPER_SNAKE_CASE` | `MinimumStorageSlots` |
 | Static readonly | `_camelCase` or `PascalCase` | `_instance`, `ModVersion` |
 
 ---

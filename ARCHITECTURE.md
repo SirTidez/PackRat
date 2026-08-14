@@ -99,9 +99,9 @@ PlayerManagerPatch (postfix on PlayerManager.TryGetPlayerData)
   └── Appends "|||" + backpackString to inventoryString for network sync
 
 StorageMenuPatch
-  ├── Awake [prefix]    → expand SlotsUIs array to MaxStorageSlots (128)
-  ├── Open [postfix]    → adjust CloseButton position and Container offset for tall grids
-  └── CloseMenu [prefix]→ reset Container.localPosition to zero
+  ├── Awake [prefix]    → prepare the paginated backpack browser surface
+  ├── Open [postfix]    → bind one page of the configured capacity to pooled slot views
+  └── CloseMenu [prefix]→ restore the shared StorageMenu for vanilla containers
 
 LevelManagerPatch (postfix on LevelManager.Awake)
   └── Load embedded "PackRat.assets.backpack_icon.png"

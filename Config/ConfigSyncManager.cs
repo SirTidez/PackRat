@@ -3,6 +3,7 @@ using System.Collections;
 using System.Text;
 using MelonLoader;
 using PackRat.Helpers;
+using PackRat.Shops;
 
 #if MONO
 using ScheduleOne.Levelling;
@@ -227,7 +228,7 @@ public static class ConfigSyncManager
             }
 
             newUnlockRanks[i] = new FullRank(rank, tier);
-            newSlotCounts[i] = slots;
+            newSlotCounts[i] = Math.Max(PlayerBackpack.MinimumStorageSlots, slots);
             newTierEnabled[i] = enabledStr == "1";
             if (float.TryParse(priceStr, out var price))
                 newTierPrices[i] = Math.Max(0f, price);
@@ -238,6 +239,7 @@ public static class ConfigSyncManager
         Configuration.Instance.TierSlotCounts = newSlotCounts;
         Configuration.Instance.TierEnabled = newTierEnabled;
         Configuration.Instance.TierPrices = newTierPrices;
+        BackpackShopIntegration.RefreshBackpackListingsInAllShops();
         ModLogger.Info("Config synced from host successfully.");
         OnConfigSynced?.Invoke();
     }

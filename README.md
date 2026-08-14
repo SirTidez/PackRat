@@ -173,7 +173,7 @@ Tier4_Price = 500
 | `ToggleKey` | `B` | Key to open/close the backpack and to use a backpack item in the hotbar. Any [Unity KeyCode](https://docs.unity3d.com/ScriptReference/KeyCode.html) name. |
 | `EnableSearch` | `true` | When `false`, police body searches never inspect the backpack, even for Duffel Bag and larger tiers. |
 | `Tier{n}_UnlockRank` | See table above | Rank required before the tier appears at the Hardware Store. Format: `RankName : TierNumber` (1–5). |
-| `Tier{n}_SlotCount` | See table above | Number of storage slots for tier n. Clamped between 1 and 40. |
+| `Tier{n}_SlotCount` | See table above | Number of storage slots for tier n. Minimum 1; no fixed maximum. The backpack UI paginates larger capacities. |
 | `Tier{n}_Price` | 25, 75, 150, 300, 500 | Price (account funds) to buy tier n at the Hardware Store. |
 
 **Valid rank names:**

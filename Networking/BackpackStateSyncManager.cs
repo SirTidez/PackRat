@@ -1222,7 +1222,7 @@ public static class BackpackStateSyncManager
         if (!Configuration.Instance.BackpackSyncDebugLogging)
             return;
 
-        ModLogger.Debug(message);
+        ModLogger.SyncDebug(message);
     }
 
     private static bool SendSyncMessage(string payload)

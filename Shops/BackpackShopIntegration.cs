@@ -38,7 +38,7 @@ public static class BackpackShopIntegration
         "A compact 16-slot pack. Stays under the radar.",
         "24 slots. Police may search this size and above.",
         "32 slots. Sturdy and roomy; draws more attention.",
-        "The largest option with 40 slots. Maximum capacity.",
+        "The largest default option starts at 40 slots. Capacity can be configured.",
     ];
     /// <summary>Instance IDs of shop instances we have already added backpack listings to (so we add to every hardware store, not just one).</summary>
     private static readonly HashSet<int> _shopsIntegrated = new HashSet<int>();
@@ -46,6 +46,7 @@ public static class BackpackShopIntegration
     private static bool _loggedSafeTemplateUnavailable;
     private static bool _loggedBackpackDefinitionCreationFailure;
     private static bool _loggedListingIntegrationFailureSummary;
+    private static bool _waitForIntegrationRunning;
 
     /// <summary>
     /// Call when the Main scene has loaded to find all Hardware Stores and add backpack tier listings.
@@ -53,6 +54,10 @@ public static class BackpackShopIntegration
     /// </summary>
     public static void RunWhenReady()
     {
+        if (_waitForIntegrationRunning)
+            return;
+
+        _waitForIntegrationRunning = true;
         MelonCoroutines.Start(WaitAndIntegrate());
     }
 
@@ -80,18 +85,31 @@ public static class BackpackShopIntegration
 
     private static IEnumerator WaitAndIntegrate()
     {
-        const int attempts = 60; // 30 seconds
-        for (var i = 0; i < attempts; i++)
+        try
         {
-            yield return new WaitForSeconds(0.5f);
-            AddToAllHardwareStoresInScene();
-        }
-        if (_shopsIntegrated.Count == 0)
+            const int attempts = 60; // 30 seconds
+            for (var i = 0; i < attempts; i++)
+            {
+                yield return new WaitForSeconds(0.5f);
+                if (AddToAllHardwareStoresInScene())
+                    yield break;
+            }
+
             LogHardwareStoreNotFound();
+        }
+        finally
+        {
+            _waitForIntegrationRunning = false;
+        }
     }
 
-    private static void AddToAllHardwareStoresInScene()
+    /// <summary>
+    /// Finds hardware stores that are currently available and integrates the backpack listings.
+    /// Returns true only after at least one hardware store was successfully integrated.
+    /// </summary>
+    private static bool AddToAllHardwareStoresInScene()
     {
+        var integratedAny = false;
         try
         {
             var shopType = typeof(ShopInterface);
@@ -102,7 +120,7 @@ public static class BackpackShopIntegration
                 {
                     if (s == null) continue;
                     if (TryMatchHardwareStore(s, out var shop))
-                        TryAddBackpackListingsToShop(shop);
+                        integratedAny |= TryAddBackpackListingsToShop(shop);
                 }
             }
             var inScene = Utils.FindObjectsOfTypeSafe<ShopInterface>();
@@ -111,7 +129,7 @@ public static class BackpackShopIntegration
                 for (var i = 0; i < inScene.Length; i++)
                 {
                     if (inScene[i] != null && TryMatchHardwareStore(inScene[i], out var shop))
-                        TryAddBackpackListingsToShop(shop);
+                        integratedAny |= TryAddBackpackListingsToShop(shop);
                 }
             }
         }
@@ -119,6 +137,8 @@ public static class BackpackShopIntegration
         {
             ModLogger.Error("BackpackShopIntegration: AddToAllHardwareStoresInScene", ex);
         }
+
+        return integratedAny;
     }
 
     private static void LogHardwareStoreNotFound()
@@ -182,12 +202,10 @@ public static class BackpackShopIntegration
                         if (TryMatchHardwareStore(s, out shop))
                             return true;
                     }
-#if DEBUG
                     if (count == 0)
                         ModLogger.Debug("BackpackShopIntegration: AllShops list is empty.");
                     else
                         ModLogger.Debug($"BackpackShopIntegration: AllShops has {count} entries; no Hardware Store name matched.");
-#endif
                 }
             }
 
@@ -202,9 +220,7 @@ public static class BackpackShopIntegration
                     if (TryMatchHardwareStore(s, out shop))
                         return true;
                 }
-#if DEBUG
                 ModLogger.Debug($"BackpackShopIntegration: Found {inScene.Length} ShopInterface in scene; none matched Hardware Store.");
-#endif
             }
         }
         catch (Exception ex)
@@ -273,6 +289,7 @@ public static class BackpackShopIntegration
         var currentEquipped = PlayerBackpack.Instance != null ? PlayerBackpack.Instance.EquippedTierIndex : -1;
         var anyAdded = false;
         var anyEligible = false;
+        var anyPurchasableTier = false;
         var anyAlreadyPresent = false;
         var missingDefCount = 0;
         var registerFailedCount = 0;
@@ -288,18 +305,26 @@ public static class BackpackShopIntegration
             anyEligible = true;
 
             var itemId = BackpackItemIdPrefix + i;
-            if (i == currentEquipped)
+            var tierSprite = LevelManagerPatch.GetTierSprite(i, fallbackSprite, fallbackTexture);
+            // Backpack tiers are progressive upgrades. Do not offer a current tier or a lower
+            // tier once the player owns a higher one; doing so could create duplicate items or
+            // accidentally downgrade the equipped backpack.
+            if (i <= currentEquipped)
             {
                 RemoveTierListingFromShop(shop, itemId);
                 continue;
             }
 
+            anyPurchasableTier = true;
+
             if (ShopHasItem(shop, itemId))
             {
+                var existingDefinition = GetRegisteredBackpackDefinition(itemId);
+                if (existingDefinition != null)
+                    ConfigureBackpackTierDefinition(existingDefinition, i, itemId, cfg, tierSprite);
                 anyAlreadyPresent = true;
                 continue;
             }
-            var tierSprite = LevelManagerPatch.GetTierSprite(i, fallbackSprite, fallbackTexture);
             var def = GetRegisteredBackpackDefinition(itemId);
             if (def != null)
                 ConfigureBackpackTierDefinition(def, i, itemId, cfg, tierSprite);
@@ -331,7 +356,7 @@ public static class BackpackShopIntegration
             ModLogger.Info("BackpackShopIntegration: Added backpack tier listings to Hardware Store.");
         }
 
-        if (!anyEligible || anyAlreadyPresent || anyAdded)
+        if (!anyEligible || !anyPurchasableTier || anyAlreadyPresent || anyAdded)
         {
             _loggedListingIntegrationFailureSummary = false;
             return true;
@@ -422,8 +447,16 @@ public static class BackpackShopIntegration
         var rank = tierIndex < cfg.TierUnlockRanks.Length
             ? cfg.TierUnlockRanks[tierIndex]
             : Configuration.BackpackTiers[tierIndex].DefaultUnlockRank;
+#if !MONO
+        // These are confirmed public fields in the current generated beta IL2CPP bindings.
+        // Write them directly so a reflection failure cannot silently bypass the shop rank gate.
+        def.BasePurchasePrice = price;
+        def.RequiredRank = rank;
+        def.RequiresLevelToPurchase = true;
+#else
         ReflectionUtils.TrySetFieldOrProperty(def, "RequiredRank", rank);
         ReflectionUtils.TrySetFieldOrProperty(def, "RequiresLevelToPurchase", true);
+#endif
 
         var description = tierIndex < TierDescriptions.Length ? TierDescriptions[tierIndex] : null;
         if (string.IsNullOrEmpty(description))
