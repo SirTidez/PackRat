@@ -1055,11 +1055,11 @@ public static class HandoverScreenPatch
             var cardGo = new GameObject("PackRat_BackpackCard");
             var card = cardGo.AddComponent<RectTransform>();
             card.SetParent(canvas.transform, worldPositionStays: false);
-            card.anchorMin = Vector2.zero;
-            card.anchorMax = Vector2.one;
+            card.anchorMin = new Vector2(0.5f, 0.5f);
+            card.anchorMax = new Vector2(0.5f, 0.5f);
             card.pivot = new Vector2(0.5f, 0.5f);
-            card.offsetMin = Vector2.zero;
-            card.offsetMax = Vector2.zero;
+            card.sizeDelta = BackpackCardSize;
+            card.anchoredPosition = GetHandoverBackpackPosition(state);
             state.DedicatedCard = card;
             state.BackpackVisualRoot = card;
 
@@ -1240,6 +1240,14 @@ public static class HandoverScreenPatch
         UpdateDedicatedDealMatchAccents(screen, state);
         EnsureDedicatedTransferControls(screen, state);
         var overlayScale = Mathf.Clamp(Configuration.Instance.HandoverOverlayScale, 0.5f, 1.5f);
+        state.DedicatedCard.anchorMin = new Vector2(0.5f, 0.5f);
+        state.DedicatedCard.anchorMax = new Vector2(0.5f, 0.5f);
+        state.DedicatedCard.pivot = new Vector2(0.5f, 0.5f);
+        state.DedicatedCard.sizeDelta = BackpackCardSize;
+        state.DedicatedCard.localScale = Vector3.one * overlayScale;
+        state.DedicatedCard.anchoredPosition = GetHandoverBackpackPosition(state);
+        ClampDedicatedCardToSafeArea(state);
+        DisableDedicatedDecorativeRaycasts(state);
 
         var doneRect = screen?.DoneButton?.transform as RectTransform;
         if (doneRect == null)
@@ -1255,15 +1263,52 @@ public static class HandoverScreenPatch
             state.DoneButtonLayoutCaptured = true;
         }
 
-        doneRect.anchorMin = new Vector2(0.5f, 0.5f);
-        doneRect.anchorMax = new Vector2(0.5f, 0.5f);
-        doneRect.pivot = new Vector2(0.5f, 0.5f);
-        doneRect.localScale = Vector3.one * 0.82f * overlayScale;
-        doneRect.anchoredPosition = new Vector2(
-            grid.anchoredPosition.x,
-            grid.anchoredPosition.y - grid.rect.height * overlayScale * 0.5f -
-            48f * overlayScale
-        );
+    }
+
+    private static void ClampDedicatedCardToSafeArea(PanelState state)
+    {
+        var card = state?.DedicatedCard;
+        var canvas = state?.DedicatedCanvas;
+        var canvasRoot = canvas?.transform as RectTransform;
+        if (card == null || canvasRoot == null)
+            return;
+
+        var scaleFactor = Mathf.Max(0.001f, canvas.scaleFactor);
+        var safePixels = Screen.safeArea;
+        var safeArea = new FloatRect(
+            canvasRoot.rect.xMin + safePixels.xMin / scaleFactor,
+            canvasRoot.rect.yMin + safePixels.yMin / scaleFactor,
+            safePixels.width / scaleFactor,
+            safePixels.height / scaleFactor);
+        var cardScale = Mathf.Max(0.001f, card.localScale.x);
+        var desired = new FloatRect(
+            card.anchoredPosition.x + card.rect.xMin * cardScale,
+            card.anchoredPosition.y + card.rect.yMin * cardScale,
+            card.rect.width * cardScale,
+            card.rect.height * cardScale);
+        var clamped = UiBoundsPolicy.Clamp(desired, safeArea);
+        card.anchoredPosition += new Vector2(clamped.X - desired.X, clamped.Y - desired.Y);
+    }
+
+    private static void DisableDedicatedDecorativeRaycasts(PanelState state)
+    {
+        var card = state?.DedicatedCard;
+        if (card == null)
+            return;
+
+        var cardImage = card.GetComponent<Image>();
+        if (cardImage != null)
+            cardImage.raycastTarget = false;
+
+        var visual = card.Find("PackRat_BackpackVisual");
+        var header = visual?.Find("Header");
+        var accent = header?.Find("Accent");
+        var headerImage = header?.GetComponent<Image>();
+        var accentImage = accent?.GetComponent<Image>();
+        if (headerImage != null)
+            headerImage.raycastTarget = false;
+        if (accentImage != null)
+            accentImage.raycastTarget = false;
     }
 
     /// <summary>
@@ -2233,11 +2278,6 @@ public static class HandoverScreenPatch
             state.DoneButtonLayoutCaptured = true;
         }
 
-        doneRect.anchorMin = new Vector2(0.5f, 0.5f);
-        doneRect.anchorMax = new Vector2(0.5f, 0.5f);
-        doneRect.pivot = new Vector2(0.5f, 0.5f);
-        doneRect.anchoredPosition = new Vector2(contentPosition.x, -120f * overlayScale + config.HandoverOverlayOffsetY);
-        doneRect.localScale = Vector3.one * BackpackGridScale * overlayScale;
     }
 
     private static void RestoreDoneButtonLayout(HandoverScreen screen, PanelState state)
@@ -2419,20 +2459,6 @@ public static class HandoverScreenPatch
         root.sizeDelta = new Vector2(
             Mathf.Max(1f, max.x - min.x + sidePadding * 2f),
             Mathf.Max(1f, top - bottom)
-        );
-        PositionDoneButtonBelowCard(FindOwningScreen(state), state);
-    }
-
-    private static void PositionDoneButtonBelowCard(HandoverScreen screen, PanelState state)
-    {
-        var doneRect = screen?.DoneButton?.transform as RectTransform;
-        var card = state?.BackpackVisualRoot;
-        if (doneRect == null || card == null)
-            return;
-
-        doneRect.anchoredPosition = new Vector2(
-            card.anchoredPosition.x,
-            card.anchoredPosition.y - card.rect.height * 0.5f - 52f
         );
     }
 
