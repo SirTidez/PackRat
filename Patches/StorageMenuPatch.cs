@@ -5,6 +5,7 @@ using MelonLoader;
 using PackRat.Config;
 using PackRat.Extensions;
 using PackRat.Helpers;
+using PackRat.Logic;
 using PackRat.Networking;
 using PackRat.Routing;
 using PackRat.Shops;
@@ -420,6 +421,7 @@ public static class StorageMenuPatch
         public string DisplayTitle;
         public bool IsBackpackInventory;
         public bool IsHotkeyBackpack;
+        public bool IsConsolidating;
         public string SearchTerm;
         public string TypeFilter;
         public string QualityFilter;
@@ -3246,7 +3248,7 @@ public static class StorageMenuPatch
         if (state.OrganizeLabel != null)
             state.OrganizeLabel.text = "ORGANIZE";
         if (state.ConsolidateLabel != null)
-            state.ConsolidateLabel.text = "STACK";
+            state.ConsolidateLabel.text = state.IsConsolidating ? "STACKING..." : "STACK";
 
         if (state.TypeFilterButton != null)
             state.TypeFilterButton.interactable = typeOptions.Count > 0;
@@ -3257,7 +3259,8 @@ public static class StorageMenuPatch
         if (state.ConsolidateButton != null)
         {
             state.ConsolidateButton.gameObject.SetActive(state.IsHotkeyBackpack);
-            state.ConsolidateButton.interactable = CanStackStandaloneBackpack(state, backpackSlots);
+            state.ConsolidateButton.interactable = !state.IsConsolidating &&
+                CanStackStandaloneBackpack(state, backpackSlots);
         }
         ConfigureStandaloneHeaderControls(state);
         UpdateStandaloneSortTabs(state);
@@ -5544,104 +5547,144 @@ public static class StorageMenuPatch
     private static void ConsolidateStandaloneBackpack(StandaloneBackpackState state)
     {
         var backpackSlots = GetStandaloneSourceSlots(state);
-        if (!CanStackStandaloneBackpack(state, backpackSlots))
+        if (state == null || state.IsConsolidating || !state.IsHotkeyBackpack ||
+            backpackSlots == null || backpackSlots.Count < 2)
             return;
 
+        var slotSnapshot = backpackSlots.Where(slot => slot != null).ToList();
+        var plan = BuildStandaloneStackPlan(slotSnapshot);
+        if (plan.Transfers.Count == 0 && !CanCompactStandaloneBackpackSlots(slotSnapshot))
+        {
+            ModLogger.Info("[BackpackUI] Stack skipped: the backpack is already consolidated and compact.");
+            return;
+        }
+
+        state.IsConsolidating = true;
+        if (state.ConsolidateButton != null)
+            state.ConsolidateButton.interactable = false;
+        if (state.ConsolidateLabel != null)
+            state.ConsolidateLabel.text = "STACKING...";
+        MelonCoroutines.Start(ExecuteStandaloneStackPlan(state, slotSnapshot, plan));
+    }
+
+    private static IEnumerator ExecuteStandaloneStackPlan(StandaloneBackpackState state,
+        List<ItemSlot> slotSnapshot, StackPlan plan)
+    {
+        const int operationsPerFrame = 24;
+        var stopwatch = Stopwatch.StartNew();
         var movedQuantity = 0;
         var mergedStackCount = 0;
+        var operationsThisFrame = 0;
         try
         {
-            // Work from a stable slot snapshot. Each game-owned transfer can clear a source,
-            // but never adds or removes a slot from the backpack owner.
-            var slotSnapshot = backpackSlots.Where(slot => slot != null).ToList();
-            for (var sourceIndex = 0; sourceIndex < slotSnapshot.Count; sourceIndex++)
+            for (var transferIndex = 0; transferIndex < plan.Transfers.Count; transferIndex++)
             {
-                var source = slotSnapshot[sourceIndex];
-                if (ShouldKeepStandaloneSlotFixed(source) || source.ItemInstance == null)
-                    continue;
-
-                var sourceItem = source.ItemInstance;
-                var sourceQuantity = GetWholeStandaloneSlotQuantity(source);
-                if (sourceQuantity <= 0)
-                    continue;
-
-                for (var targetIndex = 0; targetIndex < slotSnapshot.Count && source.ItemInstance != null;
-                     targetIndex++)
+                var planned = plan.Transfers[transferIndex];
+                operationsThisFrame++;
+                if (!TryExecuteStandaloneStackTransfer(state, slotSnapshot, planned, out var moved))
+                    yield break;
+                if (moved > 0)
                 {
-                    var target = slotSnapshot[targetIndex];
-                    if (ReferenceEquals(source, target) || ShouldKeepStandaloneSlotFixed(target) ||
-                        target.ItemInstance == null)
-                        continue;
-
-                    // These checks mirror the game's quick-move guards but limit the action to
-                    // existing compatible stacks. Empty slots are intentionally not considered.
-                    if (!target.DoesItemMatchHardFilters(sourceItem) ||
-                        !target.ItemInstance.CanStackWith(sourceItem, checkQuantities: false))
-                        continue;
-
-                    var capacity = target.GetCapacityForItem(sourceItem, checkPlayerFilters: false);
-                    var amount = Mathf.Min(capacity, sourceQuantity);
-                    if (amount <= 0)
-                        continue;
-
-                    var transfer = sourceItem.GetCopy(amount);
-                    if (transfer == null)
-                    {
-                        ModLogger.Warn("[BackpackUI] Consolidate aborted: Schedule I could not copy a source stack.");
-                        RefreshStandaloneFilterView(state);
-                        return;
-                    }
-
-                    var targetBefore = GetWholeStandaloneSlotQuantity(target);
-                    sourceQuantity = GetWholeStandaloneSlotQuantity(source);
-                    if (sourceQuantity < amount)
-                    {
-                        ModLogger.Warn("[BackpackUI] Consolidate aborted: source quantity changed before transfer.");
-                        RefreshStandaloneFilterView(state);
-                        return;
-                    }
-
-                    // This ordering is the exact native ItemUIManager quick-move sequence:
-                    // add a game-created copy to the target, then remove that amount from source.
-                    target.AddItem(transfer);
-                    if (GetWholeStandaloneSlotQuantity(target) != targetBefore + amount)
-                    {
-                        ModLogger.Warn("[BackpackUI] Consolidate aborted: target rejected the native transfer.");
-                        RefreshStandaloneFilterView(state);
-                        return;
-                    }
-
-                    source.ChangeQuantity(-amount);
-                    if (GetWholeStandaloneSlotQuantity(source) != sourceQuantity - amount)
-                    {
-                        ModLogger.Warn("[BackpackUI] Consolidate aborted: source did not acknowledge the transfer.");
-                        RefreshStandaloneFilterView(state);
-                        return;
-                    }
-
-                    movedQuantity += amount;
+                    movedQuantity += moved;
                     mergedStackCount++;
-                    MarkStandaloneRecentChange(state, source);
-                    sourceItem = source.ItemInstance;
-                    sourceQuantity = GetWholeStandaloneSlotQuantity(source);
                 }
+
+                if (operationsThisFrame < operationsPerFrame)
+                    continue;
+
+                operationsThisFrame = 0;
+                yield return null;
             }
 
             var compactedSlotCount = CompactStandaloneBackpackSlots(state, slotSnapshot);
             if (mergedStackCount == 0 && compactedSlotCount == 0)
             {
                 ModLogger.Info("[BackpackUI] Stack skipped: the backpack is already consolidated and compact.");
-                return;
+                yield break;
             }
 
             ModLogger.Info($"[BackpackUI] Stacked {mergedStackCount} compatible transfers " +
                 $"({movedQuantity} items moved) and compacted {compactedSlotCount} slots.");
+        }
+        finally
+        {
+            stopwatch.Stop();
+            state.IsConsolidating = false;
             RefreshStandaloneFilterView(state);
+            if (Configuration.Instance.EnableDebugLogging || stopwatch.ElapsedMilliseconds > 250)
+            {
+                ModLogger.Info($"[BackpackUI] Stack profile: slots={slotSnapshot.Count}, " +
+                    $"comparisons={plan.Comparisons.Count}, transfers={mergedStackCount}/{plan.Transfers.Count}, " +
+                    $"compactionAssignments={plan.Compaction.Count}, elapsed={stopwatch.ElapsedMilliseconds}ms.");
+            }
+        }
+    }
+
+    private static bool TryExecuteStandaloneStackTransfer(StandaloneBackpackState state,
+        List<ItemSlot> slotSnapshot, StackTransfer planned, out int moved)
+    {
+        moved = 0;
+        try
+        {
+            if (planned.SourceSlotIndex < 0 || planned.SourceSlotIndex >= slotSnapshot.Count ||
+                planned.TargetSlotIndex < 0 || planned.TargetSlotIndex >= slotSnapshot.Count)
+                return true;
+
+            var source = slotSnapshot[planned.SourceSlotIndex];
+            var target = slotSnapshot[planned.TargetSlotIndex];
+            if (source == null || target == null || ReferenceEquals(source, target) ||
+                ShouldKeepStandaloneSlotFixed(source) || ShouldKeepStandaloneSlotFixed(target) ||
+                source.ItemInstance == null || target.ItemInstance == null)
+                return true;
+
+            var sourceItem = source.ItemInstance;
+            var sourceQuantity = GetWholeStandaloneSlotQuantity(source);
+            if (sourceQuantity <= 0 || !target.DoesItemMatchHardFilters(sourceItem) ||
+                !target.ItemInstance.CanStackWith(sourceItem, checkQuantities: false))
+                return true;
+
+            var capacity = target.GetCapacityForItem(sourceItem, checkPlayerFilters: false);
+            var amount = Mathf.Min(planned.Quantity, Mathf.Min(capacity, sourceQuantity));
+            if (amount <= 0)
+                return true;
+
+            var transfer = sourceItem.GetCopy(amount);
+            if (transfer == null)
+            {
+                ModLogger.Warn("[BackpackUI] Consolidate aborted: Schedule I could not copy a source stack.");
+                return false;
+            }
+
+            var targetBefore = GetWholeStandaloneSlotQuantity(target);
+            sourceQuantity = GetWholeStandaloneSlotQuantity(source);
+            if (sourceQuantity < amount)
+            {
+                ModLogger.Warn("[BackpackUI] Consolidate aborted: source quantity changed before transfer.");
+                return false;
+            }
+
+            target.AddItem(transfer);
+            if (GetWholeStandaloneSlotQuantity(target) != targetBefore + amount)
+            {
+                ModLogger.Warn("[BackpackUI] Consolidate aborted: target rejected the native transfer.");
+                return false;
+            }
+
+            source.ChangeQuantity(-amount);
+            if (GetWholeStandaloneSlotQuantity(source) != sourceQuantity - amount)
+            {
+                ModLogger.Warn("[BackpackUI] Consolidate aborted: source did not acknowledge the transfer.");
+                return false;
+            }
+
+            moved = amount;
+            MarkStandaloneRecentChange(state, source);
+            return true;
         }
         catch (Exception ex)
         {
             ModLogger.Error("StorageMenuPatch.ConsolidateStandaloneBackpack", ex);
-            RefreshStandaloneFilterView(state);
+            return false;
         }
     }
 
@@ -5650,28 +5693,43 @@ public static class StorageMenuPatch
         if (state == null || !state.IsHotkeyBackpack || backpackSlots == null || backpackSlots.Count < 2)
             return false;
 
-        for (var sourceIndex = 0; sourceIndex < backpackSlots.Count; sourceIndex++)
+        var plan = BuildStandaloneStackPlan(backpackSlots);
+        return plan.Transfers.Count > 0 || CanCompactStandaloneBackpackSlots(backpackSlots);
+    }
+
+    private static StackPlan BuildStandaloneStackPlan(List<ItemSlot> backpackSlots)
+    {
+        var descriptors = new List<StackSlot>(backpackSlots?.Count ?? 0);
+        if (backpackSlots == null)
+            return StackPlanBuilder.Build(descriptors);
+
+        for (var index = 0; index < backpackSlots.Count; index++)
         {
-            var source = backpackSlots[sourceIndex];
-            if (ShouldKeepStandaloneSlotFixed(source) || source?.ItemInstance == null ||
-                GetWholeStandaloneSlotQuantity(source) <= 0)
-                continue;
-
-            for (var targetIndex = 0; targetIndex < backpackSlots.Count; targetIndex++)
-            {
-                var target = backpackSlots[targetIndex];
-                if (ReferenceEquals(source, target) || ShouldKeepStandaloneSlotFixed(target) ||
-                    target?.ItemInstance == null)
-                    continue;
-
-                if (target.DoesItemMatchHardFilters(source.ItemInstance) &&
-                    target.ItemInstance.CanStackWith(source.ItemInstance, checkQuantities: false) &&
-                    target.GetCapacityForItem(source.ItemInstance, checkPlayerFilters: false) > 0)
-                    return true;
-            }
+            var slot = backpackSlots[index];
+            var item = slot?.ItemInstance;
+            var quantity = item != null ? GetWholeStandaloneSlotQuantity(slot) : 0;
+            var capacity = quantity;
+            if (item != null)
+                capacity += Mathf.Max(0, slot.GetCapacityForItem(item, checkPlayerFilters: false));
+            descriptors.Add(new StackSlot(index, BuildStandaloneCompatibilityKey(slot), quantity,
+                capacity, ShouldKeepStandaloneSlotFixed(slot)));
         }
 
-        return CanCompactStandaloneBackpackSlots(backpackSlots);
+        return StackPlanBuilder.Build(descriptors);
+    }
+
+    private static string BuildStandaloneCompatibilityKey(ItemSlot slot)
+    {
+        var item = slot?.ItemInstance;
+        if (item == null)
+            return string.Empty;
+
+        var packaging = ReflectionUtils.TryGetFieldOrProperty(item, "AppliedPackaging");
+        var packagingId = ReflectionUtils.TryGetFieldOrProperty(packaging, "ID")?.ToString()
+            ?? ReflectionUtils.TryGetFieldOrProperty(packaging, "Id")?.ToString()
+            ?? string.Empty;
+        return string.Join("|", item.GetType().FullName ?? item.GetType().Name,
+            GetSlotDefinitionId(slot), GetSlotQuality(slot), packagingId);
     }
 
     /// <summary>

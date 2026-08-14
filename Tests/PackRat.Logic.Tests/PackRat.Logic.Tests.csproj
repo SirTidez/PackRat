@@ -11,5 +11,6 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" PrivateAssets="all" />
     <Compile Include="../../Logic/AutoFillPlanner.cs" Link="Logic/AutoFillPlanner.cs" />
     <Compile Include="../../Logic/UiBoundsPolicy.cs" Link="Logic/UiBoundsPolicy.cs" />
+    <Compile Include="../../Logic/StackPlanBuilder.cs" Link="Logic/StackPlanBuilder.cs" />
   </ItemGroup>
 </Project>
