@@ -21,7 +21,14 @@ public class Configuration
 
     private readonly string _configFile = Path.Combine("UserData", "PackRat.cfg");
 
-    private readonly MelonPreferences_Category _category;
+    private readonly MelonPreferences_Category _packratCategory;
+    private readonly MelonPreferences_Category _routingCategory;
+    private readonly MelonPreferences_Category _metricsCategory;
+    private readonly MelonPreferences_Category _themeCategory;
+    private readonly MelonPreferences_Category _backpackOverlayCategory;
+    private readonly MelonPreferences_Category _storageOverlayCategory;
+    private readonly MelonPreferences_Category _stationOverlayCategory;
+    private readonly MelonPreferences_Category _handoverOverlayCategory;
     private readonly MelonPreferences_Entry<KeyCode> _toggleKeyEntry;
     private readonly MelonPreferences_Entry<bool> _enableSearchEntry;
     private readonly MelonPreferences_Entry<bool> _backpackSyncDebugLoggingEntry;
@@ -78,156 +85,170 @@ public class Configuration
 
     public Configuration()
     {
-        _category = MelonPreferences.CreateCategory("PackRat");
-        _category.SetFilePath(_configFile, false);
-        _toggleKeyEntry = _category.CreateEntry("ToggleKey", KeyCode.B, "Key to toggle backpack");
-        _enableSearchEntry = _category.CreateEntry(
+        _packratCategory = MelonPreferences.CreateCategory("PackRat");
+        _routingCategory = MelonPreferences.CreateCategory("Routing");
+        _metricsCategory = MelonPreferences.CreateCategory("Metrics");
+        _themeCategory = MelonPreferences.CreateCategory("Theme");
+        _backpackOverlayCategory = MelonPreferences.CreateCategory("Backpack Overlay");
+        _storageOverlayCategory = MelonPreferences.CreateCategory("Storage Overlay");
+        _stationOverlayCategory = MelonPreferences.CreateCategory("Station Overlay");
+        _handoverOverlayCategory = MelonPreferences.CreateCategory("Handover Overlay");
+        _packratCategory.SetFilePath(_configFile, false);
+        _routingCategory.SetFilePath(_configFile, false);
+        _metricsCategory.SetFilePath(_configFile, false);
+        _themeCategory.SetFilePath(_configFile, false);
+        _backpackOverlayCategory.SetFilePath(_configFile, false);
+        _storageOverlayCategory.SetFilePath(_configFile, false);
+        _stationOverlayCategory.SetFilePath(_configFile, false);
+        _handoverOverlayCategory.SetFilePath(_configFile, false);
+        _toggleKeyEntry = _packratCategory.CreateEntry("ToggleKey", KeyCode.B, "Key to toggle backpack");
+        _enableSearchEntry = _packratCategory.CreateEntry(
             "EnableSearch",
             true,
             "Allow police body searches to include searchable backpack tiers"
         );
-        _backpackSyncDebugLoggingEntry = _category.CreateEntry(
+        _backpackSyncDebugLoggingEntry = _packratCategory.CreateEntry(
             "BackpackSyncDebugLogging",
             false,
             "Enable verbose backpack sync debug logging (host/client save sync diagnostics)"
         );
-        _enableUiAnimationsEntry = _category.CreateEntry(
+        _enableUiAnimationsEntry = _packratCategory.CreateEntry(
             "EnableUiAnimations",
             true,
             "Enable PackRat backpack UI transitions"
         );
-        _reduceUiMotionEntry = _category.CreateEntry(
+        _reduceUiMotionEntry = _packratCategory.CreateEntry(
             "ReduceUiMotion",
             false,
             "Use fade-only PackRat backpack UI transitions"
         );
-        _protectFavoritesFromOrganizationEntry = _category.CreateEntry(
+        _protectFavoritesFromOrganizationEntry = _packratCategory.CreateEntry(
             "ProtectFavoritesFromOrganization",
             true,
             "Keep favorited backpack items unchanged by PackRat's organize and stack actions"
         );
-        _enableSmartRoutingEntry = _category.CreateEntry(
+        _enableSmartRoutingEntry = _routingCategory.CreateEntry(
             "EnableSmartRouting",
             false,
             "Prefer routing configured quick-move categories into the backpack"
         );
-        _routeProductsEntry = _category.CreateEntry(
+        _routeProductsEntry = _routingCategory.CreateEntry(
             "RouteProducts",
             true,
             "Route drug products into the backpack during quick move when Smart Routing is enabled"
         );
-        _routeSeedsEntry = _category.CreateEntry(
+        _routeSeedsEntry = _routingCategory.CreateEntry(
             "RouteSeeds",
             true,
             "Route seeds into the backpack during quick move when Smart Routing is enabled"
         );
-        _routeMixersEntry = _category.CreateEntry(
+        _routeMixersEntry = _routingCategory.CreateEntry(
             "RouteMixers",
             false,
             "Route mixers into the backpack during quick move when Smart Routing is enabled"
         );
-        _routeReagentsEntry = _category.CreateEntry(
+        _routeReagentsEntry = _routingCategory.CreateEntry(
             "RouteReagents",
             false,
             "Route reagents into the backpack during quick move when Smart Routing is enabled"
         );
-        _showMetricsTrayEntry = _category.CreateEntry(
+        _showMetricsTrayEntry = _metricsCategory.CreateEntry(
             "ShowMetricsTray",
             true,
             "Show the expandable product metrics tray beside the hotkey backpack"
         );
-        _showProductQuantityMetricEntry = _category.CreateEntry(
+        _showProductQuantityMetricEntry = _metricsCategory.CreateEntry(
             "ShowProductQuantityMetric",
             true,
             "Show each product's quantity in the backpack metrics tray"
         );
-        _showProductQuantityTotalMetricEntry = _category.CreateEntry(
+        _showProductQuantityTotalMetricEntry = _metricsCategory.CreateEntry(
             "ShowProductQuantityTotalMetric",
             true,
             "Show the total product quantity in the backpack metrics tray"
         );
-        _showProductUnitPriceMetricEntry = _category.CreateEntry(
+        _showProductUnitPriceMetricEntry = _metricsCategory.CreateEntry(
             "ShowProductUnitPriceMetric",
             true,
             "Show the game's current product unit price in the backpack metrics tray"
         );
-        _showProductTotalPriceMetricEntry = _category.CreateEntry(
+        _showProductTotalPriceMetricEntry = _metricsCategory.CreateEntry(
             "ShowProductTotalPriceMetric",
             true,
             "Show total product value in the backpack metrics tray"
         );
-        _backpackUiThemeEntry = _category.CreateEntry(
+        _backpackUiThemeEntry = _themeCategory.CreateEntry(
             "BackpackUiTheme",
             (int)BackpackUiTheme.S1Blue,
             "PackRat backpack UI color theme"
         );
-        _backpackCustomThemeRedEntry = _category.CreateEntry("BackpackCustomThemeRed", 35,
+        _backpackCustomThemeRedEntry = _themeCategory.CreateEntry("BackpackCustomThemeRed", 35,
             "Red channel for PackRat's custom backpack UI theme");
-        _backpackCustomThemeGreenEntry = _category.CreateEntry("BackpackCustomThemeGreen", 61,
+        _backpackCustomThemeGreenEntry = _themeCategory.CreateEntry("BackpackCustomThemeGreen", 61,
             "Green channel for PackRat's custom backpack UI theme");
-        _backpackCustomThemeBlueEntry = _category.CreateEntry("BackpackCustomThemeBlue", 86,
+        _backpackCustomThemeBlueEntry = _themeCategory.CreateEntry("BackpackCustomThemeBlue", 86,
             "Blue channel for PackRat's custom backpack UI theme");
-        _backpackOverlayOffsetXEntry = _category.CreateEntry(
+        _backpackOverlayOffsetXEntry = _backpackOverlayCategory.CreateEntry(
             "BackpackOverlayOffsetX",
             0f,
             "Horizontal offset for the hotkey backpack display"
         );
-        _backpackOverlayOffsetYEntry = _category.CreateEntry(
+        _backpackOverlayOffsetYEntry = _backpackOverlayCategory.CreateEntry(
             "BackpackOverlayOffsetY",
             0f,
             "Vertical offset for the hotkey backpack display"
         );
-        _backpackOverlayScaleEntry = _category.CreateEntry(
+        _backpackOverlayScaleEntry = _backpackOverlayCategory.CreateEntry(
             "BackpackOverlayScale",
             1f,
             "Scale for the hotkey backpack display"
         );
-        _storageOverlayOffsetXEntry = _category.CreateEntry(
+        _storageOverlayOffsetXEntry = _storageOverlayCategory.CreateEntry(
             "StorageOverlayOffsetX",
             0f,
             "Horizontal offset for backpack overlay in storage container menus"
         );
-        _storageOverlayOffsetYEntry = _category.CreateEntry(
+        _storageOverlayOffsetYEntry = _storageOverlayCategory.CreateEntry(
             "StorageOverlayOffsetY",
             0f,
             "Vertical offset for backpack overlay in storage container menus"
         );
-        _storageOverlayScaleEntry = _category.CreateEntry(
+        _storageOverlayScaleEntry = _storageOverlayCategory.CreateEntry(
             "StorageOverlayScale",
             1f,
             "Scale for backpack overlay in storage container menus"
         );
-        _stationOverlayOffsetXEntry = _category.CreateEntry(
+        _stationOverlayOffsetXEntry = _stationOverlayCategory.CreateEntry(
             "StationOverlayOffsetX",
             0f,
             "Horizontal offset for backpack overlay in station menus"
         );
-        _stationOverlayOffsetYEntry = _category.CreateEntry(
+        _stationOverlayOffsetYEntry = _stationOverlayCategory.CreateEntry(
             "StationOverlayOffsetY",
             0f,
             "Vertical offset for backpack overlay in station menus"
         );
-        _stationOverlayScaleEntry = _category.CreateEntry(
+        _stationOverlayScaleEntry = _stationOverlayCategory.CreateEntry(
             "StationOverlayScale",
             1f,
             "Scale for backpack overlay in station menus"
         );
-        _handoverOverlayOffsetXEntry = _category.CreateEntry(
+        _handoverOverlayOffsetXEntry = _handoverOverlayCategory.CreateEntry(
             "HandoverOverlayOffsetX",
             0f,
             "Horizontal offset for backpack overlay in deal handover menus"
         );
-        _handoverOverlayOffsetYEntry = _category.CreateEntry(
+        _handoverOverlayOffsetYEntry = _handoverOverlayCategory.CreateEntry(
             "HandoverOverlayOffsetY",
             0f,
             "Vertical offset for backpack overlay in deal handover menus"
         );
-        _handoverOverlayScaleEntry = _category.CreateEntry(
+        _handoverOverlayScaleEntry = _handoverOverlayCategory.CreateEntry(
             "HandoverOverlayScale",
             1f,
             "Scale for backpack overlay in deal handover menus"
         );
-        _embeddedBrowserLayoutDefaultsAppliedEntry = _category.CreateEntry(
+        _embeddedBrowserLayoutDefaultsAppliedEntry = _packratCategory.CreateEntry(
             "EmbeddedBrowserLayoutDefaultsApplied",
             false,
             "Tracks the one-time upgrade to full embedded backpack browser layouts"
@@ -239,22 +260,25 @@ public class Configuration
         _tierPriceEntries = new MelonPreferences_Entry<float>[BackpackTiers.Length];
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
-            _tierUnlockRankEntries[i] = _category.CreateEntry(
+            MelonPreferences_Category _tierCategory = MelonPreferences.CreateCategory($"Tier {i} Backpack");
+            _tierCategory.SetFilePath(_configFile, false);
+
+            _tierUnlockRankEntries[i] = _tierCategory.CreateEntry(
                 $"Tier{i}_UnlockRank",
                 BackpackTiers[i].DefaultUnlockRank,
                 $"Required rank to unlock tier {i} ({BackpackTiers[i].Name})"
             );
-            _tierSlotCountEntries[i] = _category.CreateEntry(
+            _tierSlotCountEntries[i] = _tierCategory.CreateEntry(
                 $"Tier{i}_SlotCount",
                 BackpackTiers[i].DefaultSlotCount,
                 $"Number of storage slots for tier {i} ({BackpackTiers[i].Name})"
             );
-            _tierEnabledEntries[i] = _category.CreateEntry(
+            _tierEnabledEntries[i] = _tierCategory.CreateEntry(
                 $"Tier{i}_Enabled",
                 true,
                 $"Enable tier {i} ({BackpackTiers[i].Name}) - when disabled, this tier is not available"
             );
-            _tierPriceEntries[i] = _category.CreateEntry(
+            _tierPriceEntries[i] = _tierCategory.CreateEntry(
                 $"Tier{i}_Price",
                 DefaultTierPrices[i],
                 $"Price at hardware store for tier {i} ({BackpackTiers[i].Name})"

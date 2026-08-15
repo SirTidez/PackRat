@@ -5,8 +5,5 @@ TASKLIST.md
 *.zip
 /bin
 /.claude
-/bin
-/bin
 /.idea
-/bin
-/bin
+/.vs
