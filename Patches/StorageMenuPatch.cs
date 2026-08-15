@@ -474,7 +474,7 @@ public static class StorageMenuPatch
     private static readonly Dictionary<int, StandaloneBackpackState> StandaloneBackpackPanels = new Dictionary<int, StandaloneBackpackState>();
     private static Sprite _settingsCogSprite;
     private static Texture2D _settingsCogTexture;
-    private static bool _settingsCogLoadAttempted;
+    private static bool _settingsCogLoadAttemptFailed;
     private static Sprite _pillButtonSprite;
     private static Texture2D _pillButtonTexture;
     private static Sprite _desktopTabSprite;
@@ -3163,6 +3163,7 @@ public static class StorageMenuPatch
 
         var image = iconGo.AddComponent<Image>();
         image.sprite = GetStandaloneSettingsCogSprite();
+        if (image.sprite == null) _settingsCogLoadAttemptFailed = true;
         image.preserveAspect = true;
         image.raycastTarget = false;
     }
@@ -3171,10 +3172,9 @@ public static class StorageMenuPatch
     {
         if (_settingsCogSprite != null)
             return _settingsCogSprite;
-        if (_settingsCogLoadAttempted)
+        if (_settingsCogLoadAttemptFailed)
             return null;
 
-        _settingsCogLoadAttempted = true;
         try
         {
             using var stream = typeof(StorageMenuPatch).Assembly.GetManifestResourceStream(SettingsCogResourceName);
