@@ -3,6 +3,7 @@ using System.Reflection;
 using PackRat.Config;
 using PackRat.Helpers;
 using PackRat.Networking;
+using PackRat.Profiling;
 using PackRat.Shops;
 using UnityEngine;
 
@@ -56,6 +57,9 @@ public class PlayerBackpack : MonoBehaviour
     private const int TierCheckIntervalFrames = 60; // throttle tier lookup to reduce per-frame work
     private static Type _cachedStorageMenuType;
     private static MethodInfo[] _cachedStorageMenuOpenMethods = Array.Empty<MethodInfo>();
+#if MONO
+    private bool _monoCameraLockFallbackActive;
+#endif
     private static readonly string[] SelectedHotbarIndexMemberNames =
     [
         "selectedSlotIndex", "SelectedSlotIndex", "selectedIndex", "SelectedIndex", "currentSlotIndex",
@@ -218,6 +222,8 @@ public class PlayerBackpack : MonoBehaviour
 
         // Throttle tier check to every N frames to avoid per-frame config/array access (reduces hitches).
         var keyDown = Input.GetKeyDown(Configuration.Instance.ToggleKey);
+        if (keyDown)
+            UiProfiler.Event("hotkey", "pressed", $"open={IsOpen};unlocked={IsUnlocked};tier={CurrentTierIndex}");
         if (keyDown || (Time.frameCount % TierCheckIntervalFrames == 0))
         {
             var tierIdx = CurrentTierIndex;
@@ -242,7 +248,10 @@ public class PlayerBackpack : MonoBehaviour
             // The toggle key is also a valid character in the live search field. Let the focused
             // InputField consume it before considering an open/close backpack action.
             if (IsOpen && Patches.StorageMenuPatch.IsStandaloneBackpackSearchFocused())
+            {
+                UiProfiler.Event("hotkey", "consumed_by_search");
                 return;
+            }
 
             // If the player has a backpack tier item selected in the hotbar, consuming it applies the tier and opens the backpack
             if (TryConsumeSelectedHotbarBackpackItem(out var appliedTier))
@@ -473,24 +482,30 @@ public class PlayerBackpack : MonoBehaviour
     /// </summary>
     public void Open()
     {
+        using var profile = UiProfiler.Measure("standalone", "open_request",
+            $"enabled={_backpackEnabled};unlocked={IsUnlocked};tier={CurrentTierIndex}");
         if (!_backpackEnabled)
         {
+            UiProfiler.Event("standalone", "open_blocked", "reason=disabled");
             ModLogger.Debug("Backpack open blocked: backpack disabled.");
             return;
         }
         if (!IsUnlocked)
         {
+            UiProfiler.Event("standalone", "open_blocked", "reason=locked");
             ModLogger.Debug($"Backpack open blocked: not unlocked (CurrentTierIndex={CurrentTierIndex}, EquippedTier={_equippedTierIndex}). Purchase a tier at the Hardware Store.");
             return;
         }
         if (_storage == null)
         {
+            UiProfiler.Event("standalone", "open_blocked", "reason=no_storage");
             ModLogger.Warn("Backpack open blocked: no storage entity.");
             return;
         }
         var clipboard = Singleton<ManagementClipboard>.Instance;
         if (clipboard != null && clipboard.IsEquipped)
         {
+            UiProfiler.Event("standalone", "open_blocked", "reason=clipboard");
             ModLogger.Debug("[BackpackUI] Open blocked: management clipboard is equipped.");
             return;
         }
@@ -498,39 +513,41 @@ public class PlayerBackpack : MonoBehaviour
         var storageMenu = Singleton<StorageMenu>.Instance;
         if (storageMenu == null)
         {
+            UiProfiler.Event("standalone", "open_blocked", "reason=no_storage_menu");
             ModLogger.Warn("[BackpackUI] Open blocked: StorageMenu is not available yet.");
             return;
         }
 
         if (storageMenu.IsOpen)
         {
+            UiProfiler.Event("standalone", "open_blocked", "reason=other_storage_open");
             ModLogger.Debug("[BackpackUI] Open blocked: another storage menu is already open.");
             return;
         }
 
         if (Phone.Instance != null && Phone.Instance.IsOpen)
         {
+            UiProfiler.Event("standalone", "open_blocked", "reason=phone");
             ModLogger.Debug("[BackpackUI] Open blocked: phone is open.");
             return;
         }
 
         if (CameraLockedStateHelper.IsCameraLockedByUI())
         {
+            UiProfiler.Event("standalone", "open_blocked", "reason=camera_locked_ui");
             ModLogger.Debug("Backpack blocked: player is in camera-locked UI (TV, ATM, dialogue, vehicle, etc.).");
             return;
         }
 
         _openTitle = CurrentTier?.Name ?? StorageName;
+        UiProfiler.Event("standalone", "opening", $"title={_openTitle};slots={_storage.ItemSlots.Count}");
         ModLogger.Info($"[BackpackUI] PlayerBackpack.Open -> StorageMenu.Open: title='{_openTitle}', slots={_storage.ItemSlots.Count}.");
         BackpackStateSyncManager.BeginLocalBackpackEdit();
-        // Keep the regular backpack view at a predictable four-row grid. The storage-menu patch
-        // pages the backing slots, so larger bags do not force the game to shrink the slot UI.
-        storageMenu.SlotGridLayout.constraintCount = 4;
-
 #if !MONO
         OpenStorageMenu(storageMenu, _storage.Cast<IItemSlotOwner>(), _openTitle, string.Empty);
 #else
         OpenStorageMenu(storageMenu, _storage, _openTitle, string.Empty);
+        EnsureMonoStandaloneCameraLock();
 #endif
 
         _storage.SendAccessor(Player.Local.NetworkObject);
@@ -582,6 +599,8 @@ public class PlayerBackpack : MonoBehaviour
 
     private static void PrewarmStorageMenuOpenMethods(StorageMenu storageMenu)
     {
+        using var profile = UiProfiler.Measure("prewarm", "storage_menu_open_reflection",
+            $"type={storageMenu?.GetType().FullName}");
         if (storageMenu == null)
             return;
 
@@ -603,6 +622,7 @@ public class PlayerBackpack : MonoBehaviour
 
     private static void PrewarmPlayerInventoryReflection()
     {
+        using var profile = UiProfiler.Measure("prewarm", "player_inventory_reflection");
 #if MONO
         var inventory = PlayerInventory.Instance;
 #else
@@ -634,14 +654,60 @@ public class PlayerBackpack : MonoBehaviour
         }
     }
 
+#if MONO
+    /// <summary>
+    /// Ensures the Mono runtime applies the same camera-look lock as the IL2CPP storage menu.
+    /// The game's state transition normally owns this lock, so PackRat intervenes only when the
+    /// standalone backpack is open and the camera remains able to look afterward.
+    /// </summary>
+    private void EnsureMonoStandaloneCameraLock()
+    {
+        if (!IsOpen || !PlayerSingleton<PlayerCamera>.InstanceExists)
+            return;
+
+        var playerCamera = PlayerSingleton<PlayerCamera>.Instance;
+        if (playerCamera == null || !playerCamera.CanLook)
+            return;
+
+        playerCamera.SetCanLook(false);
+        _monoCameraLockFallbackActive = true;
+        UiProfiler.Event("standalone", "mono_camera_lock_fallback", "phase=acquired");
+        ModLogger.Debug("[BackpackUI] Applied Mono camera-look fallback for the standalone backpack.");
+    }
+
+    /// <summary>
+    /// Releases only a camera lock that PackRat acquired after Mono's storage state failed to do so.
+    /// This is invoked from the StorageMenu close postfix so Done, Escape, and the backpack hotkey
+    /// all share the same cleanup path.
+    /// </summary>
+    internal void ReleaseMonoStandaloneCameraLock()
+    {
+        if (!_monoCameraLockFallbackActive)
+            return;
+
+        _monoCameraLockFallbackActive = false;
+        if (PlayerSingleton<PlayerCamera>.InstanceExists)
+        {
+            var playerCamera = PlayerSingleton<PlayerCamera>.Instance;
+            if (playerCamera != null && !playerCamera.CanLook)
+                playerCamera.SetCanLook(true);
+        }
+
+        UiProfiler.Event("standalone", "mono_camera_lock_fallback", "phase=released");
+        ModLogger.Debug("[BackpackUI] Released Mono camera-look fallback for the standalone backpack.");
+    }
+#endif
+
     /// <summary>
     /// Closes the backpack storage menu if it is open.
     /// </summary>
     public void Close()
     {
+        using var profile = UiProfiler.Measure("standalone", "close_request", $"open={IsOpen}");
         if (!_backpackEnabled || !IsOpen)
             return;
 
+        UiProfiler.Event("standalone", "closing");
         // CloseMenu only hides the internal storage panel. Close performs the matching UI-state
         // exit that releases the cursor, camera, and full-screen overlay just like Done/Escape.
         Singleton<StorageMenu>.Instance.Close();
@@ -817,6 +883,7 @@ public class PlayerBackpack : MonoBehaviour
         PrewarmStorageMenuOpenMethods(Singleton<StorageMenu>.Instance);
         PrewarmPlayerInventoryReflection();
         Patches.StorageMenuPatch.PrewarmStandaloneAssets();
+        Patches.StorageMenuPatch.PrewarmStandaloneSurfaces(Singleton<StorageMenu>.Instance);
     }
 
     private bool IsOwnedByLocalPlayer()

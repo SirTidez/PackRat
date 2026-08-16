@@ -55,7 +55,7 @@ public sealed class AutoFillPlannerTests
     }
 
     [Fact]
-    public void LargeImpossibleExactSetChoosesSmallestOversupply()
+    public void LargeImpossibleExactSetReturnsNoMoves()
     {
         var candidates = Enumerable.Range(0, 200)
             .Select(index => new AutoFillCandidate("PACK", index, "product", 2, 2, 1, true, true))
@@ -63,8 +63,23 @@ public sealed class AutoFillPlannerTests
 
         var plan = AutoFillPlanner.Plan(new AutoFillRequirement("product", 2, 5), candidates);
 
-        Assert.Equal(6, plan.FilledUnits);
-        Assert.Equal(1, plan.OversuppliedUnits);
-        Assert.Equal(3, plan.Moves.Sum(move => move.PackageCount));
+        Assert.Empty(plan.Moves);
+        Assert.Equal(0, plan.FilledUnits);
+        Assert.Equal(0, plan.OversuppliedUnits);
+    }
+
+    [Fact]
+    public void OversizedPackageCannotFillSmallerRemainingRequirement()
+    {
+        var candidates = new[]
+        {
+            new AutoFillCandidate("PACK", 0, "product", 2, 20, 1, true, true)
+        };
+
+        var plan = AutoFillPlanner.Plan(new AutoFillRequirement("product", 2, 4), candidates);
+
+        Assert.Empty(plan.Moves);
+        Assert.Equal(0, plan.FilledUnits);
+        Assert.Equal(0, plan.OversuppliedUnits);
     }
 }

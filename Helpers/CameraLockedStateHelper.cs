@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using PackRat.Profiling;
 using UnityEngine;
 
 #if MONO
@@ -128,6 +129,7 @@ internal static class CameraLockedStateHelper
     /// </summary>
     public static void PrewarmCache()
     {
+        using var profile = UiProfiler.Measure("prewarm", "camera_lock_scene_cache");
         EnsureTypesResolved();
         if (_sceneObjectsWarmed)
             return;

@@ -5,6 +5,7 @@ using PackRat.Config;
 using PackRat.Extensions;
 using PackRat.Helpers;
 using PackRat.Logic;
+using PackRat.Profiling;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -63,6 +64,10 @@ public static class HandoverScreenPatch
         public RectTransform BackpackVisualRoot;
         public Canvas DedicatedCanvas;
         public RectTransform DedicatedCard;
+        // The shared browser normalizes its supplied host to local position zero on every
+        // refresh. Keep that normalization inside this child so it can never reposition the
+        // card itself after a handover callback (for example, a successful auto-fill).
+        public RectTransform DedicatedBrowserHost;
         public RectTransform DedicatedGrid;
         public ItemSlotUI SlotPrefab;
         public RectTransform PagingRoot;
@@ -92,12 +97,6 @@ public static class HandoverScreenPatch
         public Action TransferAction;
         public S1LandVehicle NearbyVehicle;
         public Vector2 VehicleOriginalAnchoredPos;
-        public Vector2 DoneButtonOriginalAnchorMin;
-        public Vector2 DoneButtonOriginalAnchorMax;
-        public Vector2 DoneButtonOriginalPivot;
-        public Vector2 DoneButtonOriginalAnchoredPos;
-        public Vector3 DoneButtonOriginalScale;
-        public bool DoneButtonLayoutCaptured;
         public int CurrentPage;
         public int SlotsPerPage;
         public bool ShowingVehicle;
@@ -183,6 +182,7 @@ public static class HandoverScreenPatch
     [HarmonyPostfix]
     public static void Open(HandoverScreen __instance)
     {
+        using var profile = UiProfiler.Measure("handover", "open", $"id={__instance?.GetInstanceID()}");
         try
         {
             ModLogger.Info($"[HandoverUI] Open receipt: id={__instance?.GetInstanceID()}, hasBackpack={HasBackpack()}");
@@ -310,6 +310,7 @@ public static class HandoverScreenPatch
     [HarmonyPostfix]
     public static void Close(HandoverScreen __instance)
     {
+        using var profile = UiProfiler.Measure("handover", "close", $"id={__instance?.GetInstanceID()}");
         try
         {
             if (!States.TryGetValue(__instance.GetInstanceID(), out var panel))
@@ -332,7 +333,6 @@ public static class HandoverScreenPatch
             SetHeaderPairActive(panel.SourceTitleLabel, panel.SourceSubtitleLabel, true);
             if (panel.VehicleContainer != null)
                 panel.VehicleContainer.anchoredPosition = panel.VehicleOriginalAnchoredPos;
-            RestoreDoneButtonLayout(__instance, panel);
         }
         catch (Exception ex)
         {
@@ -342,6 +342,7 @@ public static class HandoverScreenPatch
 
     private static PanelState EnsurePanel(HandoverScreen screen)
     {
+        using var profile = UiProfiler.Measure("handover", "ensure_panel", $"id={screen?.GetInstanceID()}");
         PruneDeadStates();
         if (screen == null)
             return null;
@@ -997,7 +998,7 @@ public static class HandoverScreenPatch
             card.anchorMax = new Vector2(0.5f, 0.5f);
             card.pivot = new Vector2(0.5f, 0.5f);
             card.sizeDelta = BackpackCardSize;
-            card.anchoredPosition = GetHandoverBackpackPosition(state);
+            card.anchoredPosition = GetDedicatedHandoverBackpackPosition();
             state.DedicatedCard = card;
             state.BackpackVisualRoot = card;
 
@@ -1050,6 +1051,7 @@ public static class HandoverScreenPatch
             canvasGo.SetActive(false);
         }
 
+        EnsureDedicatedBrowserHost(state);
         RebindDedicatedSlotProjection(state);
 
         // The dedicated canvas begins disabled so it cannot flash during scene setup. Do not
@@ -1159,6 +1161,10 @@ public static class HandoverScreenPatch
         if (state?.DedicatedCard == null)
             return;
 
+        var browserHost = EnsureDedicatedBrowserHost(state);
+        if (browserHost == null)
+            return;
+
         var grid = state.DedicatedGrid;
         var layout = grid != null ? grid.GetComponent<GridLayoutGroup>() : null;
         if (grid == null || layout == null || state.SlotUIs == null)
@@ -1166,41 +1172,79 @@ public static class HandoverScreenPatch
 
         if (state.ShowingVehicle)
         {
-            StorageMenuPatch.ApplyEmbeddedInventoryBrowser(state.DedicatedCard, grid, layout, state.SlotUIs,
+            StorageMenuPatch.ApplyEmbeddedInventoryBrowser(browserHost, grid, layout, state.SlotUIs,
                 layoutView: 3, () => GetNearbyVehicleSlots(state), "VEHICLE STORAGE", screen.GetInstanceID());
         }
         else
         {
-            StorageMenuPatch.ApplyEmbeddedBackpackBrowser(state.DedicatedCard, grid, layout, state.SlotUIs,
+            StorageMenuPatch.ApplyEmbeddedBackpackBrowser(browserHost, grid, layout, state.SlotUIs,
                 layoutView: 3, ownerId: screen.GetInstanceID());
         }
 
         UpdateDedicatedDealMatchAccents(screen, state);
         EnsureDedicatedTransferControls(screen, state);
         var overlayScale = Mathf.Clamp(Configuration.Instance.HandoverOverlayScale, 0.5f, 1.5f);
-        state.DedicatedCard.anchorMin = new Vector2(0.5f, 0.5f);
-        state.DedicatedCard.anchorMax = new Vector2(0.5f, 0.5f);
-        state.DedicatedCard.pivot = new Vector2(0.5f, 0.5f);
-        state.DedicatedCard.sizeDelta = BackpackCardSize;
-        state.DedicatedCard.localScale = Vector3.one * overlayScale;
-        state.DedicatedCard.anchoredPosition = GetHandoverBackpackPosition(state);
-        ClampDedicatedCardToSafeArea(state);
+        ApplyDedicatedCardPlacement(state, overlayScale);
         DisableDedicatedDecorativeRaycasts(state);
 
-        var doneRect = screen?.DoneButton?.transform as RectTransform;
-        if (doneRect == null)
-            return;
+    }
 
-        if (!state.DoneButtonLayoutCaptured)
+    /// <summary>
+    /// Creates an internal PackRat-only host for the shared browser. The browser implementation
+    /// deliberately resets its host's local position while it lays out slots; using the card as
+    /// that host made native handover refreshes snap the complete card to screen center.
+    /// </summary>
+    private static RectTransform EnsureDedicatedBrowserHost(PanelState state)
+    {
+        if (state?.DedicatedCard == null)
+            return null;
+
+        var host = state.DedicatedBrowserHost;
+        if (host == null || host.parent != state.DedicatedCard)
         {
-            state.DoneButtonOriginalAnchorMin = doneRect.anchorMin;
-            state.DoneButtonOriginalAnchorMax = doneRect.anchorMax;
-            state.DoneButtonOriginalPivot = doneRect.pivot;
-            state.DoneButtonOriginalAnchoredPos = doneRect.anchoredPosition;
-            state.DoneButtonOriginalScale = doneRect.localScale;
-            state.DoneButtonLayoutCaptured = true;
+            host = state.DedicatedCard.Find("PackRat_DedicatedBrowserHost") as RectTransform;
+            if (host == null)
+            {
+                var hostGo = new GameObject("PackRat_DedicatedBrowserHost");
+                host = hostGo.AddComponent<RectTransform>();
+                host.SetParent(state.DedicatedCard, worldPositionStays: false);
+                hostGo.AddComponent<LayoutElement>().ignoreLayout = true;
+            }
+
+            state.DedicatedBrowserHost = host;
         }
 
+        host.anchorMin = Vector2.zero;
+        host.anchorMax = Vector2.one;
+        host.pivot = new Vector2(0.5f, 0.5f);
+        host.offsetMin = Vector2.zero;
+        host.offsetMax = Vector2.zero;
+        host.localScale = Vector3.one;
+
+        if (state.DedicatedGrid != null && state.DedicatedGrid.parent != host)
+            state.DedicatedGrid.SetParent(host, worldPositionStays: false);
+
+        return host;
+    }
+
+    /// <summary>
+    /// Positions only the PackRat-owned card against its own screen-space canvas. The hidden
+    /// vehicle clone belongs to the game's handover hierarchy and may be resized during
+    /// CustomerItemsChanged, so it must not participate in this calculation.
+    /// </summary>
+    private static void ApplyDedicatedCardPlacement(PanelState state, float overlayScale)
+    {
+        var card = state?.DedicatedCard;
+        if (card == null)
+            return;
+
+        card.anchorMin = new Vector2(0.5f, 0.5f);
+        card.anchorMax = new Vector2(0.5f, 0.5f);
+        card.pivot = new Vector2(0.5f, 0.5f);
+        card.sizeDelta = BackpackCardSize;
+        card.localScale = Vector3.one * overlayScale;
+        card.anchoredPosition = GetDedicatedHandoverBackpackPosition();
+        ClampDedicatedCardToSafeArea(state);
     }
 
     private static void ClampDedicatedCardToSafeArea(PanelState state)
@@ -1396,7 +1440,9 @@ public static class HandoverScreenPatch
         if (screen == null || state?.DedicatedCard == null)
             return;
 
-        var pager = state.DedicatedCard.Find("PackRat_BackpackPaging") as RectTransform;
+        var pager = state.DedicatedBrowserHost?.Find("PackRat_BackpackPaging") as RectTransform;
+        if (pager == null)
+            pager = state.DedicatedCard.Find("PackRat_BackpackPaging") as RectTransform;
         if (pager == null)
             return;
 
@@ -1515,6 +1561,8 @@ public static class HandoverScreenPatch
     /// </summary>
     private static void AutoFillDeal(HandoverScreen screen, PanelState state)
     {
+        using var profile = UiProfiler.Measure("handover", "auto_fill");
+        UiProfiler.Event("handover", "auto_fill_requested");
         if (screen == null || state == null || !state.IsOpen)
             return;
 
@@ -1594,15 +1642,17 @@ public static class HandoverScreenPatch
                 }
             }
 
-            NotifyHandoverItemsChanged(screen);
-            UpdateDedicatedOverlayLayout(screen, state);
-
             if (movedTotalUnits <= 0)
             {
                 LogAutoFillMatchDiagnostics(requirements, sources);
                 SetTransferStatus(state, "NO MATCHING PRODUCTS FOUND", new Color32(220, 190, 105, 255));
                 return;
             }
+
+            // Only a real transfer may ask the game to refresh its handover state. A failed plan
+            // leaves the entire native surface untouched; PackRat then updates only its own card.
+            NotifyHandoverItemsChanged(screen);
+            UpdateDedicatedOverlayLayout(screen, state);
 
             var sourceReceipt = new List<string>();
             for (var sourceIndex = 0; sourceIndex < sources.Count; sourceIndex++)
@@ -2202,36 +2252,6 @@ public static class HandoverScreenPatch
             grid.localScale = Vector3.one * BackpackGridScale;
         }
 
-        var doneRect = screen?.DoneButton?.transform as RectTransform;
-        if (doneRect == null)
-            return;
-
-        if (!state.DoneButtonLayoutCaptured)
-        {
-            state.DoneButtonOriginalAnchorMin = doneRect.anchorMin;
-            state.DoneButtonOriginalAnchorMax = doneRect.anchorMax;
-            state.DoneButtonOriginalPivot = doneRect.pivot;
-            state.DoneButtonOriginalAnchoredPos = doneRect.anchoredPosition;
-            state.DoneButtonOriginalScale = doneRect.localScale;
-            state.DoneButtonLayoutCaptured = true;
-        }
-
-    }
-
-    private static void RestoreDoneButtonLayout(HandoverScreen screen, PanelState state)
-    {
-        if (screen == null || state == null || !state.DoneButtonLayoutCaptured)
-            return;
-
-        var doneRect = screen.DoneButton?.transform as RectTransform;
-        if (doneRect == null)
-            return;
-
-        doneRect.anchorMin = state.DoneButtonOriginalAnchorMin;
-        doneRect.anchorMax = state.DoneButtonOriginalAnchorMax;
-        doneRect.pivot = state.DoneButtonOriginalPivot;
-        doneRect.anchoredPosition = state.DoneButtonOriginalAnchoredPos;
-        doneRect.localScale = state.DoneButtonOriginalScale;
     }
 
     private static void EnsureBackpackVisuals(PanelState state)
@@ -3596,6 +3616,12 @@ public static class HandoverScreenPatch
         );
     }
 
+    private static Vector2 GetDedicatedHandoverBackpackPosition()
+    {
+        var config = Configuration.Instance;
+        return new Vector2(config.HandoverOverlayOffsetX, config.HandoverOverlayOffsetY);
+    }
+
     private static Vector2 GetHandoverBackpackPosition(PanelState state)
     {
         var config = Configuration.Instance;
@@ -3988,6 +4014,5 @@ public static class HandoverScreenPatch
         SetHeaderPairActive(state.SourceTitleLabel, state.SourceSubtitleLabel, true);
         if (state.VehicleContainer != null)
             state.VehicleContainer.anchoredPosition = state.VehicleOriginalAnchoredPos;
-        RestoreDoneButtonLayout(screen, state);
     }
 }

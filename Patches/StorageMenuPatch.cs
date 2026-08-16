@@ -7,6 +7,7 @@ using PackRat.Extensions;
 using PackRat.Helpers;
 using PackRat.Logic;
 using PackRat.Networking;
+using PackRat.Profiling;
 using PackRat.Routing;
 using PackRat.Shops;
 using PackRat.Storage;
@@ -278,6 +279,11 @@ public static class StorageMenuPatch
         /// run inside the hotkey menu, storage panels, stations, and handover screens.
         /// </summary>
         public Action RefreshAction;
+        public Action ApplyRefreshAction;
+        public Action ShowSettingsAction;
+        public int LastRefreshFrame = -1;
+        public bool RefreshPending;
+        public bool RefreshInProgress;
         public RectTransform PresentationRoot;
         public RectTransform VisualRoot;
         public RectTransform HeaderRoot;
@@ -292,6 +298,7 @@ public static class StorageMenuPatch
         public RectTransform SettingsCard;
         public RectTransform SettingsTabsRoot;
         public RectTransform SettingsContentRoot;
+        public ScrollRect SettingsScrollRect;
         public RectTransform SettingsGeneralPage;
         public RectTransform SettingsThemePage;
         public RectTransform SettingsTiersPage;
@@ -382,6 +389,13 @@ public static class StorageMenuPatch
         public CanvasGroup VisualCanvasGroup;
         public CanvasGroup SettingsRootCanvasGroup;
         public CanvasGroup SettingsCardCanvasGroup;
+        public ItemSlotUI[] PointerBlockingSurfaceSlotUis;
+        public bool PointerBlockingInputCaptureActive;
+        public bool PointerBlockingVisualInputSuspended;
+        public bool PointerBlockingPreviousVisualBlocksRaycasts;
+        public bool PointerBlockingPreviousVisualInteractable;
+        public readonly List<StandaloneModalGraphicRaycastState> PointerBlockingSlotGraphics =
+            new List<StandaloneModalGraphicRaycastState>();
         public CanvasGroup DropdownCanvasGroup;
         public RectTransform PageWipeRoot;
         public RectTransform PageWipeBlock;
@@ -402,6 +416,8 @@ public static class StorageMenuPatch
         public int TabMotionGeneration;
         public int PageWipeMotionGeneration;
         public int LastPresentedSettingsPage = -1;
+        public StandaloneBackpackSettingsPage SettingsScrollPage;
+        public readonly float[] SettingsScrollPositions = { 1f, 1f, 1f, 1f, 1f, 1f };
         public int PendingPageWipeDirection;
         public RectTransform PagingRoot;
         public Button PrevButton;
@@ -537,10 +553,18 @@ public static class StorageMenuPatch
         StorageMenuSlotCapacities[__instance.GetInstanceID()] = CaptureStorageMenuSlotCapacityState(__instance, nativeSlots);
     }
 
+    private sealed class StandaloneModalGraphicRaycastState
+    {
+        public Graphic Graphic;
+        public bool RaycastTarget;
+    }
+
     [HarmonyPatch("Open", [typeof(IItemSlotOwner), typeof(string), typeof(string), typeof(S1Action)])]
     [HarmonyPostfix]
     public static void Open(StorageMenu __instance, IItemSlotOwner owner, string title, string subtitle, S1Action onClosedCallback)
     {
+        using var profile = UiProfiler.Measure("storage_menu", "open_postfix",
+            $"title={title};owner={owner?.GetType().FullName};slots={owner?.ItemSlots?.Count ?? 0}");
         if (IsBackpackOwner(owner))
         {
             ModLogger.Info($"[BackpackUI] StorageMenu standalone branch: title='{title}', container='{__instance.Container?.name}', slots={owner.ItemSlots.Count}.");
@@ -562,16 +586,28 @@ public static class StorageMenuPatch
     [HarmonyPostfix]
     public static void OpenStorageEntity(StorageMenu __instance, StorageEntity entity, S1Action onClosedCallback)
     {
+        using var profile = UiProfiler.IsEnabled
+            ? UiProfiler.Measure("storage_menu", "open_entity_postfix",
+                $"entity={entity?.gameObject?.name};slots={entity?.ItemSlots?.Count ?? 0}")
+            : default;
         if (entity == null)
             return;
 
-        RestoreStandaloneBackpackSlotCapacity(__instance);
+        // This postfix runs after the game has configured the vehicle/rack layout. Return only
+        // Normally CloseMenu has already completed this cleanup. If the game directly replaces
+        // an open hotkey menu, cancel PackRat presentation first and restore immutable geometry
+        // last so the reset cannot reapply the backpack card anchor.
+        var replacedHotkeyBackpack = IsHotkeyBackpackOpen(__instance);
+        RestoreStandaloneBackpackLabels(__instance, restoreNativePresentation: false);
+        RestoreStandaloneBackpackSlotCapacity(__instance, restoreCapturedGeometry: replacedHotkeyBackpack);
+        ProfileNativeStorageMenuGeometry("storage_entity_post_restore", __instance);
 
         ModLogger.Info(
             $"[BackpackUI] StorageMenu storage-entity branch: entity='{entity.gameObject?.name}', " +
             $"slots={entity.ItemSlots?.Count ?? 0}."
         );
         ApplyBackpackSidePanel(__instance, entity);
+        ProfileNativeStorageMenuGeometry("storage_entity_post_side_panel", __instance);
     }
 
     /// <summary>
@@ -583,84 +619,65 @@ public static class StorageMenuPatch
         if (menu == null)
             return;
 
-        RestoreStandaloneBackpackSlotCapacity(menu);
-        RestoreStandaloneBackpackLabels(menu);
+        // Vanilla has already bound this owner when our postfix runs. Do not rebind its
+        // ItemSlotUIs or owner-specific geometry. Handle the defensive direct-replacement case
+        // with the same cleanup-first, native-restore-last ordering used by CloseMenu.
+        var replacedHotkeyBackpack = IsHotkeyBackpackOpen(menu);
+        RestoreStandaloneBackpackLabels(menu, restoreNativePresentation: false);
+        RestoreStandaloneBackpackSlotCapacity(menu, restoreCapturedGeometry: replacedHotkeyBackpack);
+        ProfileNativeStorageMenuGeometry("storage_owner_post_restore", menu);
 
-        // Employee inventories use StorageMenu, but their title, native slots, and close button
-        // are already positioned by the employee interaction. Keep that game-owned layout intact
-        // and add only PackRat's independent side panel. Running the generic storage geometry
-        // below moves the employee slot container into the PackRat card on some IL2CPP clients.
-        if (IsNpcInventoryOwner(owner, title))
-        {
-            ApplyBackpackSidePanel(menu, owner, allowNpcInventory: true);
-            return;
-        }
-
-        if (owner != null)
-        {
-            for (var i = 0; i < menu.SlotsUIs.Length; i++)
-            {
-                var slotUi = menu.SlotsUIs[i];
-                if (slotUi == null)
-                    continue;
-
-                ResetSlotUi(slotUi);
-                slotUi.ClearSlot();
-                if (owner.ItemSlots.Count > i)
-                {
-                    slotUi.gameObject.SetActive(true);
-                    slotUi.AssignSlot(owner.ItemSlots[i]);
-                }
-                else
-                {
-                    slotUi.gameObject.SetActive(false);
-                }
-            }
-        }
-
-        var spacing = menu.SlotGridLayout.cellSize.y + menu.SlotGridLayout.spacing.y;
-        menu.CloseButtonContainer.anchoredPosition = new Vector2(
-            0f,
-            menu.SlotGridLayout.constraintCount * -spacing - menu.CloseButtonContainer.sizeDelta.y
-        );
-
-        if (menu.SlotGridLayout.constraintCount <= 4)
-        {
-            menu.Container.localPosition = Vector3.zero;
-        }
-        else
-        {
-            menu.Container.localPosition = new Vector3(
-                0f,
-                (menu.SlotGridLayout.constraintCount - 4) * spacing,
-                0f
-            );
-        }
-
-        ApplyBackpackSidePanel(menu, owner);
+        // Employee inventories are valid side-panel hosts, but the host's native geometry stays
+        // entirely game-owned just like every other non-backpack StorageMenu owner.
+        ApplyBackpackSidePanel(menu, owner, allowNpcInventory: IsNpcInventoryOwner(owner, title));
     }
 
     [HarmonyPatch("CloseMenu")]
     [HarmonyPrefix]
     public static void CloseMenu(StorageMenu __instance)
     {
-        if (IsStandaloneBackpackOpen(__instance) || _backpackQuickMoveEditSessionActive)
+        using var profile = UiProfiler.Measure("storage_menu", "close_prefix",
+            $"standalone={IsStandaloneBackpackOpen(__instance)};quickMove={_quickMoveActive}");
+        UiProfiler.Event("storage_menu", "closing",
+            $"standalone={IsStandaloneBackpackOpen(__instance)};quickMove={_quickMoveActive}");
+        var wasHotkeyBackpack = IsHotkeyBackpackOpen(__instance);
+        if (wasHotkeyBackpack || _backpackQuickMoveEditSessionActive)
         {
             RecordStandaloneRecentChanges(__instance);
             BackpackStateSyncManager.CompleteLocalBackpackEdit();
         }
 
-        RestoreStandaloneBackpackSlotCapacity(__instance);
-
+        // Cancel and snap every PackRat presentation coroutine before restoring the native
+        // surface. PresentationRoot is the shared SlotContainer for the direct hotkey view, so
+        // running this reset after geometry restoration would silently put the PackRat card
+        // anchor back onto the next vanilla owner.
         HideBackpackSidePanel(__instance);
         HideStandaloneBackpackPaging(__instance);
-        RestoreStandaloneBackpackLabels(__instance);
+        RestoreStandaloneBackpackLabels(__instance, restoreNativePresentation: wasHotkeyBackpack);
+
+        // The hotkey is the only path that changes StorageMenu's native geometry. Restore its
+        // immutable Awake snapshot as the final layout operation after every PackRat animation
+        // has been cancelled and snapped. Native owners subsequently keep their own grid and
+        // Done-button values.
+        RestoreStandaloneBackpackSlotCapacity(__instance, restoreCapturedGeometry: wasHotkeyBackpack);
+        if (wasHotkeyBackpack)
+            ProfileNativeStorageMenuGeometry("post_backpack_restore", __instance);
+
         _quickMoveActive = false;
         _backpackQuickMoveEditSessionActive = false;
         ActiveInventorySlots.Clear();
         ActiveStorageSlots.Clear();
         ActiveBackpackSlots.Clear();
     }
+
+#if MONO
+    [HarmonyPatch("CloseMenu")]
+    [HarmonyPostfix]
+    public static void CloseMenuMonoCameraFallback()
+    {
+        PlayerBackpack.Instance?.ReleaseMonoStandaloneCameraLock();
+    }
+#endif
 
     [HarmonyPatch(typeof(ItemUIManager), "GetQuickMoveSlots")]
     [HarmonyPostfix]
@@ -941,8 +958,12 @@ public static class StorageMenuPatch
         // Drag/drop remains game-owned, but the tray reads the same backing slots. Refresh its
         // lightweight aggregate only when quantities actually change so it stays current without
         // rebuilding UI every frame.
+        if (quantitiesChanged && !state.MetricsTrayExpanded)
+            state.MetricsTrayFingerprint = null;
+
         var shouldRefreshMetrics = quantitiesChanged || Time.unscaledTime >= state.NextMetricsTrayRefreshTime;
-        if (shouldRefreshMetrics && state.IsHotkeyBackpack && state.MetricsTrayRoot != null)
+        if (shouldRefreshMetrics && state.IsHotkeyBackpack && state.MetricsTrayExpanded &&
+            state.MetricsTrayRoot != null)
         {
             state.NextMetricsTrayRefreshTime = Time.unscaledTime + 1f;
             RefreshStandaloneMetricsTray(state, GetStandaloneSourceSlots(state));
@@ -1103,11 +1124,11 @@ public static class StorageMenuPatch
 
     /// <summary>
     /// Returns the shared StorageMenu to its exact prefab slot array. The PackRat overflow views
-    /// are kept inactive and outside that array so they can be reused on the next hotkey open;
-    /// this must still run before a trunk opens because the game reuses the same menu instance
-    /// for every storage owner.
+    /// are kept inactive and outside that array so they can be reused on the next hotkey open.
+    /// Captured prefab geometry is optional because a non-backpack Open postfix runs after the
+    /// game has already applied the current owner's layout.
     /// </summary>
-    private static void RestoreStandaloneBackpackSlotCapacity(StorageMenu menu)
+    private static void RestoreStandaloneBackpackSlotCapacity(StorageMenu menu, bool restoreCapturedGeometry)
     {
         if (menu == null || !StorageMenuSlotCapacities.TryGetValue(menu.GetInstanceID(), out var state))
             return;
@@ -1115,7 +1136,15 @@ public static class StorageMenuPatch
         if (state.NativeSlots != null)
             menu.SlotsUIs = state.NativeSlots;
 
-        RestoreNativeStorageMenuGeometry(menu, state);
+        // Favorite controls are created on the shared native slot views while the direct
+        // hotkey backpack is open. Those views are reused by every vanilla StorageMenu owner,
+        // so make them inert before the game displays an employee, trunk, rack, or station.
+        HideStandaloneFavoriteControls(state.NativeSlots);
+
+        // The original snapshot is only a cleanup contract for PackRat's direct hotkey view.
+        // Calling it after vanilla Open overwrites the layout that the current owner just set.
+        if (restoreCapturedGeometry)
+            RestoreNativeStorageMenuGeometry(menu, state);
 
         for (var i = 0; i < state.AddedBackpackSlots.Count; i++)
         {
@@ -1127,22 +1156,59 @@ public static class StorageMenuPatch
         }
     }
 
+    /// <summary>
+    /// Disables PackRat's direct-backpack favorite affordance on a game-owned slot before that
+    /// slot is returned to vanilla. The control is intentionally retained and can be re-used on
+    /// the next hotkey open; it simply cannot remain visible or clickable on another owner.
+    /// </summary>
+    private static void HideStandaloneFavoriteControls(ItemSlotUI[] slotUis)
+    {
+        if (slotUis == null)
+            return;
+
+        for (var i = 0; i < slotUis.Length; i++)
+        {
+            var slotUi = slotUis[i];
+            if (slotUi == null)
+                continue;
+
+            var favorite = slotUi.transform.Find("PackRat_FavoriteToggle");
+            if (favorite != null)
+                favorite.gameObject.SetActive(false);
+        }
+    }
+
     private static StorageMenuSlotCapacityState CaptureStorageMenuSlotCapacityState(StorageMenu menu,
         ItemSlotUI[] nativeSlots)
     {
         var state = new StorageMenuSlotCapacityState
         {
-            NativeSlots = nativeSlots,
-            NativeContainerLocalPosition = menu?.Container != null ? menu.Container.localPosition : Vector3.zero,
-            NativeCloseButtonPosition = menu?.CloseButtonContainer != null
-                ? menu.CloseButtonContainer.anchoredPosition
-                : Vector2.zero,
-            NativeCloseButtonScale = menu?.CloseButtonContainer != null
-                ? menu.CloseButtonContainer.localScale
-                : Vector3.one
+            NativeSlots = nativeSlots
         };
 
-        var slotContainer = menu?.SlotContainer;
+        CaptureNativeStorageMenuGeometry(menu, state);
+        return state;
+    }
+
+    /// <summary>
+    /// Captures the shared menu's immutable native presentation at Awake. Vanilla reuses the
+    /// same slot surface for every owner and does not reset its transform in Open or CloseMenu,
+    /// so this snapshot must never be refreshed from an animated or previously modified state.
+    /// </summary>
+    private static void CaptureNativeStorageMenuGeometry(StorageMenu menu, StorageMenuSlotCapacityState state)
+    {
+        if (menu == null || state == null)
+            return;
+
+        state.NativeContainerLocalPosition = menu.Container != null ? menu.Container.localPosition : Vector3.zero;
+        state.NativeCloseButtonPosition = menu.CloseButtonContainer != null
+            ? menu.CloseButtonContainer.anchoredPosition
+            : Vector2.zero;
+        state.NativeCloseButtonScale = menu.CloseButtonContainer != null
+            ? menu.CloseButtonContainer.localScale
+            : Vector3.one;
+
+        var slotContainer = menu.SlotContainer;
         if (slotContainer != null)
         {
             state.NativeSlotAnchorMin = slotContainer.anchorMin;
@@ -1153,7 +1219,7 @@ public static class StorageMenuPatch
             state.NativeSlotScale = slotContainer.localScale;
         }
 
-        var grid = menu?.SlotGridLayout;
+        var grid = menu.SlotGridLayout;
         if (grid != null)
         {
             state.NativeGridStartAxis = grid.startAxis;
@@ -1167,8 +1233,36 @@ public static class StorageMenuPatch
                 ? new RectOffset()
                 : new RectOffset(padding.left, padding.right, padding.top, padding.bottom);
         }
+    }
 
-        return state;
+    /// <summary>
+    /// Emits a compact snapshot of game-owned storage geometry for a developer-profiler run.
+    /// Keep all transform reads and string formatting behind the setting so ordinary play pays
+    /// only the single enabled-state check at these lifecycle boundaries.
+    /// </summary>
+    private static void ProfileNativeStorageMenuGeometry(string phase, StorageMenu menu)
+    {
+        if (!UiProfiler.IsEnabled || menu == null)
+            return;
+
+        var container = menu.Container;
+        var slotContainer = menu.SlotContainer;
+        var grid = menu.SlotGridLayout;
+        var closeButton = menu.CloseButtonContainer;
+        var containerPosition = container != null ? container.localPosition : Vector3.zero;
+        var slotPosition = slotContainer != null ? slotContainer.anchoredPosition : Vector2.zero;
+        var slotSize = slotContainer != null ? slotContainer.sizeDelta : Vector2.zero;
+        var slotScale = slotContainer != null ? slotContainer.localScale : Vector3.one;
+        var closePosition = closeButton != null ? closeButton.anchoredPosition : Vector2.zero;
+        var closeScale = closeButton != null ? closeButton.localScale : Vector3.one;
+
+        UiProfiler.Event("storage_menu", "native_geometry",
+            $"phase={phase};container=({containerPosition.x:0.##},{containerPosition.y:0.##},{containerPosition.z:0.##});" +
+            $"slot=({slotPosition.x:0.##},{slotPosition.y:0.##});size=({slotSize.x:0.##},{slotSize.y:0.##});" +
+            $"slotScale=({slotScale.x:0.##},{slotScale.y:0.##},{slotScale.z:0.##});" +
+            $"grid={grid?.constraint};count={grid?.constraintCount ?? 0};axis={grid?.startAxis};" +
+            $"close=({closePosition.x:0.##},{closePosition.y:0.##});" +
+            $"closeScale=({closeScale.x:0.##},{closeScale.y:0.##},{closeScale.z:0.##})");
     }
 
     private static void RestoreNativeStorageMenuGeometry(StorageMenu menu, StorageMenuSlotCapacityState state)
@@ -1219,6 +1313,8 @@ public static class StorageMenuPatch
     /// </summary>
     private static void ApplyStandaloneBackpackSurface(StandaloneBackpackSurface surface)
     {
+        using var profile = UiProfiler.Measure("browser", "apply_surface",
+            $"view={surface?.LayoutView};owner={surface?.OwnerId};visualCapacity={surface?.VisualSlotCapacity}");
         if (surface?.SlotUIs == null || surface.SlotGridLayout == null || surface.SlotContainer == null ||
             surface.Container == null)
             return;
@@ -1240,7 +1336,12 @@ public static class StorageMenuPatch
         state.DoneButton = surface.PositionCloseControl && surface.CloseButtonContainer != null
             ? surface.CloseButtonContainer.GetComponentInChildren<Button>(includeInactive: true)
             : null;
-        state.RefreshAction = () => ApplyStandaloneBackpackSurface(surface);
+        state.ApplyRefreshAction = () => ApplyStandaloneBackpackSurface(surface);
+        state.RefreshAction = () => RequestStandaloneBackpackRefresh(state);
+        state.ShowSettingsAction = () => EnsureStandaloneSettingsPanel(surface, state);
+        state.LastRefreshFrame = Time.frameCount;
+        state.RefreshPending = false;
+        state.PointerBlockingSurfaceSlotUis = surface.SlotUIs;
         state.IsOpen = true;
         if (!state.IsHotkeyBackpack)
             state.EmbeddedSession.Open(surface.OwnerId != 0 ? surface.OwnerId : surface.Id);
@@ -1259,6 +1360,7 @@ public static class StorageMenuPatch
         UpdateStandaloneBackpackPresentationAnchor(surface, state);
         EnsureStandaloneBackpackVisuals(surface, state, backpackSlots.Count, CountUsedStandaloneSlots(backpackSlots),
             displaySlots.Count, totalPages);
+        UpdateStandalonePointerBlockingInputCapture(state);
         var chromeMilliseconds = timing?.ElapsedMilliseconds ?? 0L;
         var revealPageWipe = BeginStandalonePageWipe(surface, state);
 
@@ -1337,7 +1439,11 @@ public static class StorageMenuPatch
         if (revealPageWipe)
             RevealStandalonePageWipe(state);
 
-        surface.Container.localPosition = Vector3.zero;
+        // Only the direct hotkey surface borrows the game's StorageMenu container. Embedded
+        // callers own and position their hosts; normalizing those here would silently erase a
+        // station, storage, or handover layout decision and recreate the shared-owner bug.
+        if (surface.PositionCloseControl)
+            surface.Container.localPosition = Vector3.zero;
         var backpackScale = GetStandaloneBackpackScale(surface.LayoutView);
         if (surface.PositionCloseControl && surface.CloseButtonContainer != null)
         {
@@ -1375,6 +1481,8 @@ public static class StorageMenuPatch
     internal static void ApplyEmbeddedBackpackBrowser(RectTransform hostRoot, RectTransform slotContainer,
         GridLayoutGroup slotGridLayout, ItemSlotUI[] slotUis, int layoutView, int ownerId = 0)
     {
+        using var profile = UiProfiler.Measure("embedded", "apply_backpack_browser",
+            $"view={layoutView};owner={ownerId};slotUis={slotUis?.Length ?? 0}");
         if (hostRoot == null || slotContainer == null || slotGridLayout == null || slotUis == null)
             return;
 
@@ -1416,6 +1524,8 @@ public static class StorageMenuPatch
         GridLayoutGroup slotGridLayout, ItemSlotUI[] slotUis, int layoutView, Func<List<ItemSlot>> slotProvider,
         string displayTitle, int ownerId = 0)
     {
+        using var profile = UiProfiler.Measure("embedded", "apply_inventory_browser",
+            $"view={layoutView};owner={ownerId};slotUis={slotUis?.Length ?? 0}");
         if (hostRoot == null || slotContainer == null || slotGridLayout == null || slotUis == null ||
             slotProvider == null)
             return;
@@ -2168,6 +2278,7 @@ public static class StorageMenuPatch
             return;
 
         state.MetricsTrayExpanded = !state.MetricsTrayExpanded;
+        UiProfiler.Event("metrics", "toggled", $"expanded={state.MetricsTrayExpanded}");
         if (state.MetricsTrayExpanded)
             RefreshStandaloneMetricsTray(state, GetStandaloneSourceSlots(state));
         PlayStandaloneMetricsTrayMotion(state);
@@ -2253,6 +2364,8 @@ public static class StorageMenuPatch
 
     private static void RefreshStandaloneMetricsTray(StandaloneBackpackState state, List<ItemSlot> backpackSlots)
     {
+        using var profile = UiProfiler.Measure("metrics", "refresh",
+            $"slots={backpackSlots?.Count ?? 0};expanded={state?.MetricsTrayExpanded}");
         if (state?.MetricsTrayContent == null)
             return;
 
@@ -3023,6 +3136,7 @@ public static class StorageMenuPatch
             state.SearchAction = value =>
             {
                 state.SearchTerm = value ?? string.Empty;
+                UiProfiler.Event("search", "changed", $"length={state.SearchTerm.Length}");
                 state.CurrentPage = 0;
                 // Search changes the available filter values. A popup built from the previous
                 // projection is no longer authoritative and can retain an old highlight, so
@@ -3228,6 +3342,7 @@ public static class StorageMenuPatch
             state.SlotsPanelRoot.SetParent(slotContainer, worldPositionStays: false);
         }
 
+        state.SlotsPanelRoot.gameObject.SetActive(true);
         // VisualRoot remains the first child and owns the dark card surface. The panel is just
         // above it but below the game's live ItemSlotUI instances.
         state.SlotsPanelRoot.SetSiblingIndex(Mathf.Min(1, slotContainer.childCount - 1));
@@ -3517,8 +3632,34 @@ public static class StorageMenuPatch
     /// </summary>
     internal static void PrewarmStandaloneAssets()
     {
+        using var profile = UiProfiler.Measure("prewarm", "standalone_assets");
         GetStandaloneSettingsCogSprite();
         GetRoundedUiSprite();
+    }
+
+    /// <summary>
+    /// Builds the reusable PackRat-owned slot pools and shared-browser chrome while the player
+    /// is entering the Main scene. The native StorageMenu array is restored immediately and no
+    /// game-owned layout is opened or reformatted during this prewarm.
+    /// </summary>
+    internal static void PrewarmStandaloneSurfaces(StorageMenu menu)
+    {
+        using var profile = UiProfiler.Measure("prewarm", "standalone_surfaces");
+        if (menu == null)
+            return;
+
+        if (EnsureStandaloneBackpackSlotCapacity(menu))
+            RestoreStandaloneBackpackSlotCapacity(menu, restoreCapturedGeometry: false);
+
+        var panel = EnsureBackpackPanel(menu);
+        if (panel?.Container == null || panel.SlotContainer == null || panel.SlotGridLayout == null ||
+            panel.SlotUIs == null)
+            return;
+
+        panel.Container.gameObject.SetActive(false);
+        ApplyEmbeddedBackpackBrowser(panel.Container, panel.SlotContainer, panel.SlotGridLayout, panel.SlotUIs,
+            layoutView: (int)StandaloneBackpackLayoutView.Storage);
+        HideBackpackSidePanel(menu);
     }
 
     private static Sprite GetRoundedUiSprite()
@@ -3804,6 +3945,7 @@ public static class StorageMenuPatch
             root.offsetMax = Vector2.zero;
             var background = settingsGo.AddComponent<Image>();
             background.color = new Color32(4, 9, 13, 112);
+            background.raycastTarget = true;
 
             var canvas = Utils.AddComponentSafe<Canvas>(settingsGo);
             if (canvas != null)
@@ -3931,6 +4073,19 @@ public static class StorageMenuPatch
             var contentImage = content.gameObject.AddComponent<Image>();
             contentImage.color = new Color32(16, 32, 43, 238);
             state.SettingsContentRoot = content;
+            Utils.GetOrAddComponentSafe<RectMask2D>(content.gameObject);
+            var scrollRect = Utils.GetOrAddComponentSafe<ScrollRect>(content.gameObject);
+            if (scrollRect != null)
+            {
+                scrollRect.viewport = content;
+                scrollRect.horizontal = false;
+                scrollRect.vertical = true;
+                scrollRect.movementType = ScrollRect.MovementType.Clamped;
+                scrollRect.inertia = true;
+                scrollRect.decelerationRate = 0.135f;
+                scrollRect.scrollSensitivity = 24f;
+                state.SettingsScrollRect = scrollRect;
+            }
             state.SettingsGeneralPage = CreateStandaloneSettingsPage(content, "GeneralPage");
             state.SettingsThemePage = CreateStandaloneSettingsPage(content, "ThemePage");
             state.SettingsTiersPage = CreateStandaloneSettingsPage(content, "TiersPage");
@@ -3975,6 +4130,7 @@ public static class StorageMenuPatch
         if (state.SettingsOpen || state.SettingsClosing)
         {
             state.SettingsOpen = false;
+            UiProfiler.Event("settings", "toggled", $"open=false;page={state.SettingsPage}");
             state.AwaitingToggleKey = false;
             state.KeyboardSettingsControlIndex = -1;
             PlayStandaloneSettingsClose(state);
@@ -3983,11 +4139,13 @@ public static class StorageMenuPatch
 
         var openedFromKeyboard = state.KeyboardFocusKind == StandaloneBackpackKeyboardFocusKind.Control;
         state.SettingsOpen = true;
+        UiProfiler.Event("settings", "toggled", $"open=true;page={state.SettingsPage};keyboard={openedFromKeyboard}");
         state.AwaitingToggleKey = false;
         HideStandaloneDropdown(state);
         ClearStandaloneKeyboardFocus(state);
         state.KeyboardSettingsControlIndex = openedFromKeyboard ? 0 : -1;
-        state.RefreshAction?.Invoke();
+        state.ShowSettingsAction?.Invoke();
+        UpdateStandalonePointerBlockingInputCapture(state);
     }
 
     private static Image CreateStandaloneSettingsTabIndicator(RectTransform tabs)
@@ -4081,6 +4239,7 @@ public static class StorageMenuPatch
         if (state.SettingsRootCanvasGroup == null || state.SettingsCardCanvasGroup == null)
         {
             state.SettingsRoot.gameObject.SetActive(false);
+            RestoreStandalonePointerBlockingInputCapture(state);
             return;
         }
 
@@ -4094,6 +4253,7 @@ public static class StorageMenuPatch
             state.SettingsRoot.gameObject.SetActive(false);
             state.SettingsClosing = false;
             SnapStandaloneSettingsMotion(state);
+            RestoreStandalonePointerBlockingInputCapture(state);
             return;
         }
 
@@ -4128,7 +4288,97 @@ public static class StorageMenuPatch
             state.SettingsRoot.gameObject.SetActive(false);
             state.SettingsClosing = false;
             SnapStandaloneSettingsMotion(state);
+            RestoreStandalonePointerBlockingInputCapture(state);
         }
+    }
+
+    private static void UpdateStandalonePointerBlockingInputCapture(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        if (!state.SettingsOpen && !state.SettingsClosing &&
+            state.ActiveDropdown == StandaloneBackpackDropdown.None)
+        {
+            RestoreStandalonePointerBlockingInputCapture(state);
+            return;
+        }
+
+        if (!state.PointerBlockingInputCaptureActive)
+            state.PointerBlockingInputCaptureActive = true;
+
+        // A dropdown only covers part of the browser, so keep the header controls available for
+        // switching or closing it. The full settings modal owns the entire surface and therefore
+        // suspends every underlying PackRat control as well as the item-slot graphics.
+        if ((state.SettingsOpen || state.SettingsClosing) && !state.PointerBlockingVisualInputSuspended &&
+            state.VisualCanvasGroup != null)
+        {
+            state.PointerBlockingPreviousVisualBlocksRaycasts = state.VisualCanvasGroup.blocksRaycasts;
+            state.PointerBlockingPreviousVisualInteractable = state.VisualCanvasGroup.interactable;
+            state.VisualCanvasGroup.blocksRaycasts = false;
+            state.VisualCanvasGroup.interactable = false;
+            state.PointerBlockingVisualInputSuspended = true;
+        }
+
+        var slotUis = state.PointerBlockingSurfaceSlotUis;
+        if (slotUis == null)
+            return;
+
+        for (var slotIndex = 0; slotIndex < slotUis.Length; slotIndex++)
+        {
+            var slotUi = slotUis[slotIndex];
+            if (slotUi == null)
+                continue;
+
+            var graphics = slotUi.GetComponentsInChildren<Graphic>(includeInactive: true);
+            for (var graphicIndex = 0; graphicIndex < graphics.Length; graphicIndex++)
+            {
+                var graphic = graphics[graphicIndex];
+                if (graphic == null || ContainsStandaloneBlockedGraphic(state, graphic))
+                    continue;
+
+                state.PointerBlockingSlotGraphics.Add(new StandaloneModalGraphicRaycastState
+                {
+                    Graphic = graphic,
+                    RaycastTarget = graphic.raycastTarget
+                });
+                graphic.raycastTarget = false;
+            }
+        }
+    }
+
+    private static bool ContainsStandaloneBlockedGraphic(StandaloneBackpackState state, Graphic graphic)
+    {
+        for (var i = 0; i < state.PointerBlockingSlotGraphics.Count; i++)
+        {
+            if (state.PointerBlockingSlotGraphics[i].Graphic == graphic)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static void RestoreStandalonePointerBlockingInputCapture(StandaloneBackpackState state)
+    {
+        if (state == null || !state.PointerBlockingInputCaptureActive)
+            return;
+
+        for (var i = 0; i < state.PointerBlockingSlotGraphics.Count; i++)
+        {
+            var blocked = state.PointerBlockingSlotGraphics[i];
+            if (blocked?.Graphic != null)
+                blocked.Graphic.raycastTarget = blocked.RaycastTarget;
+        }
+        state.PointerBlockingSlotGraphics.Clear();
+
+        if (state.PointerBlockingVisualInputSuspended && state.VisualCanvasGroup != null)
+        {
+            state.VisualCanvasGroup.blocksRaycasts = state.PointerBlockingPreviousVisualBlocksRaycasts;
+            state.VisualCanvasGroup.interactable = state.PointerBlockingPreviousVisualInteractable;
+        }
+
+        state.PointerBlockingVisualInputSuspended = false;
+        state.PointerBlockingInputCaptureActive = false;
     }
 
     private static void SnapStandaloneSettingsMotion(StandaloneBackpackState state)
@@ -4186,16 +4436,21 @@ public static class StorageMenuPatch
             return;
         }
 
+        CaptureStandaloneSettingsScrollPosition(state);
         state.AwaitingToggleKey = false;
+        UiProfiler.Event("settings", "page_changed", $"from={state.SettingsPage};to={page}");
         state.SettingsPage = page;
         RefreshStandaloneSettingsPane(state);
     }
 
     private static void RefreshStandaloneSettingsPane(StandaloneBackpackState state)
     {
+        using var profile = UiProfiler.Measure("settings", "rebuild_page", $"page={state?.SettingsPage}");
         if (state?.SettingsRoot == null || !state.SettingsOpen)
             return;
 
+        if (state.SettingsScrollPage == state.SettingsPage)
+            CaptureStandaloneSettingsScrollPosition(state);
         ClearStandaloneSettingsRows(state);
         UpdateStandaloneSessionStatus(state);
         UpdateStandaloneSettingsTabs(state);
@@ -4222,6 +4477,7 @@ public static class StorageMenuPatch
                 break;
         }
 
+        RestoreStandaloneSettingsScrollPosition(state);
         RefreshStandaloneSettingsKeyboardFocusPresentation(state);
         ApplyStandaloneBackpackTheme(state);
     }
@@ -4333,7 +4589,10 @@ public static class StorageMenuPatch
         colors.normalColor = selected ? selectedColor : normalColor;
         colors.highlightedColor = selected ? selectedHoverColor : normalHoverColor;
         colors.pressedColor = selected ? new Color32(36, 103, 137, 255) : new Color32(16, 31, 42, 255);
-        colors.selectedColor = selectedColor;
+        // EventSystem selection is keyboard/pointer focus, not the logical settings page. An
+        // inactive tab must therefore retain its normal presentation even when it still owns
+        // EventSystem.currentSelectedGameObject after switching pages.
+        colors.selectedColor = selected ? selectedColor : normalColor;
         colors.disabledColor = new Color32(58, 70, 78, 150);
         colors.colorMultiplier = 1f;
         button.colors = colors;
@@ -4371,6 +4630,37 @@ public static class StorageMenuPatch
         SetStandaloneSettingsPageActive(state.SettingsLayoutPage, state.SettingsPage == StandaloneBackpackSettingsPage.Layout);
         SetStandaloneSettingsPageActive(state.SettingsRoutingPage, state.SettingsPage == StandaloneBackpackSettingsPage.Routing);
         SetStandaloneSettingsPageActive(state.SettingsMetricsPage, state.SettingsPage == StandaloneBackpackSettingsPage.Metrics);
+
+        if (state.SettingsScrollRect != null)
+        {
+            state.SettingsScrollRect.content = GetStandaloneSettingsPageRoot(state);
+            state.SettingsScrollPage = state.SettingsPage;
+        }
+    }
+
+    private static void CaptureStandaloneSettingsScrollPosition(StandaloneBackpackState state)
+    {
+        if (state?.SettingsScrollRect == null)
+            return;
+
+        var index = Mathf.Clamp((int)state.SettingsScrollPage, 0, state.SettingsScrollPositions.Length - 1);
+        state.SettingsScrollPositions[index] = state.SettingsScrollRect.verticalNormalizedPosition;
+    }
+
+    private static void RestoreStandaloneSettingsScrollPosition(StandaloneBackpackState state)
+    {
+        if (state?.SettingsScrollRect == null)
+            return;
+
+        var page = GetStandaloneSettingsPageRoot(state);
+        if (page == null)
+            return;
+
+        Canvas.ForceUpdateCanvases();
+        LayoutRebuilder.ForceRebuildLayoutImmediate(page);
+        var index = Mathf.Clamp((int)state.SettingsPage, 0, state.SettingsScrollPositions.Length - 1);
+        state.SettingsScrollRect.verticalNormalizedPosition = state.SettingsScrollPositions[index];
+        state.SettingsScrollRect.StopMovement();
     }
 
     private static void SetStandaloneSettingsPageActive(RectTransform page, bool active)
@@ -4414,6 +4704,16 @@ public static class StorageMenuPatch
             config.BackpackSyncDebugLogging = value;
             PersistStandaloneSettings(state);
             ModLogger.Info($"[PackRat] Backpack sync diagnostics {(value ? "enabled" : "disabled")}.");
+        });
+        AddStandaloneSettingsToggleRow(state, "DEVELOPER PROFILER", config.EnableDeveloperProfiler, value =>
+        {
+            config.EnableDeveloperProfiler = value;
+            UiProfiler.ApplyEnabledState(value);
+            PersistStandaloneSettings(state);
+            if (value && UiProfiler.IsEnabled)
+                ModLogger.Info($"[PackRat] Developer Profiler enabled. Trace: {UiProfiler.OutputPath}");
+            else if (!value)
+                ModLogger.Info("[PackRat] Developer Profiler disabled; the active trace was closed.");
         });
         AddStandaloneSettingsToggleRow(state, "UI ANIMATIONS", config.EnableUiAnimations, value =>
         {
@@ -5131,7 +5431,11 @@ public static class StorageMenuPatch
 
     private static RectTransform CreateStandaloneSettingsPage(RectTransform parent, string name)
     {
-        var page = CreateStandaloneSettingsRegion(parent, name, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero);
+        var page = CreateStandaloneSettingsRegion(parent, name, new Vector2(0f, 1f), Vector2.one,
+            Vector2.zero, Vector2.zero);
+        page.pivot = new Vector2(0.5f, 1f);
+        page.anchoredPosition = Vector2.zero;
+        page.sizeDelta = Vector2.zero;
         var layout = page.gameObject.AddComponent<VerticalLayoutGroup>();
         layout.padding = new RectOffset(6, 6, 6, 6);
         layout.spacing = 4f;
@@ -5140,6 +5444,9 @@ public static class StorageMenuPatch
         layout.childControlHeight = true;
         layout.childForceExpandWidth = true;
         layout.childForceExpandHeight = false;
+        var sizeFitter = page.gameObject.AddComponent<ContentSizeFitter>();
+        sizeFitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+        sizeFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
         page.gameObject.SetActive(false);
         return page;
     }
@@ -5266,7 +5573,20 @@ public static class StorageMenuPatch
     private static void PersistStandaloneSettings(StandaloneBackpackState state,
         bool applyCurrentTier = false, bool syncSessionSettings = false)
     {
-        Configuration.Instance.Save();
+        using var profile = UiProfiler.Measure("settings", "persist",
+            $"page={state?.SettingsPage};applyTier={applyCurrentTier};sync={syncSessionSettings}");
+        var config = Configuration.Instance;
+        UiProfiler.Event("settings", "changed",
+            $"page={state?.SettingsPage};animations={config.EnableUiAnimations};reducedMotion={config.ReduceUiMotion};" +
+            $"developerProfiler={config.EnableDeveloperProfiler};" +
+            $"theme={config.BackpackUiTheme};smartRouting={config.EnableSmartRouting};" +
+            $"metrics={config.ShowMetricsTray};metricsScale={config.MetricsFontScale:0.00};" +
+            $"backpack=({config.BackpackOverlayOffsetX:0},{config.BackpackOverlayOffsetY:0},{config.BackpackOverlayScale:0.00});" +
+            $"storage=({config.StorageOverlayOffsetX:0},{config.StorageOverlayOffsetY:0},{config.StorageOverlayScale:0.00});" +
+            $"station=({config.StationOverlayOffsetX:0},{config.StationOverlayOffsetY:0},{config.StationOverlayScale:0.00});" +
+            $"handover=({config.HandoverOverlayOffsetX:0},{config.HandoverOverlayOffsetY:0},{config.HandoverOverlayScale:0.00});" +
+            $"applyTier={applyCurrentTier};sync={syncSessionSettings}");
+        config.Save();
         if (applyCurrentTier)
             PlayerBackpack.Instance?.EnsureCorrectTierApplied();
         if (syncSessionSettings)
@@ -5392,6 +5712,7 @@ public static class StorageMenuPatch
     private static void ShowStandaloneDropdown(StandaloneBackpackState state,
         StandaloneBackpackDropdown dropdown, bool toggleIfAlreadyOpen = true)
     {
+        using var profile = UiProfiler.Measure("filters", "show_dropdown", $"dropdown={dropdown}");
         if (state?.DropdownRoot == null)
             return;
 
@@ -5402,6 +5723,7 @@ public static class StorageMenuPatch
         }
 
         var options = BuildStandaloneDropdownOptions(state, dropdown);
+        UiProfiler.Event("filters", "dropdown_options", $"dropdown={dropdown};count={options.Count}");
         if (options.Count == 0)
         {
             HideStandaloneDropdown(state);
@@ -5409,6 +5731,7 @@ public static class StorageMenuPatch
         }
 
         state.ActiveDropdown = dropdown;
+        UpdateStandalonePointerBlockingInputCapture(state);
         state.DropdownOptions.Clear();
         state.DropdownOptions.AddRange(options);
         var height = 6f + (options.Count * 24f);
@@ -5543,6 +5866,7 @@ public static class StorageMenuPatch
 
         var previousSortMode = state.SortMode;
         state.SortMode = sortMode;
+        UiProfiler.Event("sort", "mode_changed", $"from={previousSortMode};to={sortMode}");
         UpdateStandaloneFilterLabels(state);
         ModLogger.Info($"[BackpackUI] Sort changed: {GetSortModeLabel(previousSortMode)} -> {GetSortModeLabel(sortMode)} "
             + $"({GetSortDirectionLabel(state.SortDirection)}).");
@@ -5557,6 +5881,7 @@ public static class StorageMenuPatch
 
         var previousSortDirection = state.SortDirection;
         state.SortDirection = sortDirection;
+        UiProfiler.Event("sort", "direction_changed", $"from={previousSortDirection};to={sortDirection}");
         UpdateStandaloneFilterLabels(state);
         ModLogger.Info($"[BackpackUI] Sort order changed: {GetSortDirectionLabel(previousSortDirection)} -> "
             + $"{GetSortDirectionLabel(sortDirection)}.");
@@ -5570,6 +5895,7 @@ public static class StorageMenuPatch
     /// </summary>
     private static void OrganizeStandaloneBackpack(StandaloneBackpackState state)
     {
+        using var profile = UiProfiler.Measure("organize", "execute");
         var backpackSlots = GetStandaloneSourceSlots(state);
         if (!CanOrganizeStandaloneBackpack(state, backpackSlots))
             return;
@@ -5700,6 +6026,7 @@ public static class StorageMenuPatch
     /// </summary>
     private static void ConsolidateStandaloneBackpack(StandaloneBackpackState state)
     {
+        using var profile = UiProfiler.Measure("stack", "plan");
         var backpackSlots = GetStandaloneSourceSlots(state);
         if (state == null || state.IsConsolidating || !state.IsHotkeyBackpack ||
             backpackSlots == null || backpackSlots.Count < 2)
@@ -5724,6 +6051,7 @@ public static class StorageMenuPatch
     private static IEnumerator ExecuteStandaloneStackPlan(StandaloneBackpackState state,
         List<ItemSlot> slotSnapshot, StackPlan plan)
     {
+        using var profile = UiProfiler.Measure("stack", "execute", $"moves={plan?.Transfers?.Count ?? 0}");
         const int operationsPerFrame = 24;
         var stopwatch = Stopwatch.StartNew();
         var movedQuantity = 0;
@@ -6090,6 +6418,8 @@ public static class StorageMenuPatch
             return;
 
         var option = state.DropdownOptions[optionIndex];
+        UiProfiler.Event("filters", "option_selected",
+            $"dropdown={state.ActiveDropdown};index={optionIndex};label={option.Label}");
         HideStandaloneDropdown(state);
         option.SelectAction?.Invoke();
     }
@@ -6114,6 +6444,7 @@ public static class StorageMenuPatch
             state.DropdownRoot.localScale = Vector3.one;
             state.DropdownRoot.gameObject.SetActive(false);
         }
+        UpdateStandalonePointerBlockingInputCapture(state);
     }
 
     private static void PlayStandaloneDropdownOpen(StandaloneBackpackState state)
@@ -6235,24 +6566,30 @@ public static class StorageMenuPatch
         return label;
     }
 
-    private static void RestoreStandaloneBackpackLabels(StorageMenu menu)
+    private static void RestoreStandaloneBackpackLabels(StorageMenu menu, bool restoreNativePresentation)
     {
         if (menu == null)
             return;
 
-        if (menu.SlotContainer != null)
-            menu.SlotContainer.localScale = Vector3.one;
-        if (menu.CloseButtonContainer != null)
-            menu.CloseButtonContainer.localScale = Vector3.one;
-
-        if (menu.TitleLabel != null)
-            menu.TitleLabel.gameObject.SetActive(true);
-        if (menu.SubtitleLabel != null)
-            menu.SubtitleLabel.gameObject.SetActive(true);
+        if (restoreNativePresentation)
+        {
+            if (menu.TitleLabel != null)
+                menu.TitleLabel.gameObject.SetActive(true);
+            if (menu.SubtitleLabel != null)
+                menu.SubtitleLabel.gameObject.SetActive(true);
+        }
 
         if (StandaloneBackpackPanels.TryGetValue(menu.GetInstanceID(), out var state))
         {
-            ResetStandaloneBackpackSurfaceState(state);
+            // A closed state can still retain PresentationRoot as the native SlotContainer.
+            // Re-running the presentation snap during a later vanilla Open would put the old
+            // backpack card anchor back onto that owner. Reset only while PackRat actually has
+            // live presentation state; the original close already cancelled all generations.
+            if (state.IsOpen || state.VisualPresented || state.SettingsOpen || state.SettingsClosing ||
+                state.ActiveDropdown != StandaloneBackpackDropdown.None)
+            {
+                ResetStandaloneBackpackSurfaceState(state);
+            }
             if (state.SettingsRoot != null)
                 state.SettingsRoot.gameObject.SetActive(false);
             if (state.VisualRoot != null)
@@ -6301,6 +6638,7 @@ public static class StorageMenuPatch
 
                 state.LastPageInputFrame = Time.frameCount;
                 state.CurrentPage--;
+                UiProfiler.Event("pagination", "previous", $"page={state.CurrentPage}");
                 state.PendingPageWipeDirection = -1;
                 state.RefreshAction?.Invoke();
             };
@@ -6315,6 +6653,7 @@ public static class StorageMenuPatch
 
                 state.LastPageInputFrame = Time.frameCount;
                 state.CurrentPage++;
+                UiProfiler.Event("pagination", "next", $"page={state.CurrentPage};total={totalPages}");
                 state.PendingPageWipeDirection = 1;
                 state.RefreshAction?.Invoke();
             };
@@ -6390,6 +6729,7 @@ public static class StorageMenuPatch
     /// </summary>
     internal static void ResetEmbeddedBackpackBrowser(RectTransform hostRoot)
     {
+        UiProfiler.Event("embedded", "reset", $"host={hostRoot?.name};id={hostRoot?.GetInstanceID()}");
         if (hostRoot != null && StandaloneBackpackPanels.TryGetValue(hostRoot.GetInstanceID(), out var state))
             ResetStandaloneBackpackSurfaceState(state);
     }
@@ -6403,6 +6743,10 @@ public static class StorageMenuPatch
     /// </summary>
     internal static void RefreshOpenEmbeddedBackpackBrowsers()
     {
+        FlushPendingStandaloneBackpackRefreshes();
+        using var sampledProfile = UiProfiler.IsEnabled && Time.frameCount % 120 == 0
+            ? UiProfiler.Measure("embedded", "active_refresh_sample", $"panels={StandaloneBackpackPanels.Count}")
+            : default;
         foreach (var state in StandaloneBackpackPanels.Values.ToArray())
         {
             if (state == null || !state.IsOpen || state.IsHotkeyBackpack || state.PresentationRoot == null ||
@@ -6410,6 +6754,45 @@ public static class StorageMenuPatch
                 continue;
 
             UpdateStandaloneRecentChanges(state);
+        }
+    }
+
+    /// <summary>
+    /// Coalesces repeated invalidations raised by one logical interaction. The first refresh in
+    /// a frame remains immediate; any additional request is applied on the next player update so
+    /// the final inventory/filter state is never lost.
+    /// </summary>
+    private static void RequestStandaloneBackpackRefresh(StandaloneBackpackState state)
+    {
+        if (state == null || !state.IsOpen || state.ApplyRefreshAction == null)
+            return;
+
+        if (state.RefreshInProgress || state.LastRefreshFrame == Time.frameCount)
+        {
+            state.RefreshPending = true;
+            return;
+        }
+
+        state.RefreshInProgress = true;
+        try
+        {
+            state.ApplyRefreshAction();
+        }
+        finally
+        {
+            state.RefreshInProgress = false;
+        }
+    }
+
+    private static void FlushPendingStandaloneBackpackRefreshes()
+    {
+        foreach (var state in StandaloneBackpackPanels.Values.ToArray())
+        {
+            if (state == null || !state.RefreshPending || state.LastRefreshFrame == Time.frameCount)
+                continue;
+
+            state.RefreshPending = false;
+            RequestStandaloneBackpackRefresh(state);
         }
     }
 
@@ -6433,14 +6816,19 @@ public static class StorageMenuPatch
         state.OpenItemQuantities.Clear();
         state.RecentBaselineCaptured = false;
         state.NextSourceStateRefreshTime = 0f;
+        state.RefreshPending = false;
+        state.RefreshInProgress = false;
         state.SlotBindings.Clear();
         state.IsOpen = false;
         state.SettingsOpen = false;
         state.SettingsClosing = false;
         state.VisualPresented = false;
         state.AwaitingToggleKey = false;
+        RestoreStandalonePointerBlockingInputCapture(state);
         SnapStandaloneMotionState(state);
         HideStandaloneDropdown(state);
+        if (state.SlotsPanelRoot != null)
+            state.SlotsPanelRoot.gameObject.SetActive(false);
         if (state.SettingsRoot != null)
             state.SettingsRoot.gameObject.SetActive(false);
         if (state.SearchInput != null)
@@ -6452,6 +6840,14 @@ public static class StorageMenuPatch
         return menu != null
             && StandaloneBackpackPanels.TryGetValue(menu.GetInstanceID(), out var state)
             && state.IsOpen;
+    }
+
+    private static bool IsHotkeyBackpackOpen(StorageMenu menu)
+    {
+        return menu != null
+            && StandaloneBackpackPanels.TryGetValue(menu.GetInstanceID(), out var state)
+            && state.IsOpen
+            && state.IsHotkeyBackpack;
     }
 
     /// <summary>
@@ -7068,6 +7464,8 @@ public static class StorageMenuPatch
     private static void ApplyBackpackSidePanel(StorageMenu menu, IItemSlotOwner openedOwner,
         bool allowNpcInventory = false)
     {
+        using var profile = UiProfiler.Measure("storage_side_panel", "apply_owner",
+            $"owner={openedOwner?.GetType().FullName};npc={allowNpcInventory}");
         try
         {
             HideBackpackSidePanel(menu);
@@ -7281,6 +7679,8 @@ public static class StorageMenuPatch
     /// </summary>
     private static void ApplyBackpackSidePanel(StorageMenu menu, StorageEntity openedEntity)
     {
+        using var profile = UiProfiler.Measure("storage_side_panel", "apply_entity",
+            $"entity={openedEntity?.gameObject?.name};slots={openedEntity?.ItemSlots?.Count ?? 0}");
         try
         {
             HideBackpackSidePanel(menu);
@@ -8370,6 +8770,7 @@ public static class StorageMenuPatch
 
     private static void HideBackpackSidePanel(StorageMenu menu)
     {
+        using var profile = UiProfiler.Measure("storage_side_panel", "hide");
         if (menu == null)
             return;
 

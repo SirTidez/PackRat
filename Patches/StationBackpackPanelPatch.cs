@@ -3,6 +3,7 @@ using PackRat.Config;
 using PackRat.Extensions;
 using PackRat.Helpers;
 using PackRat.Logic;
+using PackRat.Profiling;
 using System.Reflection;
 using UnityEngine;
 using UnityEngine.UI;
@@ -117,6 +118,8 @@ public static class StationBackpackPanelPatch
 
     private static void ShowForStation(Component stationCanvas)
     {
+        using var profile = UiProfiler.Measure("station", "show",
+            $"type={stationCanvas?.GetType().FullName};id={stationCanvas?.GetInstanceID()}");
         try
         {
             HideForStation(stationCanvas);
@@ -153,6 +156,8 @@ public static class StationBackpackPanelPatch
 
     private static void HideForStation(Component stationCanvas)
     {
+        using var profile = UiProfiler.Measure("station", "hide",
+            $"type={stationCanvas?.GetType().FullName};id={stationCanvas?.GetInstanceID()}");
         if (stationCanvas == null)
             return;
 
@@ -376,22 +381,8 @@ public static class StationBackpackPanelPatch
 
     private static Transform FindOverlayParent(RectTransform stationContainer)
     {
-        try
-        {
-            var itemUiCanvas = Singleton<ItemUIManager>.Instance?.Canvas;
-            if (itemUiCanvas != null)
-                return itemUiCanvas.transform;
-        }
-        catch
-        {
-        }
-
         if (stationContainer == null)
             return null;
-
-        var canvas = stationContainer.GetComponentInParent<Canvas>();
-        if (canvas != null)
-            return canvas.transform;
 
         return stationContainer.parent;
     }
@@ -412,7 +403,7 @@ public static class StationBackpackPanelPatch
             layout.ignoreLayout = true;
     }
 
-    private static void EnsureOverlaySorting(RectTransform root, RectTransform stationContainer)
+    private static void EnsureOverlaySorting(RectTransform root, RectTransform sourceContainer)
     {
         if (root == null)
             return;
@@ -424,26 +415,44 @@ public static class StationBackpackPanelPatch
         if (rootCanvas == null)
             rootCanvas = root.gameObject.AddComponent<Canvas>();
 #endif
-
-        rootCanvas.overrideSorting = true;
-
-        var parentCanvas = root.parent != null
-            ? root.parent.GetComponentInParent<Canvas>()
-            : null;
-        if (parentCanvas != null)
+        if (rootCanvas != null)
         {
-            rootCanvas.sortingLayerID = parentCanvas.sortingLayerID;
-            // Keep the browser above the stationary station surface but below the game's
-            // transient drag icon. The previous +200 order made dragged items render beneath
-            // PackRat's panel even when the mouse correctly targeted a backpack slot.
-            rootCanvas.sortingOrder = parentCanvas.sortingOrder + 1;
-        }
-        else
-        {
-            rootCanvas.sortingOrder = 5000;
-        }
+            rootCanvas.overrideSorting = true;
+            var parentCanvas = sourceContainer != null
+                ? sourceContainer.GetComponentInParent<Canvas>()
+                : null;
+            Canvas hudCanvas = null;
+            try
+            {
+                hudCanvas = Singleton<HUD>.Instance?.canvas;
+            }
+            catch
+            {
+            }
 
-        root.SetAsLastSibling();
+            if (hudCanvas != null)
+            {
+                // ItemUIManager creates the temporary dragged icon under HUD.transform. Keep the
+                // station browser immediately below that owning canvas instead of deriving its
+                // order from station canvases, whose orders vary between station interfaces.
+                rootCanvas.sortingLayerID = hudCanvas.sortingLayerID;
+                rootCanvas.sortingOrder = hudCanvas.sortingOrder - 1;
+            }
+            else if (parentCanvas != null)
+            {
+                rootCanvas.sortingLayerID = parentCanvas.sortingLayerID;
+                rootCanvas.sortingOrder = parentCanvas.sortingOrder + 1;
+            }
+            else
+            {
+                rootCanvas.sortingOrder = 5000;
+            }
+
+            if (UiProfiler.IsEnabled)
+                UiProfiler.Event("station", "canvas_configured",
+                    $"ownerOrder={parentCanvas?.sortingOrder};hudOrder={hudCanvas?.sortingOrder};" +
+                    $"panelOrder={rootCanvas.sortingOrder};panelLayer={rootCanvas.sortingLayerID}");
+        }
 
 #if !MONO
         var raycaster = Utils.GetOrAddComponentSafe<GraphicRaycaster>(root.gameObject);
@@ -452,8 +461,8 @@ public static class StationBackpackPanelPatch
         if (raycaster == null)
             raycaster = root.gameObject.AddComponent<GraphicRaycaster>();
 #endif
-
         RegisterItemUiRaycaster(raycaster);
+        root.SetAsLastSibling();
     }
 
     private static void RegisterItemUiRaycaster(GraphicRaycaster raycaster)

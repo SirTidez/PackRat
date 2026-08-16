@@ -97,14 +97,15 @@ public static class AutoFillPlanner
         if (requirement.RemainingUnits <= 0 || eligible.Length == 0)
             return new AutoFillPlan(Array.Empty<AutoFillMove>(), 0, 0);
 
-        var maxPackageAmount = eligible.Max(candidate => candidate.PackageAmount);
-        for (var oversupply = 0; oversupply < maxPackageAmount; oversupply++)
+        // A package is only eligible when the selected packages exactly satisfy the
+        // remaining requirement.  Trying larger targets here would permit an
+        // oversized package to be moved just because it was the closest available
+        // match, which can overfill the customer's order and mutate the UI before
+        // the game can reject the transfer.
+        var counts = new int[eligible.Length];
+        var failedStates = new HashSet<long>();
+        if (TryFillExact(eligible, 0, requirement.RemainingUnits, counts, failedStates))
         {
-            var counts = new int[eligible.Length];
-            var failedStates = new HashSet<long>();
-            if (!TryFillExact(eligible, 0, requirement.RemainingUnits + oversupply, counts, failedStates))
-                continue;
-
             var moves = eligible.Select((candidate, index) => new { candidate, count = counts[index] })
                 .Where(entry => entry.count > 0)
                 .Select(entry => new AutoFillMove(entry.candidate.Source,
@@ -112,8 +113,7 @@ public static class AutoFillPlanner
                     entry.count * entry.candidate.PackageAmount))
                 .ToArray();
             var filled = moves.Sum(move => move.ProductUnits);
-            return new AutoFillPlan(moves, filled,
-                Math.Max(0, filled - requirement.RemainingUnits));
+            return new AutoFillPlan(moves, filled, 0);
         }
 
         return new AutoFillPlan(Array.Empty<AutoFillMove>(), 0, 0);

@@ -14,6 +14,11 @@
 
         <RootNamespace>PackRat</RootNamespace>
 
+        <Version>2.0.1</Version>
+        <AssemblyVersion>2.0.1.0</AssemblyVersion>
+        <FileVersion>2.0.1.0</FileVersion>
+        <InformationalVersion>2.0.1</InformationalVersion>
+
         <Configurations>Debug Mono;Release Mono;Debug IL2CPP;Release IL2CPP</Configurations>
     </PropertyGroup>
 

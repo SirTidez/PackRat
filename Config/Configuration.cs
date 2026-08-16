@@ -26,6 +26,7 @@ public class Configuration
     private readonly MelonPreferences_Entry<KeyCode> _toggleKeyEntry;
     private readonly MelonPreferences_Entry<bool> _enableSearchEntry;
     private readonly MelonPreferences_Entry<bool> _enableDebugLoggingEntry;
+    private readonly MelonPreferences_Entry<bool> _enableDeveloperProfilerEntry;
     private readonly MelonPreferences_Entry<bool> _backpackSyncDebugLoggingEntry;
     private readonly MelonPreferences_Entry<bool> _enableUiAnimationsEntry;
     private readonly MelonPreferences_Entry<bool> _reduceUiMotionEntry;
@@ -98,6 +99,11 @@ public class Configuration
             "EnableDebugLogging",
             false,
             "Enable verbose PackRat UI, lifecycle, and shop diagnostics in release builds"
+        );
+        _enableDeveloperProfilerEntry = _category.CreateEntry(
+            "EnableDeveloperProfiler",
+            false,
+            "Developer Profiler"
         );
         _enableUiAnimationsEntry = _category.CreateEntry(
             "EnableUiAnimations",
@@ -283,6 +289,7 @@ public class Configuration
     public KeyCode ToggleKey { get; set; }
     public bool EnableSearch { get; set; }
     public bool EnableDebugLogging { get; set; }
+    public bool EnableDeveloperProfiler { get; set; }
     public bool BackpackSyncDebugLogging { get; set; }
     public bool EnableUiAnimations { get; set; }
     public bool ReduceUiMotion { get; set; }
@@ -345,6 +352,7 @@ public class Configuration
         ToggleKey = _toggleKeyEntry.Value;
         EnableSearch = _enableSearchEntry.Value;
         EnableDebugLogging = _enableDebugLoggingEntry.Value;
+        EnableDeveloperProfiler = _enableDeveloperProfilerEntry.Value;
         BackpackSyncDebugLogging = _backpackSyncDebugLoggingEntry.Value;
         ModLogger.SetDebugLoggingEnabled(EnableDebugLogging);
         ModLogger.SetSyncDebugLoggingEnabled(BackpackSyncDebugLogging);
@@ -400,6 +408,7 @@ public class Configuration
         _toggleKeyEntry.Value = ToggleKey;
         _enableSearchEntry.Value = EnableSearch;
         _enableDebugLoggingEntry.Value = EnableDebugLogging;
+        _enableDeveloperProfilerEntry.Value = EnableDeveloperProfiler;
         _backpackSyncDebugLoggingEntry.Value = BackpackSyncDebugLogging;
         ModLogger.SetDebugLoggingEnabled(EnableDebugLogging);
         ModLogger.SetSyncDebugLoggingEnabled(BackpackSyncDebugLogging);
@@ -528,6 +537,7 @@ public class Configuration
             sb.AppendLine($"Tier{i}_Price = {Math.Max(0f, TierPrices[i]).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
 
         sb.AppendLine($"EnableDebugLogging = {EnableDebugLogging.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"EnableDeveloperProfiler = {EnableDeveloperProfiler.ToString().ToLowerInvariant()}");
         sb.AppendLine($"BackpackSyncDebugLogging = {BackpackSyncDebugLogging.ToString().ToLowerInvariant()}");
         sb.AppendLine($"EnableUiAnimations = {EnableUiAnimations.ToString().ToLowerInvariant()}");
         sb.AppendLine($"ReduceUiMotion = {ReduceUiMotion.ToString().ToLowerInvariant()}");
