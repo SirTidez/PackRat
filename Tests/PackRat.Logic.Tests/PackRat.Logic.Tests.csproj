@@ -14,5 +14,6 @@
     <Compile Include="../../Logic/StackPlanBuilder.cs" Link="Logic/StackPlanBuilder.cs" />
     <Compile Include="../../Logic/EmbeddedPanelSession.cs" Link="Logic/EmbeddedPanelSession.cs" />
     <Compile Include="../../Logic/RuntimeCompatibility.cs" Link="Logic/RuntimeCompatibility.cs" />
+    <Compile Include="../../Helpers/ReflectionUtils.cs" Link="Helpers/ReflectionUtils.cs" />
   </ItemGroup>
 </Project>

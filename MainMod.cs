@@ -34,8 +34,12 @@ public class PackRat : MelonMod
     {
         Configuration.Instance.Reset();
         if (sceneName != "Main")
+        {
+            CameraLockedStateHelper.ResetSceneCache();
             return;
+        }
 
+        CameraLockedStateHelper.PrepareForMainSceneLoad();
         ConfigSyncManager.StartSync();
         BackpackShopIntegration.RunWhenReady();
     }

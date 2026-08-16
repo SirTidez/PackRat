@@ -11,6 +11,12 @@ namespace PackRat.Helpers;
 /// </summary>
 internal static class ReflectionUtils
 {
+    private static readonly object ReflectionCacheLock = new object();
+    private static readonly Dictionary<(Type Type, string Name), MemberInfo> ReadableMemberCache =
+        new Dictionary<(Type Type, string Name), MemberInfo>();
+    private static readonly Dictionary<Type, MemberInfo[]> ListLikeMemberCache =
+        new Dictionary<Type, MemberInfo[]>();
+
     /// <summary>
     /// Identifies all classes derived from another class.
     /// </summary>
@@ -282,24 +288,20 @@ internal static class ReflectionUtils
     {
         if (target == null) return null;
         var type = target.GetType();
-        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-
-        var fi = type.GetField(memberName, flags);
-        if (fi != null)
+        var member = GetCachedReadableMember(type, memberName);
+        if (member is FieldInfo field)
         {
             try
             {
-                return fi.GetValue(target);
+                return field.GetValue(target);
             }
             catch { }
         }
-
-        var pi = type.GetProperty(memberName, flags);
-        if (pi != null && pi.CanRead)
+        else if (member is PropertyInfo property)
         {
             try
             {
-                return pi.GetValue(target);
+                return property.GetValue(target);
             }
             catch { }
         }
@@ -358,30 +360,124 @@ internal static class ReflectionUtils
     {
         var result = new System.Collections.Generic.List<object>();
         if (target == null) return result;
-        var type = target.GetType();
-        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-        foreach (var member in type.GetFields(flags))
+        var members = GetCachedListLikeMembers(target.GetType());
+        for (var i = 0; i < members.Length; i++)
         {
             try
             {
-                var val = member.GetValue(target);
-                if (val != null && TryGetListCount(val) >= 0)
+                var member = members[i];
+                var val = member is FieldInfo field ? field.GetValue(target) : ((PropertyInfo)member).GetValue(target);
+                if (val != null && !ContainsReference(result, val))
                     result.Add(val);
             }
             catch { }
         }
-        foreach (var member in type.GetProperties(flags))
-        {
-            if (!member.CanRead) continue;
-            try
-            {
-                var val = member.GetValue(target);
-                if (val != null && TryGetListCount(val) >= 0)
-                    result.Add(val);
-            }
-            catch { }
-        }
+
         return result;
+    }
+
+    private static bool ContainsReference(List<object> values, object candidate)
+    {
+        for (var i = 0; i < values.Count; i++)
+        {
+            if (ReferenceEquals(values[i], candidate))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves frequently used readable members without invoking their getters. Call during scene
+    /// initialization to avoid cold reflection metadata work on the first gameplay input.
+    /// </summary>
+    internal static void PrewarmReadableMembers(Type type, params string[] memberNames)
+    {
+        if (type == null || memberNames == null)
+            return;
+        for (var i = 0; i < memberNames.Length; i++)
+            GetCachedReadableMember(type, memberNames[i]);
+    }
+
+    /// <summary>
+    /// Resolves the list-valued inventory members without evaluating unrelated property getters.
+    /// </summary>
+    internal static void PrewarmListLikeMembers(Type type)
+    {
+        if (type != null)
+            GetCachedListLikeMembers(type);
+    }
+
+    private static MemberInfo GetCachedReadableMember(Type type, string memberName)
+    {
+        if (type == null || string.IsNullOrEmpty(memberName))
+            return null;
+
+        var key = (type, memberName);
+        lock (ReflectionCacheLock)
+        {
+            if (ReadableMemberCache.TryGetValue(key, out var cached))
+                return cached;
+
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            var member = (MemberInfo)type.GetField(memberName, flags);
+            if (member == null)
+            {
+                var property = type.GetProperty(memberName, flags);
+                if (property?.CanRead == true && property.GetIndexParameters().Length == 0)
+                    member = property;
+            }
+
+            ReadableMemberCache[key] = member;
+            return member;
+        }
+    }
+
+    private static MemberInfo[] GetCachedListLikeMembers(Type type)
+    {
+        lock (ReflectionCacheLock)
+        {
+            if (ListLikeMemberCache.TryGetValue(type, out var cached))
+                return cached;
+
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            var members = new List<MemberInfo>();
+            var fields = type.GetFields(flags);
+            for (var i = 0; i < fields.Length; i++)
+            {
+                if (IsListLikeType(fields[i].FieldType))
+                    members.Add(fields[i]);
+            }
+
+            var properties = type.GetProperties(flags);
+            for (var i = 0; i < properties.Length; i++)
+            {
+                var property = properties[i];
+                if (property.CanRead && property.GetIndexParameters().Length == 0 && IsListLikeType(property.PropertyType))
+                    members.Add(property);
+            }
+
+            cached = members.ToArray();
+            ListLikeMemberCache[type] = cached;
+            return cached;
+        }
+    }
+
+    private static bool IsListLikeType(Type type)
+    {
+        if (type == null || type == typeof(string))
+            return false;
+        if (typeof(System.Collections.IList).IsAssignableFrom(type) ||
+            typeof(System.Collections.ICollection).IsAssignableFrom(type))
+        {
+            return true;
+        }
+
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
+        var count = type.GetProperty("Count", flags);
+        if (count == null || count.PropertyType != typeof(int))
+            return false;
+        return type.GetMethod("get_Item", new[] { typeof(int) }) != null ||
+            type.GetMethod("Get", new[] { typeof(int) }) != null;
     }
 
     /// <summary>

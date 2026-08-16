@@ -54,6 +54,14 @@ public class PlayerBackpack : MonoBehaviour
     private string _openTitle;
     private int _equippedTierIndex = -1;
     private const int TierCheckIntervalFrames = 60; // throttle tier lookup to reduce per-frame work
+    private static Type _cachedStorageMenuType;
+    private static MethodInfo[] _cachedStorageMenuOpenMethods = Array.Empty<MethodInfo>();
+    private static readonly string[] SelectedHotbarIndexMemberNames =
+    [
+        "selectedSlotIndex", "SelectedSlotIndex", "selectedIndex", "SelectedIndex", "currentSlotIndex",
+        "CurrentSlotIndex", "activeSlotIndex", "ActiveSlotIndex", "activeIndex", "ActiveIndex",
+        "equippedSlotIndex", "EquippedSlotIndex", "SelectedSlot", "selectedSlot", "slotIndex", "SlotIndex"
+    ];
 
 #if !MONO
     public PlayerBackpack(IntPtr ptr) : base(ptr)
@@ -361,7 +369,7 @@ public class PlayerBackpack : MonoBehaviour
     private static int GetSelectedHotbarIndex(object playerInventory)
     {
         if (playerInventory == null) return -1;
-        foreach (var name in new[] { "selectedSlotIndex", "SelectedSlotIndex", "selectedIndex", "SelectedIndex", "currentSlotIndex", "CurrentSlotIndex", "activeSlotIndex", "ActiveSlotIndex", "activeIndex", "ActiveIndex", "equippedSlotIndex", "EquippedSlotIndex", "SelectedSlot", "selectedSlot", "slotIndex", "SlotIndex" })
+        foreach (var name in SelectedHotbarIndexMemberNames)
         {
             var val = ReflectionUtils.TryGetFieldOrProperty(playerInventory, name);
             if (val == null) continue;
@@ -533,7 +541,8 @@ public class PlayerBackpack : MonoBehaviour
         if (storageMenu == null || owner == null)
             return;
 
-        var methods = storageMenu.GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        PrewarmStorageMenuOpenMethods(storageMenu);
+        var methods = _cachedStorageMenuOpenMethods;
         for (var i = 0; i < methods.Length; i++)
         {
             var method = methods[i];
@@ -569,6 +578,60 @@ public class PlayerBackpack : MonoBehaviour
         }
 
         ModLogger.Error("Failed to find a compatible StorageMenu.Open overload for the backpack.");
+    }
+
+    private static void PrewarmStorageMenuOpenMethods(StorageMenu storageMenu)
+    {
+        if (storageMenu == null)
+            return;
+
+        var storageMenuType = storageMenu.GetType();
+        if (_cachedStorageMenuType == storageMenuType && _cachedStorageMenuOpenMethods.Length > 0)
+            return;
+
+        var candidates = storageMenuType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var openMethods = new System.Collections.Generic.List<MethodInfo>();
+        for (var i = 0; i < candidates.Length; i++)
+        {
+            if (candidates[i].Name == "Open")
+                openMethods.Add(candidates[i]);
+        }
+
+        _cachedStorageMenuType = storageMenuType;
+        _cachedStorageMenuOpenMethods = openMethods.ToArray();
+    }
+
+    private static void PrewarmPlayerInventoryReflection()
+    {
+#if MONO
+        var inventory = PlayerInventory.Instance;
+#else
+        var inventory = PlayerSingleton<PlayerInventory>.Instance;
+#endif
+        if (inventory == null)
+            return;
+
+        var inventoryType = inventory.GetType();
+        ReflectionUtils.PrewarmReadableMembers(inventoryType, "hotbarSlots");
+        ReflectionUtils.PrewarmReadableMembers(inventoryType, SelectedHotbarIndexMemberNames);
+        ReflectionUtils.PrewarmListLikeMembers(inventoryType);
+
+        var hotbarSlots = ReflectionUtils.TryGetFieldOrProperty(inventory, "hotbarSlots");
+        var count = ReflectionUtils.TryGetListCount(hotbarSlots);
+        for (var i = 0; i < count; i++)
+        {
+            var slot = ReflectionUtils.TryGetListItem(hotbarSlots, i);
+            if (slot == null)
+                continue;
+            ReflectionUtils.PrewarmReadableMembers(slot.GetType(), "ItemInstance");
+            var item = ReflectionUtils.TryGetFieldOrProperty(slot, "ItemInstance");
+            if (item == null)
+                continue;
+            ReflectionUtils.PrewarmReadableMembers(item.GetType(), "Definition");
+            var definition = ReflectionUtils.TryGetFieldOrProperty(item, "Definition");
+            if (definition != null)
+                ReflectionUtils.PrewarmReadableMembers(definition.GetType(), "ID", "id");
+        }
     }
 
     /// <summary>
@@ -748,8 +811,12 @@ public class PlayerBackpack : MonoBehaviour
 
         Instance = this;
 
-        // Pre-resolve reflection types so the first backpack keypress doesn't stall
-        CameraLockedStateHelper.PrewarmCache();
+        // The local player is created after the Main scene's UI singletons. Perform the one
+        // scene-wide compatibility discovery now, during spawn, rather than on first input.
+        CameraLockedStateHelper.RefreshSceneCache();
+        PrewarmStorageMenuOpenMethods(Singleton<StorageMenu>.Instance);
+        PrewarmPlayerInventoryReflection();
+        Patches.StorageMenuPatch.PrewarmStandaloneAssets();
     }
 
     private bool IsOwnedByLocalPlayer()

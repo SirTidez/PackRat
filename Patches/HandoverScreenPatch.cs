@@ -64,7 +64,6 @@ public static class HandoverScreenPatch
         public Canvas DedicatedCanvas;
         public RectTransform DedicatedCard;
         public RectTransform DedicatedGrid;
-        public RectTransform CanvasProofMarker;
         public ItemSlotUI SlotPrefab;
         public RectTransform PagingRoot;
         public RectTransform VehicleContainer;
@@ -328,8 +327,6 @@ public static class HandoverScreenPatch
                 panel.TransferRoot.gameObject.SetActive(false);
             if (panel.DedicatedCanvas != null)
                 panel.DedicatedCanvas.gameObject.SetActive(false);
-            if (panel.CanvasProofMarker != null)
-                panel.CanvasProofMarker.gameObject.SetActive(false);
             SetBackpackVisualVisible(panel, false);
             HideOverlayHeader(panel);
             SetHeaderPairActive(panel.SourceTitleLabel, panel.SourceSubtitleLabel, true);
@@ -407,7 +404,6 @@ public static class HandoverScreenPatch
             state.SlotPrefab = dedicatedSlotPrefab;
         }
         RefreshHeaderBindings(state, screen);
-        EnsureCanvasProofMarker(screen, state);
         EnsureDedicatedBackpackOverlay(screen, state);
         if (state.DedicatedCard == null)
         {
@@ -418,64 +414,6 @@ public static class HandoverScreenPatch
         state.Initialized = true;
         States[id] = state;
         return state;
-    }
-
-    /// <summary>
-    /// Temporary runtime receipt for the screen we believe owns dead-drop handover. It deliberately
-    /// lives on the game's own canvas, avoiding every cloned or custom canvas path. Its presence
-    /// (or absence) makes the next live test decisive before we continue changing UI geometry.
-    /// </summary>
-    private static void EnsureCanvasProofMarker(HandoverScreen screen, PanelState state)
-    {
-        if (screen?.Canvas == null || state == null)
-        {
-            ModLogger.Warn("[HandoverUI] Canvas proof skipped: HandoverScreen.Canvas was null.");
-            return;
-        }
-
-        var canvasRoot = screen.Canvas.transform as RectTransform;
-        if (canvasRoot == null)
-        {
-            ModLogger.Warn("[HandoverUI] Canvas proof skipped: canvas root was not a RectTransform.");
-            return;
-        }
-
-        var marker = state.CanvasProofMarker;
-        if (marker == null)
-        {
-            var markerGo = new GameObject("PackRat_HandoverCanvasProof");
-            marker = markerGo.AddComponent<RectTransform>();
-            marker.SetParent(canvasRoot, worldPositionStays: false);
-            var markerImage = markerGo.AddComponent<Image>();
-            markerImage.color = new Color32(217, 56, 168, 245);
-            markerImage.raycastTarget = false;
-
-            var labelGo = new GameObject("Label");
-            var labelRect = labelGo.AddComponent<RectTransform>();
-            labelRect.SetParent(marker, worldPositionStays: false);
-            labelRect.anchorMin = Vector2.zero;
-            labelRect.anchorMax = Vector2.one;
-            labelRect.offsetMin = Vector2.zero;
-            labelRect.offsetMax = Vector2.zero;
-            var label = labelGo.AddComponent<Text>();
-            label.text = "PACKRAT HANDOVER CANVAS RECEIPT";
-            label.font = ResolveUiFont(canvasRoot);
-            label.fontSize = 16;
-            label.fontStyle = FontStyle.Bold;
-            label.alignment = TextAnchor.MiddleCenter;
-            label.color = Color.white;
-            label.raycastTarget = false;
-            state.CanvasProofMarker = marker;
-        }
-
-        marker.anchorMin = new Vector2(0.5f, 0.5f);
-        marker.anchorMax = new Vector2(0.5f, 0.5f);
-        marker.pivot = new Vector2(0.5f, 0.5f);
-        marker.anchoredPosition = new Vector2(0f, 300f);
-        marker.sizeDelta = new Vector2(440f, 42f);
-        marker.SetAsLastSibling();
-        marker.gameObject.SetActive(true);
-        ModLogger.Info($"[HandoverUI] Canvas proof active: canvas={screen.Canvas.name}, mode={screen.Canvas.renderMode}, rect={canvasRoot.rect.width:0}x{canvasRoot.rect.height:0}, markerParent={marker.parent?.name}");
     }
 
     private static void PruneDeadStates()
@@ -4045,8 +3983,6 @@ public static class HandoverScreenPatch
             state.DedicatedToggleRoot.gameObject.SetActive(false);
         if (state.DedicatedCanvas != null)
             state.DedicatedCanvas.gameObject.SetActive(false);
-        if (state.CanvasProofMarker != null)
-            state.CanvasProofMarker.gameObject.SetActive(false);
         SetBackpackVisualVisible(state, false);
         HideOverlayHeader(state);
         SetHeaderPairActive(state.SourceTitleLabel, state.SourceSubtitleLabel, true);

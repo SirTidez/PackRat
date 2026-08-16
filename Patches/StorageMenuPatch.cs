@@ -509,6 +509,8 @@ public static class StorageMenuPatch
     private static Sprite _settingsCogSprite;
     private static Texture2D _settingsCogTexture;
     private static bool _settingsCogLoadAttempted;
+    private static Sprite _roundedUiSprite;
+    private static bool _roundedUiSpriteLoadAttempted;
     private static Sprite _pillButtonSprite;
     private static Texture2D _pillButtonTexture;
     private static Sprite _desktopTabSprite;
@@ -3449,15 +3451,30 @@ public static class StorageMenuPatch
         icon.sizeDelta = new Vector2(16f, 16f);
 
         var image = iconGo.AddComponent<Image>();
-        image.sprite = GetStandaloneSettingsCogSprite();
+        var sprite = GetStandaloneSettingsCogSprite();
+        image.sprite = sprite;
+        image.enabled = sprite != null;
+        image.color = Color.white;
+        image.type = Image.Type.Simple;
         image.preserveAspect = true;
         image.raycastTarget = false;
     }
 
     private static Sprite GetStandaloneSettingsCogSprite()
     {
-        if (_settingsCogSprite != null)
+        if (_settingsCogSprite != null && _settingsCogTexture != null)
             return _settingsCogSprite;
+
+        // Runtime-created Unity assets can be reclaimed by Resources.UnloadUnusedAssets when they
+        // are prewarmed before any live Image references them. Treat Unity's destroyed-object null
+        // as a recoverable cache miss rather than permanently honoring the previous attempt flag.
+        if (_settingsCogLoadAttempted && (_settingsCogSprite == null || _settingsCogTexture == null))
+        {
+            _settingsCogSprite = null;
+            _settingsCogTexture = null;
+            _settingsCogLoadAttempted = false;
+            ModLogger.Debug("[BackpackUI] Reloading settings cog after Unity released the prewarmed asset.");
+        }
         if (_settingsCogLoadAttempted)
             return null;
 
@@ -3475,6 +3492,7 @@ public static class StorageMenuPatch
             stream.Read(bytes, 0, bytes.Length);
             _settingsCogTexture = new Texture2D(2, 2);
             _settingsCogTexture.filterMode = FilterMode.Bilinear;
+            _settingsCogTexture.hideFlags = HideFlags.HideAndDontSave;
             if (!_settingsCogTexture.LoadImage(bytes))
             {
                 ModLogger.Warn("[BackpackUI] Settings cog PNG could not be decoded.");
@@ -3483,6 +3501,7 @@ public static class StorageMenuPatch
 
             _settingsCogSprite = Sprite.Create(_settingsCogTexture,
                 new Rect(0f, 0f, _settingsCogTexture.width, _settingsCogTexture.height), new Vector2(0.5f, 0.5f));
+            _settingsCogSprite.hideFlags = HideFlags.HideAndDontSave;
             return _settingsCogSprite;
         }
         catch (Exception ex)
@@ -3490,6 +3509,26 @@ public static class StorageMenuPatch
             ModLogger.Error("StorageMenuPatch.GetStandaloneSettingsCogSprite", ex);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Loads static UI resources during Main-scene initialization so the first backpack open does
+    /// not decode embedded images or perform Unity built-in resource lookup on its input frame.
+    /// </summary>
+    internal static void PrewarmStandaloneAssets()
+    {
+        GetStandaloneSettingsCogSprite();
+        GetRoundedUiSprite();
+    }
+
+    private static Sprite GetRoundedUiSprite()
+    {
+        if (_roundedUiSprite != null || _roundedUiSpriteLoadAttempted)
+            return _roundedUiSprite;
+
+        _roundedUiSpriteLoadAttempted = true;
+        _roundedUiSprite = Resources.GetBuiltinResource<Sprite>("UI/Skin/UISprite.psd");
+        return _roundedUiSprite;
     }
 
     /// <summary>
@@ -3503,7 +3542,7 @@ public static class StorageMenuPatch
 
         try
         {
-            var roundedSprite = Resources.GetBuiltinResource<Sprite>("UI/Skin/UISprite.psd");
+            var roundedSprite = GetRoundedUiSprite();
             if (roundedSprite == null)
                 return;
 

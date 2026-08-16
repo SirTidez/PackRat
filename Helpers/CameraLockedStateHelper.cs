@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 
@@ -38,6 +39,63 @@ internal static class CameraLockedStateHelper
     private static FieldInfo _shopInterfaceAllShopsField;
     private static Type[] _dealWindowTypes;
     private static bool _typesResolved;
+    private static bool _sceneObjectsWarmed;
+    private static bool _missingSceneCacheWarningLogged;
+    private static CharacterCreator[] _characterCreators = Array.Empty<CharacterCreator>();
+    private static CharacterCustomizationShop[] _customizationShops = Array.Empty<CharacterCustomizationShop>();
+    private static readonly List<Canvas[]> CustomizationShopCanvases = new List<Canvas[]>();
+    private static TVInterface _tvInterface;
+    private static readonly List<CachedBooleanState> AtmOpenStates = new List<CachedBooleanState>();
+    private static readonly List<CachedBooleanState> ShopOpenStates = new List<CachedBooleanState>();
+    private static readonly List<CachedBooleanState> DealOpenStates = new List<CachedBooleanState>();
+    private static CachedBooleanState _dialogueManagerOpenState;
+    private static CachedValueState _playerVehicleState;
+
+    private sealed class CachedValueState
+    {
+        private readonly object _target;
+        private readonly FieldInfo _field;
+        private readonly PropertyInfo _property;
+
+        public CachedValueState(object target, FieldInfo field, PropertyInfo property)
+        {
+            _target = target;
+            _field = field;
+            _property = property;
+        }
+
+        public object Read()
+        {
+            if (!IsTargetAlive(_target))
+                return null;
+
+            try
+            {
+                return _field != null ? _field.GetValue(_target) : _property?.GetValue(_target);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
+    private sealed class CachedBooleanState
+    {
+        public object Target { get; }
+        private readonly CachedValueState _value;
+
+        public CachedBooleanState(object target, CachedValueState value)
+        {
+            Target = target;
+            _value = value;
+        }
+
+        public bool IsTrue()
+        {
+            return _value?.Read() is bool value && value;
+        }
+    }
 
     private static void EnsureTypesResolved()
     {
@@ -71,6 +129,49 @@ internal static class CameraLockedStateHelper
     public static void PrewarmCache()
     {
         EnsureTypesResolved();
+        if (_sceneObjectsWarmed)
+            return;
+
+        CacheSceneObjects();
+        _sceneObjectsWarmed = true;
+        _missingSceneCacheWarningLogged = false;
+    }
+
+    /// <summary>
+    /// Rebuilds scene-owned references after a local player is created or replaced within Main.
+    /// </summary>
+    public static void RefreshSceneCache()
+    {
+        ResetSceneCache();
+        PrewarmCache();
+    }
+
+    /// <summary>
+    /// Clears references owned by the outgoing Unity scene while retaining stable reflected type metadata.
+    /// </summary>
+    public static void ResetSceneCache()
+    {
+        _sceneObjectsWarmed = false;
+        _missingSceneCacheWarningLogged = false;
+        _characterCreators = Array.Empty<CharacterCreator>();
+        _customizationShops = Array.Empty<CharacterCustomizationShop>();
+        CustomizationShopCanvases.Clear();
+        _tvInterface = null;
+        AtmOpenStates.Clear();
+        ShopOpenStates.Clear();
+        DealOpenStates.Clear();
+        _dialogueManagerOpenState = null;
+        _playerVehicleState = null;
+    }
+
+    /// <summary>
+    /// Resolves stable reflection metadata as the Main scene begins loading. Scene-owned objects are
+    /// captured later, once the local player and the game's UI singletons have finished spawning.
+    /// </summary>
+    public static void PrepareForMainSceneLoad()
+    {
+        ResetSceneCache();
+        EnsureTypesResolved();
     }
 
     /// <summary>
@@ -87,6 +188,15 @@ internal static class CameraLockedStateHelper
             {
                 ModLogger.Debug("Camera locked: Cursor visible (UI with mouse).");
                 return true;
+            }
+
+            // Never perform scene-wide discovery from a gameplay hotkey. PlayerBackpack warms this
+            // cache during local-player initialization; if an unusual lifecycle bypassed that stage,
+            // retain the cheap direct checks below and report the missing initialization once.
+            if (!_sceneObjectsWarmed && !_missingSceneCacheWarningLogged)
+            {
+                _missingSceneCacheWarningLogged = true;
+                ModLogger.Warn("[BackpackUI] Camera-lock scene cache was not warmed before input; skipping scene scans.");
             }
 
             if (IsATMOpen())
@@ -141,38 +251,7 @@ internal static class CameraLockedStateHelper
 
     private static bool IsATMOpen()
     {
-        try
-        {
-            var components = Resources.FindObjectsOfTypeAll<Component>();
-            for (var i = 0; i < components.Length; i++)
-            {
-                var atm = components[i];
-                if (atm == null)
-                    continue;
-
-                var type = atm.GetType();
-                var fullName = type.FullName ?? string.Empty;
-                if (type.Name != "ATMInterface"
-                    && fullName != "ScheduleOne.UI.ATMInterface"
-                    && fullName != "ScheduleOne.UI.ATM.ATMInterface"
-                    && fullName != "Il2CppScheduleOne.UI.ATMInterface"
-                    && fullName != "Il2CppScheduleOne.UI.ATM.ATMInterface")
-                {
-                    continue;
-                }
-
-                var isOpen = ReflectionUtils.TryGetFieldOrProperty(atm, "IsOpen")
-                    ?? ReflectionUtils.TryGetFieldOrProperty(atm, "isOpen");
-                if (isOpen is bool b && b)
-                    return true;
-            }
-
-            return false;
-        }
-        catch
-        {
-            return false;
-        }
+        return AnyCachedStateOpen(AtmOpenStates);
     }
 
     private static bool IsCharacterCreatorOpen()
@@ -187,13 +266,11 @@ internal static class CameraLockedStateHelper
                     return true;
             }
 
-            // Any CharacterCreator in scene (e.g. tattoo parlor, barber) - same camera-lock UI
-            var allCreators = Utils.FindObjectsOfTypeSafe<CharacterCreator>();
-            if (allCreators == null)
-                return false;
-            for (var i = 0; i < allCreators.Length; i++)
+            // Scene instances are captured during local-player initialization. Do not search the
+            // entire scene from the backpack hotkey.
+            for (var i = 0; i < _characterCreators.Length; i++)
             {
-                var c = allCreators[i];
+                var c = _characterCreators[i];
                 if (c != null && c.IsOpen)
                     return true;
             }
@@ -213,21 +290,17 @@ internal static class CameraLockedStateHelper
     {
         try
         {
-            var shops = Utils.FindObjectsOfTypeSafe<CharacterCustomizationShop>();
-            if (shops == null)
-                return false;
-
-            for (var i = 0; i < shops.Length; i++)
+            for (var i = 0; i < _customizationShops.Length; i++)
             {
-                var shop = shops[i];
+                var shop = _customizationShops[i];
                 if (shop == null || !shop.gameObject.activeInHierarchy)
                     continue;
 
-                var canvases = Utils.GetAllComponentsInChildrenRecursive<Canvas>(shop.gameObject);
-                if (canvases == null)
+                if (i >= CustomizationShopCanvases.Count)
                     continue;
+                var canvases = CustomizationShopCanvases[i];
 
-                for (var j = 0; j < canvases.Count; j++)
+                for (var j = 0; j < canvases.Length; j++)
                 {
                     var canvas = canvases[j];
                     if (canvas != null && canvas.enabled && canvas.gameObject.activeInHierarchy)
@@ -247,8 +320,7 @@ internal static class CameraLockedStateHelper
     {
         try
         {
-            var tv = Utils.FindObjectOfTypeSafe<TVInterface>();
-            return tv != null && tv.IsOpen;
+            return _tvInterface != null && _tvInterface.IsOpen;
         }
         catch
         {
@@ -260,33 +332,7 @@ internal static class CameraLockedStateHelper
     {
         try
         {
-            // ShopInterface.AllShops is a static list of all shop UIs; check if any is open.
-            if (_shopInterfaceAllShopsField != null)
-            {
-                var allShops = _shopInterfaceAllShopsField.GetValue(null);
-                if (allShops != null && allShops is System.Collections.IEnumerable enumerable)
-                {
-                    foreach (var s in enumerable)
-                    {
-                        if (s == null)
-                            continue;
-                        var isOpen = ReflectionUtils.TryGetFieldOrProperty(s, "IsOpen");
-                        if (isOpen is bool b && b)
-                            return true;
-                    }
-                }
-            }
-
-            // Fallback: find any ShopInterface in scene and check IsOpen
-            var fallbackShop = Utils.FindObjectOfTypeSafe<ShopInterface>();
-            if (fallbackShop == null)
-                return false;
-
-            var open = ReflectionUtils.TryGetFieldOrProperty(fallbackShop, "IsOpen");
-            if (open is bool b2)
-                return b2;
-            open = ReflectionUtils.TryGetFieldOrProperty(fallbackShop, "isOpen");
-            return open is bool b3 && b3;
+            return AnyCachedStateOpen(ShopOpenStates);
         }
         catch
         {
@@ -308,24 +354,7 @@ internal static class CameraLockedStateHelper
                     return true;
             }
 
-            // Fallback: DialogueManager.Instance may expose IsActive / IsOpen
-            if (_dialogueManagerType == null)
-                return false;
-
-            var instanceProp = _dialogueManagerType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-            if (instanceProp == null)
-                return false;
-
-            var instance = instanceProp.GetValue(null);
-            if (instance == null)
-                return false;
-
-            var isActive = ReflectionUtils.TryGetFieldOrProperty(instance, "IsActive");
-            if (isActive is bool b)
-                return b;
-
-            isActive = ReflectionUtils.TryGetFieldOrProperty(instance, "IsOpen");
-            return isActive is bool b2 && b2;
+            return _dialogueManagerOpenState?.IsTrue() == true;
         }
         catch
         {
@@ -340,11 +369,9 @@ internal static class CameraLockedStateHelper
             if (Player.Local == null)
                 return false;
 
-            var isInVehicle = ReflectionUtils.TryGetFieldOrProperty(Player.Local, "IsInVehicle");
+            var isInVehicle = _playerVehicleState?.Read();
             if (isInVehicle is bool b)
                 return b;
-
-            isInVehicle = ReflectionUtils.TryGetFieldOrProperty(Player.Local, "CurrentVehicle");
             return isInVehicle != null;
         }
         catch
@@ -357,35 +384,205 @@ internal static class CameraLockedStateHelper
     {
         try
         {
-            EnsureTypesResolved();
-            if (_dealWindowTypes == null || _dealWindowTypes.Length == 0)
-                return false;
-
-            foreach (var type in _dealWindowTypes)
-            {
-
-                var instanceProp = type.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-                if (instanceProp == null)
-                    continue;
-
-                var instance = instanceProp.GetValue(null);
-                if (instance == null)
-                    continue;
-
-                var isOpen = ReflectionUtils.TryGetFieldOrProperty(instance, "IsOpen");
-                if (isOpen is bool b && b)
-                    return true;
-
-                isOpen = ReflectionUtils.TryGetFieldOrProperty(instance, "isOpen");
-                if (isOpen is bool b2 && b2)
-                    return true;
-            }
-
-            return false;
+            return AnyCachedStateOpen(DealOpenStates);
         }
         catch
         {
             return false;
         }
+    }
+
+    private static void CacheSceneObjects()
+    {
+        AtmOpenStates.Clear();
+        ShopOpenStates.Clear();
+        DealOpenStates.Clear();
+        CustomizationShopCanvases.Clear();
+        var characterCreators = new List<CharacterCreator>();
+        var customizationShops = new List<CharacterCustomizationShop>();
+        _tvInterface = null;
+
+        // This is the one intentionally broad scan. It runs while the local player is being
+        // initialized, never as part of a backpack input frame, and covers namespace-shifted ATM
+        // interfaces that cannot be referenced by one stable compile-time type.
+        var components = Resources.FindObjectsOfTypeAll<Component>();
+        for (var i = 0; i < components.Length; i++)
+        {
+            var component = components[i];
+            if (component == null)
+                continue;
+
+            var type = component.GetType();
+            if (IsAtmInterfaceType(type))
+                AddCachedBooleanState(AtmOpenStates, component, "IsOpen", "isOpen");
+            if (IsDealWindowType(type))
+                AddCachedBooleanState(DealOpenStates, component, "IsOpen", "isOpen");
+            if (component is CharacterCreator creator)
+                characterCreators.Add(creator);
+            if (component is CharacterCustomizationShop customizationShop)
+                customizationShops.Add(customizationShop);
+            if (_tvInterface == null && component is TVInterface tvInterface)
+                _tvInterface = tvInterface;
+            if (component is ShopInterface shopInterface)
+                AddCachedBooleanState(ShopOpenStates, shopInterface, "IsOpen", "isOpen");
+        }
+
+        _characterCreators = characterCreators.ToArray();
+        _customizationShops = customizationShops.ToArray();
+        for (var i = 0; i < _customizationShops.Length; i++)
+        {
+            var shop = _customizationShops[i];
+            var canvases = shop == null
+                ? Array.Empty<Canvas>()
+                : Utils.GetAllComponentsInChildrenRecursive<Canvas>(shop.gameObject).ToArray();
+            CustomizationShopCanvases.Add(canvases);
+        }
+        CacheShopStates();
+        CacheDialogueState();
+        CacheDealSingletonStates();
+        CachePlayerVehicleState();
+    }
+
+    private static void CacheShopStates()
+    {
+        try
+        {
+            if (_shopInterfaceAllShopsField?.GetValue(null) is System.Collections.IEnumerable allShops)
+            {
+                foreach (var shop in allShops)
+                    AddCachedBooleanState(ShopOpenStates, shop, "IsOpen", "isOpen");
+            }
+        }
+        catch
+        {
+        }
+
+    }
+
+    private static void CacheDialogueState()
+    {
+        _dialogueManagerOpenState = null;
+        if (_dialogueManagerType == null)
+            return;
+
+        try
+        {
+            var instance = _dialogueManagerType
+                .GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)
+                ?.GetValue(null);
+            _dialogueManagerOpenState = CreateCachedBooleanState(instance, "IsActive", "IsOpen", "isOpen");
+        }
+        catch
+        {
+        }
+    }
+
+    private static void CacheDealSingletonStates()
+    {
+        if (_dealWindowTypes == null)
+            return;
+
+        for (var i = 0; i < _dealWindowTypes.Length; i++)
+        {
+            try
+            {
+                var instance = _dealWindowTypes[i]
+                    .GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)
+                    ?.GetValue(null);
+                AddCachedBooleanState(DealOpenStates, instance, "IsOpen", "isOpen");
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static void CachePlayerVehicleState()
+    {
+        _playerVehicleState = CreateCachedValueState(Player.Local, "IsInVehicle", "CurrentVehicle");
+    }
+
+    private static CachedBooleanState CreateCachedBooleanState(object target, params string[] memberNames)
+    {
+        var value = CreateCachedValueState(target, memberNames);
+        return value == null ? null : new CachedBooleanState(target, value);
+    }
+
+    private static CachedValueState CreateCachedValueState(object target, params string[] memberNames)
+    {
+        if (target == null || memberNames == null)
+            return null;
+
+        var type = target.GetType();
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        for (var i = 0; i < memberNames.Length; i++)
+        {
+            var field = type.GetField(memberNames[i], flags);
+            if (field != null)
+                return new CachedValueState(target, field, null);
+
+            var property = type.GetProperty(memberNames[i], flags);
+            if (property?.CanRead == true)
+                return new CachedValueState(target, null, property);
+        }
+
+        return null;
+    }
+
+    private static void AddCachedBooleanState(List<CachedBooleanState> states, object target,
+        params string[] memberNames)
+    {
+        if (target == null)
+            return;
+        for (var i = 0; i < states.Count; i++)
+        {
+            if (ReferenceEquals(states[i].Target, target))
+                return;
+        }
+
+        var state = CreateCachedBooleanState(target, memberNames);
+        if (state != null)
+            states.Add(state);
+    }
+
+    private static bool AnyCachedStateOpen(List<CachedBooleanState> states)
+    {
+        for (var i = 0; i < states.Count; i++)
+        {
+            if (states[i].IsTrue())
+                return true;
+        }
+        return false;
+    }
+
+    private static bool IsAtmInterfaceType(Type type)
+    {
+        if (type == null)
+            return false;
+        var fullName = type.FullName ?? string.Empty;
+        return type.Name == "ATMInterface"
+            || fullName == "ScheduleOne.UI.ATMInterface"
+            || fullName == "ScheduleOne.UI.ATM.ATMInterface"
+            || fullName == "Il2CppScheduleOne.UI.ATMInterface"
+            || fullName == "Il2CppScheduleOne.UI.ATM.ATMInterface";
+    }
+
+    private static bool IsDealWindowType(Type type)
+    {
+        if (type == null || _dealWindowTypes == null)
+            return false;
+        for (var i = 0; i < _dealWindowTypes.Length; i++)
+        {
+            if (_dealWindowTypes[i] == type || _dealWindowTypes[i].IsAssignableFrom(type))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool IsTargetAlive(object target)
+    {
+        if (target == null)
+            return false;
+        return !(target is UnityEngine.Object unityObject) || unityObject != null;
     }
 }
