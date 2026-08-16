@@ -951,6 +951,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class ChemistryOpenPatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Open",
             "ScheduleOne.UI.Stations.ChemistryStationInterface",
@@ -963,6 +966,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class ChemistryClosePatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Close",
             "ScheduleOne.UI.Stations.ChemistryStationInterface",
@@ -975,6 +981,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class MixingOpenPatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Open",
             "ScheduleOne.UI.Stations.MixingStationInterface",
@@ -987,6 +996,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class MixingClosePatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Close",
             "ScheduleOne.UI.Stations.MixingStationInterface",
@@ -999,6 +1011,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class PackagingOpenPatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Open",
             "ScheduleOne.UI.Stations.PackagingStationCanvas");
@@ -1010,6 +1025,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class PackagingClosePatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Close",
             "ScheduleOne.UI.Stations.PackagingStationCanvas");
@@ -1021,6 +1039,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class PackagingSetOpenPatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "SetIsOpen",
             "ScheduleOne.UI.Stations.PackagingStationCanvas");
@@ -1038,6 +1059,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class BrickPressOpenPatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Open",
             "ScheduleOne.UI.Stations.BrickPressCanvas");
@@ -1049,6 +1073,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class BrickPressClosePatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Close",
             "ScheduleOne.UI.Stations.BrickPressCanvas");
@@ -1060,6 +1087,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class BrickPressSetOpenPatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "SetIsOpen",
             "ScheduleOne.UI.Stations.BrickPressCanvas");
@@ -1077,6 +1107,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class CauldronOpenPatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Open",
             "ScheduleOne.UI.Stations.CauldronInterface",
@@ -1089,6 +1122,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class CauldronClosePatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Close",
             "ScheduleOne.UI.Stations.CauldronInterface",
@@ -1101,6 +1137,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class CauldronSetOpenPatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "SetIsOpen",
             "ScheduleOne.UI.Stations.CauldronCanvas");
@@ -1118,6 +1157,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class LabOvenOpenPatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Open",
             "ScheduleOne.UI.Stations.LabOvenCanvas");
@@ -1129,6 +1171,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class LabOvenClosePatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Close",
             "ScheduleOne.UI.Stations.LabOvenCanvas");
@@ -1140,6 +1185,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class LabOvenSetOpenPatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "SetIsOpen",
             "ScheduleOne.UI.Stations.LabOvenCanvas");
@@ -1157,6 +1205,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class DryingRackOpenPatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Open",
             "ScheduleOne.UI.Stations.DryingRackInterface",
@@ -1169,6 +1220,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class DryingRackClosePatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Close",
             "ScheduleOne.UI.Stations.DryingRackInterface",
@@ -1181,6 +1235,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class DryingRackSetOpenPatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "SetIsOpen",
             "ScheduleOne.UI.Stations.DryingRackCanvas");
@@ -1198,6 +1255,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class MushroomSpawnOpenPatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Open",
             "ScheduleOne.UI.Stations.MushroomSpawnStationInterface");
@@ -1209,6 +1269,9 @@ public static class StationBackpackPanelPatch
     [HarmonyPatch]
     private static class MushroomSpawnClosePatch
     {
+        [HarmonyPrepare]
+        private static bool Prepare() => RuntimeCompatibility.HasResolvedTargets(TargetMethods());
+
         private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
             "Close",
             "ScheduleOne.UI.Stations.MushroomSpawnStationInterface");

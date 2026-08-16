@@ -36,4 +36,16 @@ public sealed class RuntimeCompatibilityTests
             },
             names);
     }
+
+    [Fact]
+    public void HasResolvedTargets_ReturnsFalseForMissingOptionalMethods()
+    {
+        Assert.False(RuntimeCompatibility.HasResolvedTargets(Array.Empty<object>()));
+    }
+
+    [Fact]
+    public void HasResolvedTargets_ReturnsTrueWhenAnyMethodResolved()
+    {
+        Assert.True(RuntimeCompatibility.HasResolvedTargets(new object?[] { null, new object() }));
+    }
 }
