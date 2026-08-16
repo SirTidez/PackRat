@@ -869,11 +869,12 @@ public static class BackpackShopIntegration
         try
         {
 #if !MONO
-            listingUI.onAddItem = DelegateSupport.ConvertDelegate<Il2CppSystem.Action>((Action)(() => shop.AddItem(listingUI)));
-            listingUI.onRemoveItem = DelegateSupport.ConvertDelegate<Il2CppSystem.Action>((Action)(() => shop.RemoveItem(listingUI)));
-            listingUI.onDropdownClicked = DelegateSupport.ConvertDelegate<Il2CppSystem.Action>((Action)(() => shop.DropdownClicked(listingUI)));
-            listingUI.hoverStart = DelegateSupport.ConvertDelegate<Il2CppSystem.Action>((Action)(() => shop.EntryHovered(listingUI)));
-            listingUI.hoverEnd = DelegateSupport.ConvertDelegate<Il2CppSystem.Action>((Action)(() => shop.EntryUnhovered()));
+            if (!TryBindIl2CppListingEvent(listingUI, "onAddItem", () => InvokeListingAdd(shop, listingUI)))
+                TryBindIl2CppListingEvent(listingUI, "onClicked", () => InvokeListingAdd(shop, listingUI));
+            TryBindIl2CppListingEvent(listingUI, "onRemoveItem", () => TryInvokeShopMethod(shop, "RemoveItem", listingUI));
+            TryBindIl2CppListingEvent(listingUI, "onDropdownClicked", () => TryInvokeShopMethod(shop, "DropdownClicked", listingUI));
+            TryBindIl2CppListingEvent(listingUI, "hoverStart", () => TryInvokeShopMethod(shop, "EntryHovered", listingUI));
+            TryBindIl2CppListingEvent(listingUI, "hoverEnd", () => TryInvokeShopMethod(shop, "EntryUnhovered"));
 #else
             var shopType = typeof(ShopInterface);
             var dropdownClicked = shopType.GetMethod("DropdownClicked", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
@@ -894,6 +895,23 @@ public static class BackpackShopIntegration
             ModLogger.Error("BackpackShopIntegration: BindListingUIEvents", ex);
         }
     }
+
+    private static void InvokeListingAdd(ShopInterface shop, ListingUI listingUI)
+    {
+        if (TryInvokeShopMethod(shop, "AddItem", listingUI))
+            return;
+
+        if (!TryInvokeShopMethod(shop, "ListingClicked", listingUI))
+            ModLogger.Warn("BackpackShopIntegration: Shop listing add handler was not found.");
+    }
+
+#if !MONO
+    private static bool TryBindIl2CppListingEvent(ListingUI listingUI, string memberName, Action callback)
+    {
+        var action = DelegateSupport.ConvertDelegate<Il2CppSystem.Action>(callback);
+        return ReflectionUtils.TrySetFieldOrProperty(listingUI, memberName, action);
+    }
+#endif
 
     private static void AddToListingUICollection(ShopInterface shop, ListingUI listingUI)
     {

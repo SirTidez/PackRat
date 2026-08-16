@@ -520,12 +520,55 @@ public class PlayerBackpack : MonoBehaviour
         storageMenu.SlotGridLayout.constraintCount = 4;
 
 #if !MONO
-        storageMenu.Open(_storage.Cast<IItemSlotOwner>(), _openTitle, string.Empty, null);
+        OpenStorageMenu(storageMenu, _storage.Cast<IItemSlotOwner>(), _openTitle, string.Empty);
 #else
-        storageMenu.Open(_storage, _openTitle, string.Empty, null);
+        OpenStorageMenu(storageMenu, _storage, _openTitle, string.Empty);
 #endif
 
         _storage.SendAccessor(Player.Local.NetworkObject);
+    }
+
+    private static void OpenStorageMenu(StorageMenu storageMenu, IItemSlotOwner owner, string title, string subtitle)
+    {
+        if (storageMenu == null || owner == null)
+            return;
+
+        var methods = storageMenu.GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        for (var i = 0; i < methods.Length; i++)
+        {
+            var method = methods[i];
+            if (method.Name != "Open")
+                continue;
+
+            var parameters = method.GetParameters();
+            try
+            {
+                if (parameters.Length == 4
+                    && parameters[0].ParameterType.IsInstanceOfType(owner)
+                    && parameters[1].ParameterType == typeof(string)
+                    && parameters[2].ParameterType == typeof(string))
+                {
+                    method.Invoke(storageMenu, new object[] { owner, title, subtitle, null });
+                    return;
+                }
+
+                if (parameters.Length == 3
+                    && parameters[0].ParameterType == typeof(string)
+                    && parameters[1].ParameterType == typeof(string)
+                    && parameters[2].ParameterType.IsInstanceOfType(owner))
+                {
+                    method.Invoke(storageMenu, new object[] { title, subtitle, owner });
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                ModLogger.Error("Failed to open backpack storage menu", ex);
+                return;
+            }
+        }
+
+        ModLogger.Error("Failed to find a compatible StorageMenu.Open overload for the backpack.");
     }
 
     /// <summary>

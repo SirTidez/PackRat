@@ -127,7 +127,7 @@ public static class ConfigSyncManager
         const float waitTime = 1f;
         for (var i = 0; i < maxAttempts; ++i)
         {
-            var payload = SteamMatchmaking.GetLobbyData(new CSteamID(Lobby.Instance.LobbyID), Prefix);
+            var payload = SteamMatchmaking.GetLobbyData(GetLobbySteamId(), Prefix);
             if (string.IsNullOrEmpty(payload))
             {
                 yield return new UnityEngine.WaitForSeconds(waitTime);
@@ -146,6 +146,20 @@ public static class ConfigSyncManager
 
             yield break;
         }
+    }
+
+    private static CSteamID GetLobbySteamId()
+    {
+        var legacyLobbyId = ReflectionUtils.TryGetFieldOrProperty(Lobby.Instance, "LobbySteamID");
+        if (legacyLobbyId is CSteamID steamId)
+            return steamId;
+
+        var lobbyId = ReflectionUtils.TryGetFieldOrProperty(Lobby.Instance, "LobbyID");
+        if (lobbyId is ulong value)
+            return new CSteamID(value);
+
+        ModLogger.Warn("Unable to resolve the current Steam lobby ID while waiting for PackRat config.");
+        return default;
     }
 
     private static void SyncFromHost(string payload)

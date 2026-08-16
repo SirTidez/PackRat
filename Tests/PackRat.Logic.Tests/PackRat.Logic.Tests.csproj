@@ -13,5 +13,6 @@
     <Compile Include="../../Logic/UiBoundsPolicy.cs" Link="Logic/UiBoundsPolicy.cs" />
     <Compile Include="../../Logic/StackPlanBuilder.cs" Link="Logic/StackPlanBuilder.cs" />
     <Compile Include="../../Logic/EmbeddedPanelSession.cs" Link="Logic/EmbeddedPanelSession.cs" />
+    <Compile Include="../../Logic/RuntimeCompatibility.cs" Link="Logic/RuntimeCompatibility.cs" />
   </ItemGroup>
 </Project>

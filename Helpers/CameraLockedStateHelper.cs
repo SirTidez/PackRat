@@ -143,12 +143,31 @@ internal static class CameraLockedStateHelper
     {
         try
         {
-            var atm = Utils.FindObjectOfTypeSafe<ATMInterface>();
-            if (atm == null)
-                return false;
+            var components = Resources.FindObjectsOfTypeAll<Component>();
+            for (var i = 0; i < components.Length; i++)
+            {
+                var atm = components[i];
+                if (atm == null)
+                    continue;
 
-            var isOpen = ReflectionUtils.TryGetFieldOrProperty(atm, "isOpen");
-            return isOpen is bool b && b;
+                var type = atm.GetType();
+                var fullName = type.FullName ?? string.Empty;
+                if (type.Name != "ATMInterface"
+                    && fullName != "ScheduleOne.UI.ATMInterface"
+                    && fullName != "ScheduleOne.UI.ATM.ATMInterface"
+                    && fullName != "Il2CppScheduleOne.UI.ATMInterface"
+                    && fullName != "Il2CppScheduleOne.UI.ATM.ATMInterface")
+                {
+                    continue;
+                }
+
+                var isOpen = ReflectionUtils.TryGetFieldOrProperty(atm, "IsOpen")
+                    ?? ReflectionUtils.TryGetFieldOrProperty(atm, "isOpen");
+                if (isOpen is bool b && b)
+                    return true;
+            }
+
+            return false;
         }
         catch
         {

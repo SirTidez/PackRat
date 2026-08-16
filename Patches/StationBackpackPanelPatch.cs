@@ -2,6 +2,8 @@ using HarmonyLib;
 using PackRat.Config;
 using PackRat.Extensions;
 using PackRat.Helpers;
+using PackRat.Logic;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -917,115 +919,301 @@ public static class StationBackpackPanelPatch
         }
     }
 
-    [HarmonyPatch(typeof(ChemistryStationInterface), "Open")]
+    private static IEnumerable<MethodBase> ResolveStationMethods(string methodName, params string[] typeNames)
+    {
+        var seen = new HashSet<MethodBase>();
+        foreach (var typeName in RuntimeCompatibility.ExpandScheduleOneTypeNames(typeNames))
+        {
+            var type = ReflectionUtils.GetTypeByName(typeName);
+            var method = ReflectionUtils.GetMethod(
+                type,
+                methodName,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (method != null && seen.Add(method))
+                yield return method;
+        }
+    }
+
+    private static bool GetOpenArg(object[] args)
+    {
+        if (args == null)
+            return false;
+
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (args[i] is bool open)
+                return open;
+        }
+
+        return false;
+    }
+
+    [HarmonyPatch]
     private static class ChemistryOpenPatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Open",
+            "ScheduleOne.UI.Stations.ChemistryStationInterface",
+            "ScheduleOne.UI.Stations.ChemistryStationCanvas");
+
         [HarmonyPostfix]
-        public static void Postfix(ChemistryStationInterface __instance) => ShowForStation(__instance);
+        public static void Postfix(Component __instance) => ShowForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(ChemistryStationInterface), "Close")]
+    [HarmonyPatch]
     private static class ChemistryClosePatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Close",
+            "ScheduleOne.UI.Stations.ChemistryStationInterface",
+            "ScheduleOne.UI.Stations.ChemistryStationCanvas");
+
         [HarmonyPrefix]
-        public static void Prefix(ChemistryStationInterface __instance) => HideForStation(__instance);
+        public static void Prefix(Component __instance) => HideForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(MixingStationInterface), "Open")]
+    [HarmonyPatch]
     private static class MixingOpenPatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Open",
+            "ScheduleOne.UI.Stations.MixingStationInterface",
+            "ScheduleOne.UI.Stations.MixingStationCanvas");
+
         [HarmonyPostfix]
-        public static void Postfix(MixingStationInterface __instance) => ShowForStation(__instance);
+        public static void Postfix(Component __instance) => ShowForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(MixingStationInterface), "Close")]
+    [HarmonyPatch]
     private static class MixingClosePatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Close",
+            "ScheduleOne.UI.Stations.MixingStationInterface",
+            "ScheduleOne.UI.Stations.MixingStationCanvas");
+
         [HarmonyPrefix]
-        public static void Prefix(MixingStationInterface __instance) => HideForStation(__instance);
+        public static void Prefix(Component __instance) => HideForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(PackagingStationCanvas), "Open")]
+    [HarmonyPatch]
     private static class PackagingOpenPatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Open",
+            "ScheduleOne.UI.Stations.PackagingStationCanvas");
+
         [HarmonyPostfix]
-        public static void Postfix(PackagingStationCanvas __instance) => ShowForStation(__instance);
+        public static void Postfix(Component __instance) => ShowForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(PackagingStationCanvas), "Close")]
+    [HarmonyPatch]
     private static class PackagingClosePatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Close",
+            "ScheduleOne.UI.Stations.PackagingStationCanvas");
+
         [HarmonyPrefix]
-        public static void Prefix(PackagingStationCanvas __instance) => HideForStation(__instance);
+        public static void Prefix(Component __instance) => HideForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(BrickPressCanvas), "Open")]
+    [HarmonyPatch]
+    private static class PackagingSetOpenPatch
+    {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "SetIsOpen",
+            "ScheduleOne.UI.Stations.PackagingStationCanvas");
+
+        [HarmonyPostfix]
+        public static void Postfix(Component __instance, object[] __args)
+        {
+            if (GetOpenArg(__args))
+                ShowForStation(__instance);
+            else
+                HideForStation(__instance);
+        }
+    }
+
+    [HarmonyPatch]
     private static class BrickPressOpenPatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Open",
+            "ScheduleOne.UI.Stations.BrickPressCanvas");
+
         [HarmonyPostfix]
-        public static void Postfix(BrickPressCanvas __instance) => ShowForStation(__instance);
+        public static void Postfix(Component __instance) => ShowForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(BrickPressCanvas), "Close")]
+    [HarmonyPatch]
     private static class BrickPressClosePatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Close",
+            "ScheduleOne.UI.Stations.BrickPressCanvas");
+
         [HarmonyPrefix]
-        public static void Prefix(BrickPressCanvas __instance) => HideForStation(__instance);
+        public static void Prefix(Component __instance) => HideForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(CauldronInterface), "Open")]
+    [HarmonyPatch]
+    private static class BrickPressSetOpenPatch
+    {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "SetIsOpen",
+            "ScheduleOne.UI.Stations.BrickPressCanvas");
+
+        [HarmonyPostfix]
+        public static void Postfix(Component __instance, object[] __args)
+        {
+            if (GetOpenArg(__args))
+                ShowForStation(__instance);
+            else
+                HideForStation(__instance);
+        }
+    }
+
+    [HarmonyPatch]
     private static class CauldronOpenPatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Open",
+            "ScheduleOne.UI.Stations.CauldronInterface",
+            "ScheduleOne.UI.Stations.CauldronCanvas");
+
         [HarmonyPostfix]
-        public static void Postfix(CauldronInterface __instance) => ShowForStation(__instance);
+        public static void Postfix(Component __instance) => ShowForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(CauldronInterface), "Close")]
+    [HarmonyPatch]
     private static class CauldronClosePatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Close",
+            "ScheduleOne.UI.Stations.CauldronInterface",
+            "ScheduleOne.UI.Stations.CauldronCanvas");
+
         [HarmonyPrefix]
-        public static void Prefix(CauldronInterface __instance) => HideForStation(__instance);
+        public static void Prefix(Component __instance) => HideForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(LabOvenCanvas), "Open")]
+    [HarmonyPatch]
+    private static class CauldronSetOpenPatch
+    {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "SetIsOpen",
+            "ScheduleOne.UI.Stations.CauldronCanvas");
+
+        [HarmonyPostfix]
+        public static void Postfix(Component __instance, object[] __args)
+        {
+            if (GetOpenArg(__args))
+                ShowForStation(__instance);
+            else
+                HideForStation(__instance);
+        }
+    }
+
+    [HarmonyPatch]
     private static class LabOvenOpenPatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Open",
+            "ScheduleOne.UI.Stations.LabOvenCanvas");
+
         [HarmonyPostfix]
-        public static void Postfix(LabOvenCanvas __instance) => ShowForStation(__instance);
+        public static void Postfix(Component __instance) => ShowForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(LabOvenCanvas), "Close")]
+    [HarmonyPatch]
     private static class LabOvenClosePatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Close",
+            "ScheduleOne.UI.Stations.LabOvenCanvas");
+
         [HarmonyPrefix]
-        public static void Prefix(LabOvenCanvas __instance) => HideForStation(__instance);
+        public static void Prefix(Component __instance) => HideForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(DryingRackInterface), "Open")]
+    [HarmonyPatch]
+    private static class LabOvenSetOpenPatch
+    {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "SetIsOpen",
+            "ScheduleOne.UI.Stations.LabOvenCanvas");
+
+        [HarmonyPostfix]
+        public static void Postfix(Component __instance, object[] __args)
+        {
+            if (GetOpenArg(__args))
+                ShowForStation(__instance);
+            else
+                HideForStation(__instance);
+        }
+    }
+
+    [HarmonyPatch]
     private static class DryingRackOpenPatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Open",
+            "ScheduleOne.UI.Stations.DryingRackInterface",
+            "ScheduleOne.UI.Stations.DryingRackCanvas");
+
         [HarmonyPostfix]
-        public static void Postfix(DryingRackInterface __instance) => ShowForStation(__instance);
+        public static void Postfix(Component __instance) => ShowForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(DryingRackInterface), "Close")]
+    [HarmonyPatch]
     private static class DryingRackClosePatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Close",
+            "ScheduleOne.UI.Stations.DryingRackInterface",
+            "ScheduleOne.UI.Stations.DryingRackCanvas");
+
         [HarmonyPrefix]
-        public static void Prefix(DryingRackInterface __instance) => HideForStation(__instance);
+        public static void Prefix(Component __instance) => HideForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(MushroomSpawnStationInterface), "Open")]
+    [HarmonyPatch]
+    private static class DryingRackSetOpenPatch
+    {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "SetIsOpen",
+            "ScheduleOne.UI.Stations.DryingRackCanvas");
+
+        [HarmonyPostfix]
+        public static void Postfix(Component __instance, object[] __args)
+        {
+            if (GetOpenArg(__args))
+                ShowForStation(__instance);
+            else
+                HideForStation(__instance);
+        }
+    }
+
+    [HarmonyPatch]
     private static class MushroomSpawnOpenPatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Open",
+            "ScheduleOne.UI.Stations.MushroomSpawnStationInterface");
+
         [HarmonyPostfix]
-        public static void Postfix(MushroomSpawnStationInterface __instance) => ShowForStation(__instance);
+        public static void Postfix(Component __instance) => ShowForStation(__instance);
     }
 
-    [HarmonyPatch(typeof(MushroomSpawnStationInterface), "Close")]
+    [HarmonyPatch]
     private static class MushroomSpawnClosePatch
     {
+        private static IEnumerable<MethodBase> TargetMethods() => ResolveStationMethods(
+            "Close",
+            "ScheduleOne.UI.Stations.MushroomSpawnStationInterface");
+
         [HarmonyPrefix]
-        public static void Prefix(MushroomSpawnStationInterface __instance) => HideForStation(__instance);
+        public static void Prefix(Component __instance) => HideForStation(__instance);
     }
 }
