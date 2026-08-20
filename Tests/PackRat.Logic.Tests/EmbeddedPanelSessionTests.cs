@@ -29,4 +29,17 @@ public sealed class EmbeddedPanelSessionTests
 
         Assert.False(session.IsHidden);
     }
+
+    [Fact]
+    public void ClosingRestoresVisibilityBeforeSameOwnerReopens()
+    {
+        var session = new EmbeddedPanelSession();
+        session.Open(10);
+        session.Hide();
+
+        session.Close();
+        session.Open(10);
+
+        Assert.False(session.IsHidden);
+    }
 }

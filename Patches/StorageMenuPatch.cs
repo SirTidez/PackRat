@@ -148,10 +148,20 @@ public static class StorageMenuPatch
     {
         public string Id;
         public string Name;
+        /// <summary>
+        /// Total saleable units, including every unit held inside applied packaging.
+        /// </summary>
         public int Quantity;
         public float UnitPrice;
         public bool HasUnitPrice;
         public object Definition;
+        /// <summary>
+        /// The unpackaged definition sprite used by Schedule I's phone product selectors.
+        /// </summary>
+        public Sprite Icon;
+        public string DrugType;
+        public readonly Dictionary<string, int> PackagingCounts =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         public int ActiveOrderQuantity;
     }
 
@@ -211,6 +221,7 @@ public static class StorageMenuPatch
         public bool SupportsStorageBulkTransfer;
         public bool BulkTransferPresentationInitialized;
         public bool BulkTransferExpanded;
+        public bool UsesEditorBulkTransferControls;
         public int BulkTransferMotionGeneration;
         public int EmbeddedOwnerId;
     }
@@ -337,8 +348,13 @@ public static class StorageMenuPatch
         public RectTransform MetricsTrayContent;
         public Text MetricsTrayTitle;
         public Text MetricsTraySummary;
+        public Text MetricsTrayEmptyLabel;
+        public GameObject MetricsTrayRowTemplate;
         public Button MetricsTrayToggleButton;
         public Text MetricsTrayToggleLabel;
+        public Image MetricsTrayOpenIcon;
+        public Image MetricsTrayCloseIcon;
+        public Action MetricsTrayToggleAction;
         public CanvasGroup MetricsTrayCanvasGroup;
         public readonly List<GameObject> MetricsTrayRows = new List<GameObject>();
         public bool MetricsTrayExpanded;
@@ -349,6 +365,8 @@ public static class StorageMenuPatch
         public string MetricsTrayFingerprint;
         public float NextMetricsTrayRefreshTime;
         public float NextSourceStateRefreshTime;
+        public bool EditorActiveTabLayoutResolved;
+        public int EditorActiveTabLayoutGeneration;
         public Button SettingsButton;
         public Text SettingsLabel;
         public Button DoneButton;
@@ -443,10 +461,17 @@ public static class StorageMenuPatch
         public readonly List<GameObject> EmbeddedHiddenObjects = new List<GameObject>();
         public RectTransform EmbeddedHostRoot;
         public RectTransform EmbeddedSlotRoot;
+        public EditorUiEmbeddedRailBinding EmbeddedEditorRail;
+        public EditorUiStandaloneBrowserBinding EditorStandaloneBrowser;
+        public EditorUiSettingsBinding EditorSettingsOverlay;
         public Button EmbeddedHideButton;
         public Button EmbeddedShowButton;
         public Action EmbeddedHideAction;
         public Action EmbeddedShowAction;
+        public Button NativeDoneButton;
+        public RectTransform NativeCloseButtonContainer;
+        public Action EditorSettingsAction;
+        public Action EditorDoneAction;
         public string SearchTerm;
         public string TypeFilter;
         public string QualityFilter;
@@ -499,6 +524,7 @@ public static class StorageMenuPatch
     private const float TabIndicatorDuration = 0.12f;
     private const float PageWipeDuration = 0.14f;
     private const float MetricsTrayWidth = 190f;
+    private const float MetricsTrayHeight = 423f;
     private const float MetricsTrayMotionDuration = 0.16f;
     private const float MetricsFontScaleStep = 0.1f;
     private const int PillSpriteSize = 32;
@@ -1561,6 +1587,24 @@ public static class StorageMenuPatch
         });
     }
 
+    /// <summary>
+    /// Exposes the validated editor presentation for an already-applied embedded owner. Surface
+    /// controllers use this only to bind their existing transfer or mode behavior to authored
+    /// controls; inventory and browser state remain owned by this patch.
+    /// </summary>
+    internal static bool TryGetEditorBackpackBrowser(RectTransform hostRoot,
+        out EditorUiStandaloneBrowserBinding binding)
+    {
+        binding = null;
+        if (hostRoot == null ||
+            !StandaloneBackpackPanels.TryGetValue(hostRoot.GetInstanceID(), out var state) ||
+            state?.EditorStandaloneBrowser == null)
+            return false;
+
+        binding = state.EditorStandaloneBrowser;
+        return binding.Root != null;
+    }
+
     private static void EnsureEmbeddedVisibilityControls(StandaloneBackpackSurface surface,
         StandaloneBackpackState state)
     {
@@ -1569,33 +1613,135 @@ public static class StorageMenuPatch
 
         state.EmbeddedHostRoot = surface.Container;
         state.EmbeddedSlotRoot = surface.SlotContainer;
-        if (state.EmbeddedHideButton == null && state.HeaderRoot != null)
+        var visibilityControlsReady = state.EmbeddedHideButton != null && state.EmbeddedShowButton != null;
+        if (!visibilityControlsReady && TryEnsureEditorEmbeddedRail(surface, state))
+        {
+            BindEmbeddedVisibilityButtons(state);
+            visibilityControlsReady = true;
+        }
+
+        if (!visibilityControlsReady && state.HeaderRoot != null && surface.Container != null)
         {
             state.EmbeddedHideButton = CreateStandaloneActionButton(state.HeaderRoot, "HideEmbedded",
                 new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-164f, -31f),
                 new Vector2(-91f, -8f), "HIDE PACK", 8, out _);
-            state.EmbeddedHideAction = () =>
-            {
-                state.EmbeddedSession.Hide();
-                ApplyEmbeddedVisibility(state);
-            };
-            EventHelper.AddListener(state.EmbeddedHideAction, state.EmbeddedHideButton.onClick);
-        }
-
-        if (state.EmbeddedShowButton == null && surface.Container != null)
-        {
             state.EmbeddedShowButton = CreateStandaloneActionButton(surface.Container, "ShowEmbedded",
                 new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-112f, -36f),
                 new Vector2(-8f, -8f), "SHOW PACK", 8, out _);
-            state.EmbeddedShowAction = () =>
-            {
-                state.EmbeddedSession.Show();
-                ApplyEmbeddedVisibility(state);
-            };
-            EventHelper.AddListener(state.EmbeddedShowAction, state.EmbeddedShowButton.onClick);
+            BindEmbeddedVisibilityButtons(state);
         }
 
+        UpdateEditorEmbeddedRailGeometry(surface, state);
         ApplyEmbeddedVisibility(state);
+    }
+
+    private static bool TryEnsureEditorEmbeddedRail(StandaloneBackpackSurface surface,
+        StandaloneBackpackState state)
+    {
+        if (surface?.Container == null || state?.VisualRoot == null)
+            return false;
+
+        var editorPane = surface.LayoutView == StandaloneBackpackLayoutView.Deal
+            ? EditorUiPane.Handover
+            : EditorUiPane.Embedded;
+        if (state.EmbeddedEditorRail != null)
+        {
+            if (state.EmbeddedEditorRail.SourcePane == editorPane && state.EmbeddedEditorRail.Host != null &&
+                state.EmbeddedEditorRail.HideButton != null &&
+                state.EmbeddedEditorRail.ShowButton != null)
+                return true;
+
+            ReleaseEditorEmbeddedRail(state);
+        }
+
+        var hostObject = new GameObject("EditorUIA_EmbeddedRailHost");
+        var host = Utils.AddComponentSafe<RectTransform>(hostObject);
+        var layoutElement = Utils.AddComponentSafe<LayoutElement>(hostObject);
+        if (host == null || layoutElement == null)
+        {
+            UnityEngine.Object.Destroy(hostObject);
+            return false;
+        }
+
+        host.SetParent(surface.Container, worldPositionStays: false);
+        layoutElement.ignoreLayout = true;
+
+        var browser = state.EditorStandaloneBrowser;
+        var created = browser != null && browser.SourcePane == editorPane
+            ? EditorUiAssetBundleBindings.TryDetachEmbeddedRail(browser, host, out var binding)
+            : EditorUiAssetBundleBindings.TryCreateEmbeddedRail(editorPane, host, out binding);
+        if (!created)
+        {
+            UnityEngine.Object.Destroy(hostObject);
+            return false;
+        }
+
+        state.EmbeddedEditorRail = binding;
+        state.EmbeddedHideButton = binding.HideButton;
+        state.EmbeddedShowButton = binding.ShowButton;
+        UpdateEditorEmbeddedRailGeometry(surface, state);
+        ModLogger.Info($"[EditorUI] Bound the editor-authored {editorPane} collapse rail.");
+        return true;
+    }
+
+    private static void UpdateEditorEmbeddedRailGeometry(StandaloneBackpackSurface surface,
+        StandaloneBackpackState state)
+    {
+        var binding = state?.EmbeddedEditorRail;
+        if (binding?.Host == null || state.VisualRoot == null || surface?.Container == null)
+            return;
+
+        var host = binding.Host;
+        if (host.parent != surface.Container)
+            host.SetParent(surface.Container, worldPositionStays: false);
+
+        var bounds = CalculateRelativeRectBounds(surface.Container, state.VisualRoot);
+        host.anchorMin = surface.Container.pivot;
+        host.anchorMax = surface.Container.pivot;
+        host.pivot = new Vector2(0.5f, 0.5f);
+        host.anchoredPosition = new Vector2(bounds.Center.x, bounds.Center.y);
+        host.sizeDelta = new Vector2(bounds.Size.x, bounds.Size.y);
+        host.localRotation = Quaternion.identity;
+        host.localScale = Vector3.one;
+        host.SetAsLastSibling();
+    }
+
+    private static void BindEmbeddedVisibilityButtons(StandaloneBackpackState state)
+    {
+        if (state?.EmbeddedHideButton == null || state.EmbeddedShowButton == null)
+            return;
+
+        state.EmbeddedHideAction = () =>
+        {
+            state.EmbeddedSession.Hide();
+            ApplyEmbeddedVisibility(state);
+        };
+        state.EmbeddedShowAction = () =>
+        {
+            state.EmbeddedSession.Show();
+            ApplyEmbeddedVisibility(state);
+        };
+        EventHelper.AddListener(state.EmbeddedHideAction, state.EmbeddedHideButton.onClick);
+        EventHelper.AddListener(state.EmbeddedShowAction, state.EmbeddedShowButton.onClick);
+    }
+
+    private static void ReleaseEditorEmbeddedRail(StandaloneBackpackState state)
+    {
+        if (state == null)
+            return;
+
+        if (state.EmbeddedHideButton != null && state.EmbeddedHideAction != null)
+            EventHelper.RemoveListener(state.EmbeddedHideAction, state.EmbeddedHideButton.onClick);
+        if (state.EmbeddedShowButton != null && state.EmbeddedShowAction != null)
+            EventHelper.RemoveListener(state.EmbeddedShowAction, state.EmbeddedShowButton.onClick);
+
+        if (state.EmbeddedEditorRail?.Host != null)
+            UnityEngine.Object.Destroy(state.EmbeddedEditorRail.Host.gameObject);
+        state.EmbeddedEditorRail = null;
+        state.EmbeddedHideButton = null;
+        state.EmbeddedShowButton = null;
+        state.EmbeddedHideAction = null;
+        state.EmbeddedShowAction = null;
     }
 
     private static void ApplyEmbeddedVisibility(StandaloneBackpackState state)
@@ -1612,6 +1758,7 @@ public static class StorageMenuPatch
                 {
                     var child = state.EmbeddedHostRoot.GetChild(index);
                     if (child == null || child == state.EmbeddedShowButton?.transform ||
+                        child == state.EmbeddedEditorRail?.Host ||
                         !child.name.StartsWith("PackRat_", StringComparison.Ordinal) ||
                         !child.gameObject.activeSelf)
                         continue;
@@ -1621,7 +1768,12 @@ public static class StorageMenuPatch
 
             for (var index = 0; index < state.EmbeddedHiddenObjects.Count; index++)
                 state.EmbeddedHiddenObjects[index]?.SetActive(false);
-            if (state.EmbeddedShowButton != null)
+            if (state.EmbeddedEditorRail?.Host != null)
+            {
+                state.EmbeddedEditorRail.ApplyHiddenState(hidden: true);
+                state.EmbeddedEditorRail.Host.SetAsLastSibling();
+            }
+            else if (state.EmbeddedShowButton != null)
             {
                 state.EmbeddedShowButton.gameObject.SetActive(true);
                 state.EmbeddedShowButton.transform.SetAsLastSibling();
@@ -1633,7 +1785,12 @@ public static class StorageMenuPatch
             state.EmbeddedHiddenObjects[index]?.SetActive(true);
         state.EmbeddedHiddenObjects.Clear();
         state.EmbeddedSlotRoot.gameObject.SetActive(true);
-        if (state.EmbeddedShowButton != null)
+        if (state.EmbeddedEditorRail?.Host != null)
+        {
+            state.EmbeddedEditorRail.ApplyHiddenState(hidden: false);
+            state.EmbeddedEditorRail.Host.SetAsLastSibling();
+        }
+        else if (state.EmbeddedShowButton != null)
             state.EmbeddedShowButton.gameObject.SetActive(false);
     }
 
@@ -1718,29 +1875,8 @@ public static class StorageMenuPatch
         Vector2 gridSize, float scale)
     {
         var host = surface?.Container;
-        if (host == null || host.rect.width <= 0f || host.rect.height <= 0f)
+        if (!TryGetSurfaceSafeArea(host, out var safe))
             return desired;
-
-        const float margin = 24f;
-        var safe = new FloatRect(host.rect.xMin + margin, host.rect.yMin + margin,
-            Mathf.Max(0f, host.rect.width - margin * 2f),
-            Mathf.Max(0f, host.rect.height - margin * 2f));
-        var canvas = host.GetComponentInParent<Canvas>();
-        var camera = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay
-            ? canvas.worldCamera
-            : null;
-        if (RectTransformUtility.ScreenPointToLocalPointInRectangle(host, Screen.safeArea.min, camera,
-                out var safeMin) &&
-            RectTransformUtility.ScreenPointToLocalPointInRectangle(host, Screen.safeArea.max, camera,
-                out var safeMax))
-        {
-            var left = Mathf.Max(safe.Left, Mathf.Min(safeMin.x, safeMax.x) + margin);
-            var right = Mathf.Min(safe.Right, Mathf.Max(safeMin.x, safeMax.x) - margin);
-            var bottom = Mathf.Max(safe.Bottom, Mathf.Min(safeMin.y, safeMax.y) + margin);
-            var top = Mathf.Min(safe.Top, Mathf.Max(safeMin.y, safeMax.y) - margin);
-            if (right > left && top > bottom)
-                safe = new FloatRect(left, bottom, right - left, top - bottom);
-        }
 
         var visualWidth = (gridSize.x + StandaloneCardPadding * 2f) * scale;
         var visualHeight = (gridSize.y + StandaloneHeaderHeight + StandaloneCardPadding * 2f) * scale;
@@ -1748,6 +1884,35 @@ public static class StorageMenuPatch
             desired.y - visualHeight * 0.5f, visualWidth, visualHeight);
         var clamped = UiBoundsPolicy.Clamp(desiredBounds, safe);
         return desired + new Vector2(clamped.X - desiredBounds.X, clamped.Y - desiredBounds.Y);
+    }
+
+    private static bool TryGetSurfaceSafeArea(RectTransform host, out FloatRect safe)
+    {
+        safe = default;
+        if (host == null || host.rect.width <= 0f || host.rect.height <= 0f)
+            return false;
+
+        const float margin = 24f;
+        safe = new FloatRect(host.rect.xMin + margin, host.rect.yMin + margin,
+            Mathf.Max(0f, host.rect.width - margin * 2f),
+            Mathf.Max(0f, host.rect.height - margin * 2f));
+        var canvas = host.GetComponentInParent<Canvas>();
+        var camera = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay
+            ? canvas.worldCamera
+            : null;
+        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(host, Screen.safeArea.min, camera,
+                out var safeMin) ||
+            !RectTransformUtility.ScreenPointToLocalPointInRectangle(host, Screen.safeArea.max, camera,
+                out var safeMax))
+            return true;
+
+        var left = Mathf.Max(safe.Left, Mathf.Min(safeMin.x, safeMax.x) + margin);
+        var right = Mathf.Min(safe.Right, Mathf.Max(safeMin.x, safeMax.x) - margin);
+        var bottom = Mathf.Max(safe.Bottom, Mathf.Min(safeMin.y, safeMax.y) + margin);
+        var top = Mathf.Min(safe.Top, Mathf.Max(safeMin.y, safeMax.y) - margin);
+        if (right > left && top > bottom)
+            safe = new FloatRect(left, bottom, right - left, top - bottom);
+        return true;
     }
 
     /// <summary>
@@ -1811,6 +1976,8 @@ public static class StorageMenuPatch
 
         state.PresentationRoot = surface.SlotContainer;
 
+        var usesEditorBrowser = TryEnsureEditorStandaloneBrowser(surface, state);
+
         if (state.VisualRoot == null)
         {
             var visualGo = new GameObject("PackRat_BackpackVisual");
@@ -1861,29 +2028,36 @@ public static class StorageMenuPatch
             CreateStandaloneDropdown(header, state);
         }
 
-        if (state.VisualRoot.parent != surface.SlotContainer)
-            state.VisualRoot.SetParent(surface.SlotContainer, worldPositionStays: false);
-
-        var visualLayoutElement = state.VisualRoot.GetComponent<LayoutElement>();
-        if (visualLayoutElement == null)
-            visualLayoutElement = state.VisualRoot.gameObject.AddComponent<LayoutElement>();
-        visualLayoutElement.ignoreLayout = true;
-
-        state.VisualRoot.anchorMin = Vector2.zero;
-        state.VisualRoot.anchorMax = Vector2.one;
-        state.VisualRoot.offsetMin = new Vector2(-StandaloneCardPadding, -StandaloneCardPadding);
-        state.VisualRoot.offsetMax = new Vector2(StandaloneCardPadding, StandaloneHeaderHeight + StandaloneCardPadding);
-        state.VisualRoot.SetAsFirstSibling();
-
-        var headerRect = state.VisualRoot.Find("Header") as RectTransform;
-        if (headerRect != null)
+        if (usesEditorBrowser)
         {
-            state.HeaderRoot = headerRect;
-            headerRect.anchorMin = new Vector2(0f, 1f);
-            headerRect.anchorMax = new Vector2(1f, 1f);
-            headerRect.pivot = new Vector2(0.5f, 1f);
-            headerRect.offsetMin = new Vector2(8f, -StandaloneHeaderHeight - 4f);
-            headerRect.offsetMax = new Vector2(-8f, -8f);
+            ConfigureEditorStandaloneBrowserGeometry(surface, state);
+        }
+        else
+        {
+            if (state.VisualRoot.parent != surface.SlotContainer)
+                state.VisualRoot.SetParent(surface.SlotContainer, worldPositionStays: false);
+
+            var visualLayoutElement = Utils.GetOrAddComponentSafe<LayoutElement>(state.VisualRoot.gameObject);
+            if (visualLayoutElement != null)
+                visualLayoutElement.ignoreLayout = true;
+
+            state.VisualRoot.anchorMin = Vector2.zero;
+            state.VisualRoot.anchorMax = Vector2.one;
+            state.VisualRoot.offsetMin = new Vector2(-StandaloneCardPadding, -StandaloneCardPadding);
+            state.VisualRoot.offsetMax = new Vector2(StandaloneCardPadding,
+                StandaloneHeaderHeight + StandaloneCardPadding);
+            state.VisualRoot.SetAsFirstSibling();
+
+            var headerRect = state.VisualRoot.Find("Header") as RectTransform;
+            if (headerRect != null)
+            {
+                state.HeaderRoot = headerRect;
+                headerRect.anchorMin = new Vector2(0f, 1f);
+                headerRect.anchorMax = new Vector2(1f, 1f);
+                headerRect.pivot = new Vector2(0.5f, 1f);
+                headerRect.offsetMin = new Vector2(8f, -StandaloneHeaderHeight - 4f);
+                headerRect.offsetMax = new Vector2(-8f, -8f);
+            }
         }
 
         CreateStandaloneDropdown(state.HeaderRoot, state);
@@ -1924,6 +2098,323 @@ public static class StorageMenuPatch
         }
 
         ApplyStandaloneBackpackTheme(state);
+    }
+
+    private static bool TryEnsureEditorStandaloneBrowser(StandaloneBackpackSurface surface,
+        StandaloneBackpackState state)
+    {
+        if (surface?.SlotContainer == null || state == null)
+            return false;
+
+        var editorPane = GetEditorPane(surface.LayoutView);
+        var binding = state.EditorStandaloneBrowser;
+        if (binding != null)
+        {
+            if (binding.SourcePane != editorPane || binding.Root == null || binding.Header == null || binding.SearchInput == null ||
+                binding.SettingsButton == null)
+                return false;
+
+            ApplyEditorStandaloneBrowserState(surface, state, binding);
+            return true;
+        }
+
+        // A legacy root means this surface already committed to the fallback contract. Do not
+        // replace a live tree midway through a storage session.
+        if (state.VisualRoot != null)
+            return false;
+        if (!EditorUiAssetBundleBindings.TryCreateBrowser(editorPane, surface.SlotContainer, out binding))
+            return false;
+
+        state.EditorStandaloneBrowser = binding;
+        state.VisualRoot = binding.Root;
+        state.EditorActiveTabLayoutResolved = false;
+        var activeTabGeneration = ++state.EditorActiveTabLayoutGeneration;
+        MelonCoroutines.Start(ResolveEditorStandaloneActiveTabLayout(state, binding, activeTabGeneration));
+        ApplyEditorStandaloneBrowserState(surface, state, binding);
+        ModLogger.Info($"[EditorUI] Bound the complete editor-authored {editorPane} browser chrome.");
+        return true;
+    }
+
+    private static EditorUiPane GetEditorPane(StandaloneBackpackLayoutView layoutView)
+    {
+        return layoutView switch
+        {
+            StandaloneBackpackLayoutView.Deal => EditorUiPane.Handover,
+            StandaloneBackpackLayoutView.Storage => EditorUiPane.Embedded,
+            StandaloneBackpackLayoutView.Station => EditorUiPane.Embedded,
+            _ => EditorUiPane.Standalone
+        };
+    }
+
+    private static void ApplyEditorStandaloneBrowserState(StandaloneBackpackSurface surface,
+        StandaloneBackpackState state, EditorUiStandaloneBrowserBinding binding)
+    {
+        state.HeaderRoot = binding.Header;
+        state.HeaderAccent = binding.HeaderAccent;
+        state.VisualTitleLabel = binding.Title;
+        state.VisualMetaLabel = binding.Meta;
+        state.SearchInput = binding.SearchInput;
+        state.SearchBackground = binding.SearchBackground;
+        state.SearchBackgroundBaseColor = binding.SearchBackground.color;
+        state.SearchText = binding.SearchText;
+        state.SearchPlaceholder = binding.SearchPlaceholder;
+        state.TypeFilterButton = binding.TypeButton;
+        state.TypeFilterLabel = binding.TypeLabel;
+        state.QualityFilterButton = binding.QualityButton;
+        state.QualityFilterLabel = binding.QualityLabel;
+        state.SortDirectionButton = binding.OrderButton;
+        state.SortDirectionLabel = binding.OrderLabel;
+        state.OrganizeButton = binding.OrganizeButton;
+        state.OrganizeLabel = binding.OrganizeLabel;
+        state.ClearFiltersButton = binding.ClearButton;
+        state.ClearFiltersLabel = binding.ClearLabel;
+        state.ConsolidateButton = binding.StackButton;
+        state.ConsolidateLabel = binding.StackLabel;
+        state.SettingsButton = binding.SettingsButton;
+        state.SettingsLabel = null;
+        state.SortTabsRoot = binding.SortTabs;
+        state.SlotsPanelRoot = binding.SlotViewport;
+
+        if (binding.SourcePane == EditorUiPane.Standalone)
+            BindEditorStandaloneMetricsTray(state, binding);
+
+        binding.SearchInput.targetGraphic = binding.SearchBackground;
+        binding.SearchInput.contentType = InputField.ContentType.Standard;
+        binding.SearchInput.characterLimit = 64;
+        binding.SearchInput.caretColor = new Color32(244, 247, 250, 255);
+
+        BindEditorStandaloneSortTabs(state, binding);
+        BindEditorStandalonePaging(state, binding);
+        BindEditorStandalonePrimaryActions(surface, state, binding);
+
+        if (binding.BulkTransferRow != null)
+            binding.BulkTransferRow.gameObject.SetActive(
+                surface.LayoutView == StandaloneBackpackLayoutView.Storage);
+    }
+
+    private static void BindEditorStandaloneMetricsTray(StandaloneBackpackState state,
+        EditorUiStandaloneBrowserBinding binding)
+    {
+        if (state == null || binding?.MetricsTrayRoot == null)
+            return;
+
+        state.MetricsTrayRoot = binding.MetricsTrayRoot;
+        state.MetricsTrayPanel = binding.MetricsTrayPanel;
+        state.MetricsTrayContent = binding.MetricsTrayContent;
+        state.MetricsTrayTitle = null;
+        state.MetricsTraySummary = binding.MetricsTraySummary;
+        state.MetricsTrayEmptyLabel = binding.MetricsTrayEmptyLabel;
+        state.MetricsTrayRowTemplate = binding.MetricsTrayRowTemplate;
+        state.MetricsTrayToggleButton = binding.MetricsTrayToggleButton;
+        state.MetricsTrayToggleLabel = null;
+        state.MetricsTrayOpenIcon = binding.MetricsTrayOpenIcon;
+        state.MetricsTrayCloseIcon = binding.MetricsTrayCloseIcon;
+        state.MetricsTrayCanvasGroup = Utils.GetOrAddComponentSafe<CanvasGroup>(binding.MetricsTrayRoot.gameObject);
+        if (state.MetricsTrayRowTemplate != null)
+            state.MetricsTrayRowTemplate.SetActive(false);
+
+        if (state.MetricsTrayToggleAction == null)
+        {
+            state.MetricsTrayToggleAction = () => ToggleStandaloneMetricsTray(state);
+            EventHelper.AddListener(state.MetricsTrayToggleAction, binding.MetricsTrayToggleButton.onClick);
+        }
+    }
+
+    private static void BindEditorStandaloneSortTabs(StandaloneBackpackState state,
+        EditorUiStandaloneBrowserBinding binding)
+    {
+        if (state.SortTabs.Count > 0)
+            return;
+
+        AddEditorStandaloneSortTab(state, StandaloneBackpackSortMode.SlotOrder, binding.AllTab);
+        AddEditorStandaloneSortTab(state, StandaloneBackpackSortMode.Favorites, binding.FavoritesTab);
+        AddEditorStandaloneSortTab(state, StandaloneBackpackSortMode.Name, binding.NameTab);
+        AddEditorStandaloneSortTab(state, StandaloneBackpackSortMode.Quantity, binding.QuantityTab);
+        AddEditorStandaloneSortTab(state, StandaloneBackpackSortMode.Quality, binding.QualityTab);
+        AddEditorStandaloneSortTab(state, StandaloneBackpackSortMode.Type, binding.TypeTab);
+        AddEditorStandaloneSortTab(state, StandaloneBackpackSortMode.Recent, binding.RecentTab);
+    }
+
+    private static void AddEditorStandaloneSortTab(StandaloneBackpackState state,
+        StandaloneBackpackSortMode sortMode, Button button)
+    {
+        var labelNode = button?.transform.Find("Label");
+        var tab = new StandaloneBackpackSortTab
+        {
+            SortMode = sortMode,
+            Button = button,
+            Label = labelNode != null ? Utils.GetComponentSafe<Text>(labelNode.gameObject) : null
+        };
+        tab.SelectAction = () => SetStandaloneSortMode(state, sortMode);
+        EventHelper.AddListener(tab.SelectAction, tab.Button.onClick);
+        state.SortTabs.Add(tab);
+    }
+
+    private static void BindEditorStandalonePaging(StandaloneBackpackState state,
+        EditorUiStandaloneBrowserBinding binding)
+    {
+        if (state.PagingRoot == binding.Footer)
+            return;
+
+        if (state.PrevButton != null && state.PrevAction != null)
+            EventHelper.RemoveListener(state.PrevAction, state.PrevButton.onClick);
+        if (state.NextButton != null && state.NextAction != null)
+            EventHelper.RemoveListener(state.NextAction, state.NextButton.onClick);
+        if (state.PagingRoot != null)
+            UnityEngine.Object.Destroy(state.PagingRoot.gameObject);
+
+        state.PagingRoot = binding.Footer;
+        state.PrevButton = binding.PreviousButton;
+        state.PageLabel = binding.PageLabel;
+        state.NextButton = binding.NextButton;
+        if (state.PrevAction != null)
+            EventHelper.AddListener(state.PrevAction, state.PrevButton.onClick);
+        if (state.NextAction != null)
+            EventHelper.AddListener(state.NextAction, state.NextButton.onClick);
+    }
+
+    private static void BindEditorStandalonePrimaryActions(StandaloneBackpackSurface surface,
+        StandaloneBackpackState state, EditorUiStandaloneBrowserBinding binding)
+    {
+        if (state.EditorSettingsAction == null)
+        {
+            state.EditorSettingsAction = () => ToggleStandaloneSettings(state);
+            EventHelper.AddListener(state.EditorSettingsAction, binding.SettingsButton.onClick);
+        }
+
+        var nativeDone = surface.CloseButtonContainer != null
+            ? surface.CloseButtonContainer.GetComponentInChildren<Button>(includeInactive: true)
+            : null;
+        if (nativeDone != null && nativeDone != binding.DoneButton)
+        {
+            state.NativeDoneButton = nativeDone;
+            state.NativeCloseButtonContainer = surface.CloseButtonContainer;
+        }
+        if (state.EditorDoneAction == null)
+        {
+            state.EditorDoneAction = () =>
+            {
+                if (state.IsHotkeyBackpack)
+                {
+                    state.NativeDoneButton?.onClick.Invoke();
+                    return;
+                }
+
+                state.EmbeddedSession.Hide();
+                ApplyEmbeddedVisibility(state);
+            };
+            EventHelper.AddListener(state.EditorDoneAction, binding.DoneButton.onClick);
+        }
+
+        state.DoneButton = binding.DoneButton;
+        if (state.NativeCloseButtonContainer != null)
+            state.NativeCloseButtonContainer.gameObject.SetActive(false);
+    }
+
+    private static void ConfigureEditorStandaloneBrowserGeometry(StandaloneBackpackSurface surface,
+        StandaloneBackpackState state)
+    {
+        var binding = state?.EditorStandaloneBrowser;
+        if (binding?.Root == null || binding.SlotGrid == null || surface?.SlotContainer == null)
+            return;
+
+        var root = binding.Root;
+        if (root.parent != surface.SlotContainer)
+            root.SetParent(surface.SlotContainer, worldPositionStays: false);
+        var layoutElement = Utils.GetOrAddComponentSafe<LayoutElement>(root.gameObject);
+        if (layoutElement != null)
+            layoutElement.ignoreLayout = true;
+
+        root.anchorMin = new Vector2(0.5f, 0.5f);
+        root.anchorMax = new Vector2(0.5f, 0.5f);
+        root.pivot = new Vector2(0.5f, 0.5f);
+        root.localRotation = Quaternion.identity;
+        root.localScale = Vector3.one;
+
+        var authoredGridBounds = CalculateRelativeRectBounds(root, binding.SlotGrid);
+        if (!binding.AuthoredGeometryCaptured && root.rect.width > 0f && root.rect.height > 0f &&
+            authoredGridBounds.Size.x > 0f && authoredGridBounds.Size.y > 0f)
+        {
+            binding.AuthoredRootSize = root.rect.size;
+            binding.AuthoredSlotGridSize = new Vector2(authoredGridBounds.Size.x, authoredGridBounds.Size.y);
+            binding.AuthoredGeometryCaptured = true;
+        }
+
+        var rootSizeChanged = false;
+        if (binding.AuthoredGeometryCaptured)
+        {
+            var nativeGridSize = surface.SlotContainer.rect.size;
+            var expanded = UiScalePolicy.ExpandFrameworkToContent(
+                binding.AuthoredRootSize.x,
+                binding.AuthoredRootSize.y,
+                binding.AuthoredSlotGridSize.x,
+                binding.AuthoredSlotGridSize.y,
+                nativeGridSize.x,
+                nativeGridSize.y);
+            var desiredRootSize = new Vector2(expanded.Width, expanded.Height);
+            rootSizeChanged = (binding.AppliedRootSize - desiredRootSize).sqrMagnitude > 0.01f;
+            root.sizeDelta = desiredRootSize;
+
+            // Storage and station surfaces inherit a game-owned full-screen canvas. Preserve the
+            // requested uniform scale unless the complete expanded pane would cross its safe area.
+            // Handover owns a separate outer card whose safe-area pass runs after this method.
+            if (surface.LayoutView != StandaloneBackpackLayoutView.Deal &&
+                TryGetSurfaceSafeArea(surface.Container, out var safe))
+            {
+                var requestedScale = Mathf.Max(0.001f, surface.SlotContainer.localScale.x);
+                var fittedScale = UiScalePolicy.FitUniformScale(desiredRootSize.x, desiredRootSize.y,
+                    requestedScale, safe.Width, safe.Height);
+                surface.SlotContainer.localScale = Vector3.one * Mathf.Max(0.001f, fittedScale);
+            }
+
+            if (rootSizeChanged)
+            {
+                binding.AppliedRootSize = desiredRootSize;
+                state.EditorActiveTabLayoutResolved = false;
+                var activeTabGeneration = ++state.EditorActiveTabLayoutGeneration;
+                MelonCoroutines.Start(ResolveEditorStandaloneActiveTabLayout(state, binding,
+                    activeTabGeneration));
+                ModLogger.Info(
+                    $"[EditorUI] Sized {binding.SourcePane} chrome to {desiredRootSize.x:0.#}x" +
+                    $"{desiredRootSize.y:0.#} for native grid {nativeGridSize.x:0.#}x{nativeGridSize.y:0.#}.");
+            }
+        }
+
+        var gridBounds = CalculateRelativeRectBounds(root, binding.SlotGrid);
+        root.anchoredPosition = new Vector2(-gridBounds.Center.x, -gridBounds.Center.y);
+        var surfaceMoved = ClampEditorBrowserToSafeArea(surface, binding);
+        if (rootSizeChanged || surfaceMoved)
+            UpdateStandaloneBackpackPresentationAnchor(surface, state);
+        // The authored card must draw first. Native ItemSlotUI objects remain direct siblings and
+        // therefore render and receive input above the intentionally empty slot framework.
+        root.SetAsFirstSibling();
+        binding.SlotViewport.gameObject.SetActive(true);
+        binding.Footer.gameObject.SetActive(true);
+    }
+
+    private static bool ClampEditorBrowserToSafeArea(StandaloneBackpackSurface surface,
+        EditorUiStandaloneBrowserBinding binding)
+    {
+        if (surface?.Container == null || surface.SlotContainer == null || binding?.Root == null ||
+            surface.LayoutView == StandaloneBackpackLayoutView.Deal ||
+            !TryGetSurfaceSafeArea(surface.Container, out var safe))
+            return false;
+
+        var bounds = CalculateRelativeRectBounds(surface.Container, binding.Root);
+        var desired = new FloatRect(bounds.Minimum.x, bounds.Minimum.y, bounds.Size.x, bounds.Size.y);
+        var clamped = UiBoundsPolicy.Clamp(desired, safe);
+        var correction = new Vector2(clamped.X - desired.X, clamped.Y - desired.Y);
+        if (correction.sqrMagnitude <= 0.01f)
+            return false;
+
+        var parent = surface.SlotContainer.parent;
+        if (parent == null)
+            return false;
+        var localOrigin = parent.InverseTransformPoint(surface.Container.TransformPoint(Vector3.zero));
+        var localTarget = parent.InverseTransformPoint(surface.Container.TransformPoint(
+            new Vector3(correction.x, correction.y, 0f)));
+        surface.SlotContainer.anchoredPosition += (Vector2)(localTarget - localOrigin);
+        return true;
     }
 
     /// <summary>
@@ -2172,13 +2663,13 @@ public static class StorageMenuPatch
         var trayGo = new GameObject("PackRat_BackpackMetricsTray");
         var tray = trayGo.AddComponent<RectTransform>();
         tray.SetParent(visualRoot, worldPositionStays: false);
-        tray.anchorMin = new Vector2(0f, 0f);
-        tray.anchorMax = new Vector2(0f, 1f);
-        tray.pivot = new Vector2(1f, 0.5f);
+        tray.anchorMin = Vector2.zero;
+        tray.anchorMax = Vector2.zero;
+        tray.pivot = new Vector2(1f, 0f);
         // Keep the extension mechanically joined to the card; the edge-to-edge seam makes it
         // read as an opened backpack compartment rather than another floating modal.
         tray.anchoredPosition = Vector2.zero;
-        tray.sizeDelta = new Vector2(0f, 0f);
+        tray.sizeDelta = new Vector2(0f, MetricsTrayHeight);
         var trayImage = trayGo.AddComponent<Image>();
         trayImage.color = Color.clear;
         trayImage.raycastTarget = false;
@@ -2199,17 +2690,19 @@ public static class StorageMenuPatch
         panelImage.raycastTarget = true;
         state.MetricsTrayPanel = panel;
 
-        state.MetricsTrayTitle = CreateSearchText(panel, "Title", new Color32(217, 236, 248, 255));
-        state.MetricsTrayTitle.text = "PRODUCT METRICS";
-        state.MetricsTrayTitle.fontSize = GetStandaloneMetricsFontSize(11);
-        state.MetricsTrayTitle.fontStyle = FontStyle.Bold;
-        state.MetricsTrayTitle.alignment = TextAnchor.MiddleLeft;
-        var titleRect = state.MetricsTrayTitle.GetComponent<RectTransform>();
-        titleRect.anchorMin = new Vector2(0f, 1f);
-        titleRect.anchorMax = new Vector2(1f, 1f);
-        titleRect.pivot = new Vector2(0.5f, 1f);
-        titleRect.offsetMin = new Vector2(10f, -28f);
-        titleRect.offsetMax = new Vector2(-10f, -7f);
+        state.MetricsTrayTitle = null;
+
+        var accentGo = new GameObject("Accent");
+        var accentRect = accentGo.AddComponent<RectTransform>();
+        accentRect.SetParent(panel, worldPositionStays: false);
+        accentRect.anchorMin = new Vector2(0f, 1f);
+        accentRect.anchorMax = Vector2.one;
+        accentRect.pivot = new Vector2(0.5f, 1f);
+        accentRect.sizeDelta = new Vector2(0f, 3f);
+        accentRect.anchoredPosition = Vector2.zero;
+        var accentImage = accentGo.AddComponent<Image>();
+        accentImage.color = new Color32(76, 173, 229, 255);
+        accentImage.raycastTarget = false;
 
         state.MetricsTraySummary = CreateSearchText(panel, "Summary", new Color32(135, 191, 222, 255));
         state.MetricsTraySummary.fontSize = GetStandaloneMetricsFontSize(9);
@@ -2228,7 +2721,7 @@ public static class StorageMenuPatch
         scrollRect.anchorMin = new Vector2(0f, 0f);
         scrollRect.anchorMax = new Vector2(1f, 1f);
         scrollRect.offsetMin = new Vector2(8f, 31f);
-        scrollRect.offsetMax = new Vector2(-8f, -32f);
+        scrollRect.offsetMax = new Vector2(-8f, -5f);
         var scrollImage = scrollGo.AddComponent<Image>();
         scrollImage.color = Color.clear;
         scrollImage.raycastTarget = true;
@@ -2262,14 +2755,16 @@ public static class StorageMenuPatch
         state.MetricsTrayContent = content;
 
         var toggle = CreateStandaloneActionButton(visualRoot, "MetricsTrayToggle",
-            new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(-28f, -24f), new Vector2(0f, 24f),
+            Vector2.zero, Vector2.zero, new Vector2(-28f, MetricsTrayHeight * 0.5f - 24f),
+            new Vector2(0f, MetricsTrayHeight * 0.5f + 24f),
             "<<", 7, out state.MetricsTrayToggleLabel);
         state.MetricsTrayToggleButton = toggle;
         ApplyMetricsTrayTabPresentation(toggle.targetGraphic as Image);
         // The tray owns this control's colour and geometry so the default Button tint cannot
         // make its side tab look like a vertically-focused desktop tab.
         toggle.transition = Selectable.Transition.None;
-        EventHelper.AddListener(() => ToggleStandaloneMetricsTray(state), toggle.onClick);
+        state.MetricsTrayToggleAction = () => ToggleStandaloneMetricsTray(state);
+        EventHelper.AddListener(state.MetricsTrayToggleAction, toggle.onClick);
     }
 
     private static void ToggleStandaloneMetricsTray(StandaloneBackpackState state)
@@ -2298,7 +2793,7 @@ public static class StorageMenuPatch
 
         var startWidth = state.MetricsTrayRoot.sizeDelta.x;
         var startAlpha = state.MetricsTrayCanvasGroup?.alpha ?? 1f;
-        var targetWidth = state.MetricsTrayExpanded ? MetricsTrayWidth : 0f;
+        var targetWidth = state.MetricsTrayExpanded ? GetStandaloneMetricsTrayExpandedWidth(state) : 0f;
         var targetAlpha = state.MetricsTrayExpanded ? 1f : 0f;
         MelonCoroutines.Start(RunStandaloneMetricsTrayMotion(state, generation, startWidth, targetWidth, startAlpha,
             targetAlpha));
@@ -2313,7 +2808,7 @@ public static class StorageMenuPatch
             elapsed += Time.unscaledDeltaTime;
             var t = EaseOutCubic(Mathf.Clamp01(elapsed / MetricsTrayMotionDuration));
             if (state.MetricsTrayRoot != null)
-                state.MetricsTrayRoot.sizeDelta = new Vector2(Mathf.Lerp(startWidth, targetWidth, t), 0f);
+                SetStandaloneMetricsTrayWidth(state, Mathf.Lerp(startWidth, targetWidth, t));
             PositionStandaloneMetricsTrayToggle(state, state.MetricsTrayRoot?.sizeDelta.x ?? targetWidth);
             if (state.MetricsTrayCanvasGroup != null)
                 state.MetricsTrayCanvasGroup.alpha = Mathf.Lerp(startAlpha, targetAlpha, t);
@@ -2330,7 +2825,7 @@ public static class StorageMenuPatch
             return;
 
         var expanded = state.MetricsTrayExpanded && Configuration.Instance.ShowMetricsTray;
-        state.MetricsTrayRoot.sizeDelta = new Vector2(expanded ? MetricsTrayWidth : 0f, 0f);
+        SetStandaloneMetricsTrayWidth(state, expanded ? GetStandaloneMetricsTrayExpandedWidth(state) : 0f);
         PositionStandaloneMetricsTrayToggle(state, state.MetricsTrayRoot.sizeDelta.x);
         if (state.MetricsTrayCanvasGroup != null)
         {
@@ -2339,11 +2834,17 @@ public static class StorageMenuPatch
         }
         if (state.MetricsTrayToggleLabel != null)
             state.MetricsTrayToggleLabel.text = expanded ? ">>" : "<<";
+        if (state.MetricsTrayOpenIcon != null)
+            state.MetricsTrayOpenIcon.gameObject.SetActive(!expanded);
+        if (state.MetricsTrayCloseIcon != null)
+            state.MetricsTrayCloseIcon.gameObject.SetActive(expanded);
         var toggleImage = state.MetricsTrayToggleButton?.targetGraphic as Image;
         if (toggleImage != null)
-            toggleImage.color = expanded
-                ? new Color32(48, 128, 170, 255)
-                : new Color32(20, 35, 47, 255);
+        {
+            var palette = BackpackUiThemes.Get(Configuration.Instance.BackpackUiTheme,
+                Configuration.Instance.CustomBackpackUiPrimaryColor);
+            toggleImage.color = expanded ? palette.Accent : palette.ControlAlt;
+        }
     }
 
     /// <summary>
@@ -2358,8 +2859,31 @@ public static class StorageMenuPatch
             return;
 
         trayWidth = Mathf.Max(0f, trayWidth);
-        toggleRect.offsetMin = new Vector2(-trayWidth - 28f, -24f);
-        toggleRect.offsetMax = new Vector2(-trayWidth, 24f);
+        var editorBinding = state.EditorStandaloneBrowser;
+        if (editorBinding?.MetricsTrayToggleButton == state.MetricsTrayToggleButton)
+        {
+            var exposedEdge = editorBinding.MetricsTraySeamOverlap - trayWidth;
+            toggleRect.anchoredPosition = new Vector2(exposedEdge, toggleRect.anchoredPosition.y);
+            return;
+        }
+
+        toggleRect.offsetMin = new Vector2(-trayWidth - 28f, toggleRect.offsetMin.y);
+        toggleRect.offsetMax = new Vector2(-trayWidth, toggleRect.offsetMax.y);
+    }
+
+    private static void SetStandaloneMetricsTrayWidth(StandaloneBackpackState state, float width)
+    {
+        if (state?.MetricsTrayRoot == null)
+            return;
+
+        var currentSize = state.MetricsTrayRoot.sizeDelta;
+        state.MetricsTrayRoot.sizeDelta = new Vector2(Mathf.Max(0f, width), currentSize.y);
+    }
+
+    private static float GetStandaloneMetricsTrayExpandedWidth(StandaloneBackpackState state)
+    {
+        var editorWidth = state?.EditorStandaloneBrowser?.MetricsTrayExpandedWidth ?? 0f;
+        return editorWidth > 0f ? editorWidth : MetricsTrayWidth;
     }
 
     private static void RefreshStandaloneMetricsTray(StandaloneBackpackState state, List<ItemSlot> backpackSlots)
@@ -2385,24 +2909,32 @@ public static class StorageMenuPatch
                 UnityEngine.Object.Destroy(state.MetricsTrayRows[i]);
         }
         state.MetricsTrayRows.Clear();
+        if (state.MetricsTrayEmptyLabel != null)
+            state.MetricsTrayEmptyLabel.gameObject.SetActive(false);
 
         for (var i = 0; i < metrics.Count; i++)
             CreateStandaloneMetricsTrayRow(state, metrics[i]);
 
         if (metrics.Count == 0)
         {
-            var empty = CreateSearchText(state.MetricsTrayContent, "Empty", new Color32(144, 171, 188, 255));
+            var empty = state.MetricsTrayEmptyLabel;
+            if (empty == null)
+                empty = CreateSearchText(state.MetricsTrayContent, "Empty", new Color32(144, 171, 188, 255));
             empty.text = "NO PRODUCTS IN BACKPACK";
             empty.fontSize = GetStandaloneMetricsFontSize(8);
             empty.fontStyle = FontStyle.Bold;
             empty.alignment = TextAnchor.MiddleCenter;
-            var emptyRect = empty.GetComponent<RectTransform>();
-            emptyRect.anchorMin = new Vector2(0f, 1f);
-            emptyRect.anchorMax = new Vector2(1f, 1f);
-            emptyRect.pivot = new Vector2(0.5f, 1f);
-            emptyRect.offsetMin = new Vector2(2f, -30f);
-            emptyRect.offsetMax = new Vector2(-2f, -2f);
-            state.MetricsTrayRows.Add(empty.gameObject);
+            empty.gameObject.SetActive(true);
+            if (state.MetricsTrayEmptyLabel == null)
+            {
+                var emptyRect = empty.GetComponent<RectTransform>();
+                emptyRect.anchorMin = new Vector2(0f, 1f);
+                emptyRect.anchorMax = new Vector2(1f, 1f);
+                emptyRect.pivot = new Vector2(0.5f, 1f);
+                emptyRect.offsetMin = new Vector2(2f, -30f);
+                emptyRect.offsetMax = new Vector2(-2f, -2f);
+                state.MetricsTrayRows.Add(empty.gameObject);
+            }
         }
 
         if (state.MetricsTraySummary != null)
@@ -2453,13 +2985,23 @@ public static class StorageMenuPatch
                     Id = id,
                     Name = GetSlotName(slot),
                     Definition = item.Definition,
+                    Icon = GetStandaloneUnpackagedProductIcon(item.Definition),
+                    DrugType = GetProductDrugType(item),
                     HasUnitPrice = TryGetStandaloneProductUnitPrice(item, out var unitPrice),
                     UnitPrice = unitPrice
                 };
                 metricsById[id] = metric;
             }
 
-            metric.Quantity += GetWholeStandaloneSlotQuantity(slot);
+            var containerCount = GetWholeStandaloneSlotQuantity(slot);
+            if (containerCount <= 0)
+                continue;
+
+            GetStandaloneProductPackaging(item, out var unitsPerContainer, out var packagingLabel);
+            metric.Quantity += containerCount * unitsPerContainer;
+            if (!metric.PackagingCounts.TryGetValue(packagingLabel, out var currentContainerCount))
+                currentContainerCount = 0;
+            metric.PackagingCounts[packagingLabel] = currentContainerCount + containerCount;
         }
 
         var metrics = metricsById.Values
@@ -2469,6 +3011,73 @@ public static class StorageMenuPatch
             metrics[index].ActiveOrderQuantity = GetStandaloneActiveOrderQuantity(metrics[index]);
 
         return metrics;
+    }
+
+    /// <summary>
+    /// Resolves both sides of Schedule I's product packaging model. Item quantity is the number of
+    /// containers in a stack, while ProductItemInstance.Amount is the number of saleable units in
+    /// each container. Unpackaged stacks therefore have an amount of one.
+    /// </summary>
+    private static void GetStandaloneProductPackaging(ItemInstance item, out int unitsPerContainer,
+        out string packagingLabel)
+    {
+        unitsPerContainer = 1;
+        packagingLabel = "UNPACKAGED";
+        if (item == null)
+            return;
+
+        try
+        {
+#if MONO
+            var productItem = item as ProductItemInstance;
+#else
+            var productItem = item.TryCast<ProductItemInstance>();
+#endif
+            if (productItem == null)
+                return;
+
+            unitsPerContainer = Mathf.Max(1, productItem.Amount);
+            var packaging = productItem.AppliedPackaging;
+            if (packaging == null)
+                return;
+
+            packagingLabel = GetStandalonePackagingLabel(packaging.Name, packaging.ID);
+        }
+        catch
+        {
+            // Future or modded product subclasses may not preserve the typed wrapper. The fallback
+            // intentionally remains read-only and still distinguishes packaged from loose units.
+            var packaging = ReflectionUtils.TryGetFieldOrProperty(item, "AppliedPackaging")
+                ?? ReflectionUtils.TryGetFieldOrProperty(item, "appliedPackaging");
+            var amount = ReflectionUtils.TryGetFieldOrProperty(item, "Amount")
+                ?? ReflectionUtils.TryGetFieldOrProperty(item, "amount");
+            if (TryGetStandaloneMetricQuantity(amount, out var reflectedAmount))
+                unitsPerContainer = Mathf.Max(1, reflectedAmount);
+            if (packaging == null)
+                return;
+
+            var name = ReflectionUtils.TryGetFieldOrProperty(packaging, "Name")?.ToString();
+            var id = ReflectionUtils.TryGetFieldOrProperty(packaging, "ID")?.ToString()
+                ?? ReflectionUtils.TryGetFieldOrProperty(packaging, "Id")?.ToString();
+            packagingLabel = GetStandalonePackagingLabel(name, id);
+        }
+    }
+
+    private static string GetStandalonePackagingLabel(string name, string id)
+    {
+        var identity = ((name ?? string.Empty) + " " + (id ?? string.Empty)).Trim();
+        if (ContainsTypeToken(identity, "baggie", "bag"))
+            return "BAGS";
+        if (ContainsTypeToken(identity, "jar"))
+            return "JARS";
+        if (ContainsTypeToken(identity, "brick"))
+            return "BRICKS";
+
+        var label = string.IsNullOrWhiteSpace(name) ? id : name;
+        if (string.IsNullOrWhiteSpace(label))
+            return "PACKAGES";
+        label = label.Trim().ToUpperInvariant();
+        return label.EndsWith("S", StringComparison.Ordinal) ? label : label + "S";
     }
 
     private static bool TryGetStandaloneProductUnitPrice(ItemInstance item, out float unitPrice)
@@ -2519,11 +3128,10 @@ public static class StorageMenuPatch
             if (productItem != null)
             {
                 var monetaryValue = Mathf.Max(0f, productItem.GetMonetaryValue());
-                var stackQuantityValue = ReflectionUtils.TryGetFieldOrProperty(productItem, "Quantity");
-                var stackQuantity = stackQuantityValue != null ? Mathf.Max(1f, Convert.ToSingle(stackQuantityValue)) : 1f;
+                var totalAmount = Mathf.Max(1, productItem.GetTotalAmount());
                 if (monetaryValue > 0f)
                 {
-                    unitPrice = monetaryValue / stackQuantity;
+                    unitPrice = monetaryValue / totalAmount;
                     return unitPrice > 0f;
                 }
             }
@@ -2678,8 +3286,13 @@ public static class StorageMenuPatch
     private static string BuildStandaloneMetricsFingerprint(List<StandaloneBackpackProductMetric> metrics)
     {
         var config = Configuration.Instance;
-        var rows = metrics?.Select(metric => metric.Id + ":" + metric.Quantity + ":" + metric.UnitPrice.ToString("0.###") +
-                ":" + metric.ActiveOrderQuantity)
+        var rows = metrics?.Select(metric => metric.Id + ":" + metric.Quantity + ":" +
+                metric.UnitPrice.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + ":" +
+                metric.ActiveOrderQuantity + ":" + metric.DrugType + ":" +
+                (metric.Icon != null ? metric.Icon.GetInstanceID() : 0) + ":" +
+                string.Join(",", metric.PackagingCounts.OrderBy(pair => GetStandalonePackagingSortOrder(pair.Key))
+                    .ThenBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(pair => pair.Key + "=" + pair.Value)))
             ?? Enumerable.Empty<string>();
         return string.Join("|", rows) + ";" + config.ShowProductQuantityMetric + ";" +
             config.ShowProductQuantityTotalMetric + ";" + config.ShowProductUnitPriceMetric + ";" +
@@ -2694,9 +3307,74 @@ public static class StorageMenuPatch
         if (state?.MetricsTrayContent == null || metric == null)
             return;
 
-        var rowGo = new GameObject("ProductMetricRow");
-        var row = rowGo.AddComponent<RectTransform>();
-        row.SetParent(state.MetricsTrayContent, worldPositionStays: false);
+        GameObject rowGo;
+        RectTransform row;
+        Text name;
+        Text detail;
+        Image accent;
+        RectTransform productImageFrame;
+        Image productImage;
+        if (state.MetricsTrayRowTemplate != null)
+        {
+            rowGo = UnityEngine.Object.Instantiate(state.MetricsTrayRowTemplate, state.MetricsTrayContent, false);
+            rowGo.name = "ProductMetricRow";
+            rowGo.SetActive(true);
+            row = Utils.GetComponentSafe<RectTransform>(rowGo);
+            var nameNode = rowGo.transform.Find("Name");
+            var detailNode = rowGo.transform.Find("Details");
+            var accentNode = rowGo.transform.Find("Accent");
+            var productImageFrameNode = rowGo.transform.Find("ProductImageFrame");
+            var productImageNode = rowGo.transform.Find("ProductImageFrame/ProductImage");
+            name = nameNode != null ? Utils.GetComponentSafe<Text>(nameNode.gameObject) : null;
+            detail = detailNode != null ? Utils.GetComponentSafe<Text>(detailNode.gameObject) : null;
+            accent = accentNode != null ? Utils.GetComponentSafe<Image>(accentNode.gameObject) : null;
+            productImageFrame = productImageFrameNode != null
+                ? Utils.GetComponentSafe<RectTransform>(productImageFrameNode.gameObject)
+                : null;
+            productImage = productImageNode != null
+                ? Utils.GetComponentSafe<Image>(productImageNode.gameObject)
+                : null;
+            if (row == null || name == null || detail == null || accent == null ||
+                productImageFrame == null || productImage == null)
+            {
+                UnityEngine.Object.Destroy(rowGo);
+                ModLogger.Error("[EditorUI] Metrics row template lost its runtime binding contract.");
+                return;
+            }
+        }
+        else
+        {
+            rowGo = new GameObject("ProductMetricRow");
+            row = rowGo.AddComponent<RectTransform>();
+            row.SetParent(state.MetricsTrayContent, worldPositionStays: false);
+            var background = rowGo.AddComponent<Image>();
+            background.color = new Color32(23, 42, 56, 238);
+            background.raycastTarget = false;
+            ApplyRoundedButtonPresentation(background);
+
+            var productImageFrameGo = new GameObject("ProductImageFrame");
+            productImageFrame = productImageFrameGo.AddComponent<RectTransform>();
+            productImageFrame.SetParent(row, worldPositionStays: false);
+            var productImageFrameGraphic = productImageFrameGo.AddComponent<Image>();
+            productImageFrameGraphic.color = new Color32(18, 30, 40, 245);
+            productImageFrameGraphic.raycastTarget = false;
+            ApplyRoundedButtonPresentation(productImageFrameGraphic);
+
+            var productImageGo = new GameObject("ProductImage");
+            var productImageRect = productImageGo.AddComponent<RectTransform>();
+            productImageRect.SetParent(productImageFrame, worldPositionStays: false);
+            productImage = productImageGo.AddComponent<Image>();
+            productImage.raycastTarget = false;
+
+            name = CreateSearchText(row, "Name", new Color32(237, 245, 250, 255));
+            detail = CreateSearchText(row, "Details", new Color32(141, 196, 226, 255));
+            var accentGo = new GameObject("Accent");
+            var accentRect = accentGo.AddComponent<RectTransform>();
+            accentRect.SetParent(row, worldPositionStays: false);
+            accent = accentGo.AddComponent<Image>();
+            accent.raycastTarget = false;
+        }
+
         var rowIndex = state.MetricsTrayRows.Count;
         var rowHeight = GetStandaloneMetricsRowHeight();
         var rowTop = 2f + (rowIndex * GetStandaloneMetricsRowStride());
@@ -2705,46 +3383,203 @@ public static class StorageMenuPatch
         row.pivot = new Vector2(0.5f, 1f);
         row.offsetMin = new Vector2(1f, -rowTop - rowHeight);
         row.offsetMax = new Vector2(-1f, -rowTop);
-        var background = rowGo.AddComponent<Image>();
-        background.color = new Color32(23, 42, 56, 238);
-        background.raycastTarget = false;
-        ApplyRoundedButtonPresentation(background);
+        accent.color = GetStandaloneDrugFamilyColor(metric.DrugType);
+        var accentTransform = accent.GetComponent<RectTransform>();
+        accentTransform.anchorMin = Vector2.zero;
+        accentTransform.anchorMax = new Vector2(0f, 1f);
+        accentTransform.pivot = new Vector2(0f, 0.5f);
+        accentTransform.offsetMin = new Vector2(2f, 5f);
+        accentTransform.offsetMax = new Vector2(5f, -5f);
 
-        var name = CreateSearchText(row, "Name", new Color32(237, 245, 250, 255));
-        name.text = string.IsNullOrWhiteSpace(metric.Name) ? metric.Id : metric.Name.ToUpperInvariant();
+        var productImageSize = Mathf.Min(48f, Mathf.Max(1f, rowHeight - 10f));
+        productImageFrame.anchorMin = new Vector2(0f, 0.5f);
+        productImageFrame.anchorMax = new Vector2(0f, 0.5f);
+        productImageFrame.pivot = new Vector2(0f, 0.5f);
+        productImageFrame.sizeDelta = new Vector2(productImageSize, productImageSize);
+        productImageFrame.anchoredPosition = new Vector2(8f, 0f);
+        var productImageTransform = productImage.GetComponent<RectTransform>();
+        productImageTransform.anchorMin = Vector2.zero;
+        productImageTransform.anchorMax = Vector2.one;
+        productImageTransform.offsetMin = new Vector2(3f, 3f);
+        productImageTransform.offsetMax = new Vector2(-3f, -3f);
+        productImage.sprite = metric.Icon;
+        productImage.color = Color.white;
+        productImage.preserveAspect = true;
+        productImage.raycastTarget = false;
+        productImage.enabled = metric.Icon != null;
+
+        var textInset = 8f + productImageSize + 6f;
         name.fontSize = GetStandaloneMetricsFontSize(10);
         name.fontStyle = FontStyle.Bold;
         name.alignment = TextAnchor.MiddleLeft;
+        name.horizontalOverflow = HorizontalWrapMode.Overflow;
+        name.verticalOverflow = VerticalWrapMode.Truncate;
         var nameRect = name.GetComponent<RectTransform>();
-        nameRect.anchorMin = new Vector2(0f, 0.5f);
+        nameRect.anchorMin = new Vector2(0f, 1f);
         nameRect.anchorMax = new Vector2(1f, 1f);
-        nameRect.offsetMin = new Vector2(7f, 0f);
+        nameRect.pivot = new Vector2(0.5f, 1f);
+        nameRect.offsetMin = new Vector2(textInset, -20f);
         nameRect.offsetMax = new Vector2(-7f, -2f);
+        var fullName = string.IsNullOrWhiteSpace(metric.Name) ? metric.Id : metric.Name.ToUpperInvariant();
+        var rowWidth = row.rect.width;
+        if (rowWidth <= 1f)
+        {
+            var expandedTrayWidth = GetStandaloneMetricsTrayExpandedWidth(state);
+            var trayPadding = state.EditorStandaloneBrowser != null ? 24f : 18f;
+            rowWidth = Mathf.Max(1f, expandedTrayWidth - trayPadding);
+        }
+
+        var availableNameWidth = Mathf.Max(1f, rowWidth - textInset - 7f);
+        name.text = EllipsizeStandaloneMetricsName(name, fullName, availableNameWidth);
 
         var config = Configuration.Instance;
-        var primaryDetails = new List<string>();
-        var secondaryDetails = new List<string>();
+        var inventoryDetails = new List<string>();
+        var valueDetails = new List<string>();
         if (config.ShowProductQuantityMetric)
-            primaryDetails.Add("QTY " + metric.Quantity);
+            inventoryDetails.Add("QTY " + metric.Quantity);
+        inventoryDetails.AddRange(metric.PackagingCounts
+            .OrderBy(pair => GetStandalonePackagingSortOrder(pair.Key))
+            .ThenBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(pair => pair.Value + " " + pair.Key));
         if (config.ShowProductUnitPriceMetric && metric.HasUnitPrice)
-            primaryDetails.Add("EA " + FormatStandaloneProductPrice(metric.UnitPrice));
+            valueDetails.Add("EA " + FormatStandaloneProductPrice(metric.UnitPrice));
         if (config.ShowProductTotalPriceMetric && metric.HasUnitPrice)
-            secondaryDetails.Add("TOTAL " + FormatStandaloneProductPrice(metric.UnitPrice * metric.Quantity));
+            valueDetails.Add("TOTAL " + FormatStandaloneProductPrice(metric.UnitPrice * metric.Quantity));
         if (metric.ActiveOrderQuantity > 0)
-            secondaryDetails.Add("ORDERS " + metric.ActiveOrderQuantity);
+            valueDetails.Add("ORDERS " + metric.ActiveOrderQuantity);
 
-        var detail = CreateSearchText(row, "Details", new Color32(141, 196, 226, 255));
-        var firstLine = primaryDetails.Count == 0 ? "PRODUCT" : string.Join("  •  ", primaryDetails);
-        detail.text = secondaryDetails.Count == 0 ? firstLine : firstLine + "\n" + string.Join("  •  ", secondaryDetails);
+        var detailLines = BuildStandaloneMetricsDetailLines(inventoryDetails, 30);
+        detailLines.AddRange(BuildStandaloneMetricsDetailLines(valueDetails, 30));
+        detail.text = detailLines.Count == 0 ? "PRODUCT" : string.Join("\n", detailLines);
         detail.fontSize = GetStandaloneMetricsFontSize(8);
         detail.fontStyle = FontStyle.Bold;
-        detail.alignment = TextAnchor.MiddleLeft;
+        detail.alignment = TextAnchor.UpperLeft;
+        detail.horizontalOverflow = HorizontalWrapMode.Wrap;
+        detail.verticalOverflow = VerticalWrapMode.Truncate;
         var detailRect = detail.GetComponent<RectTransform>();
         detailRect.anchorMin = new Vector2(0f, 0f);
-        detailRect.anchorMax = new Vector2(1f, 0.5f);
-        detailRect.offsetMin = new Vector2(7f, 1f);
-        detailRect.offsetMax = new Vector2(-7f, 0f);
+        detailRect.anchorMax = Vector2.one;
+        detailRect.offsetMin = new Vector2(textInset, 4f);
+        detailRect.offsetMax = new Vector2(-7f, -21f);
         state.MetricsTrayRows.Add(rowGo);
+    }
+
+    /// <summary>
+    /// Uses the same definition icon as Schedule I's phone Product Manager and counter-offer
+    /// selector. ProductItemInstance.Icon is intentionally not used because it changes to the
+    /// applied bag, jar, or brick icon when the inventory stack is packaged.
+    /// </summary>
+    private static Sprite GetStandaloneUnpackagedProductIcon(object definition)
+    {
+        if (definition == null)
+            return null;
+
+        try
+        {
+#if MONO
+            var productDefinition = definition as ProductDefinition;
+#else
+            var il2CppDefinition = definition as Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase;
+            var productDefinition = il2CppDefinition?.TryCast<ProductDefinition>();
+#endif
+            if (productDefinition != null)
+                return productDefinition.Icon;
+
+            return ReflectionUtils.TryGetFieldOrProperty(definition, "Icon") as Sprite;
+        }
+        catch (Exception ex)
+        {
+            ModLogger.Debug("Unable to resolve unpackaged product icon for metrics tray: " + ex.Message);
+            return null;
+        }
+    }
+
+    private static string EllipsizeStandaloneMetricsName(Text label, string value, float maxWidth)
+    {
+        if (label == null || string.IsNullOrEmpty(value) || maxWidth <= 0f)
+            return value ?? string.Empty;
+
+        label.text = value;
+        if (label.preferredWidth <= maxWidth + 0.5f)
+            return value;
+
+        const string ellipsis = "…";
+        var low = 0;
+        var high = value.Length;
+        var best = ellipsis;
+        while (low <= high)
+        {
+            var length = low + ((high - low) / 2);
+            var candidate = value.Substring(0, length).TrimEnd() + ellipsis;
+            label.text = candidate;
+            if (label.preferredWidth <= maxWidth + 0.5f)
+            {
+                best = candidate;
+                low = length + 1;
+            }
+            else
+            {
+                high = length - 1;
+            }
+        }
+
+        return best;
+    }
+
+    private static List<string> BuildStandaloneMetricsDetailLines(IEnumerable<string> parts, int maxCharacters)
+    {
+        var lines = new List<string>();
+        var current = string.Empty;
+        foreach (var part in parts ?? Enumerable.Empty<string>())
+        {
+            if (string.IsNullOrWhiteSpace(part))
+                continue;
+
+            var candidate = string.IsNullOrEmpty(current) ? part : current + "  •  " + part;
+            if (!string.IsNullOrEmpty(current) && candidate.Length > maxCharacters)
+            {
+                lines.Add(current);
+                current = part;
+            }
+            else
+            {
+                current = candidate;
+            }
+        }
+
+        if (!string.IsNullOrEmpty(current))
+            lines.Add(current);
+        return lines;
+    }
+
+    private static int GetStandalonePackagingSortOrder(string label)
+    {
+        switch (label?.ToUpperInvariant())
+        {
+            case "BAGS":
+                return 0;
+            case "JARS":
+                return 1;
+            case "BRICKS":
+                return 2;
+            case "UNPACKAGED":
+                return 3;
+            default:
+                return 4;
+        }
+    }
+
+    private static Color GetStandaloneDrugFamilyColor(string drugType)
+    {
+        if (ContainsTypeToken(drugType, "cocaine", "coke"))
+            return new Color32(244, 247, 250, 255);
+        if (ContainsTypeToken(drugType, "marijuana", "weed", "cannabis"))
+            return new Color32(92, 190, 104, 255);
+        if (ContainsTypeToken(drugType, "methamphetamine", "meth"))
+            return new Color32(238, 151, 61, 255);
+        if (ContainsTypeToken(drugType, "shrooms", "mushroom", "mushrooms"))
+            return new Color32(76, 173, 229, 255);
+        return new Color32(141, 196, 226, 255);
     }
 
     private static int GetStandaloneMetricsFontSize(int baseFontSize)
@@ -2755,7 +3590,7 @@ public static class StorageMenuPatch
 
     private static float GetStandaloneMetricsRowHeight()
     {
-        return Mathf.Ceil(36f * Configuration.ClampMetricsFontScale(Configuration.Instance.MetricsFontScale));
+        return Mathf.Ceil(68f * Configuration.ClampMetricsFontScale(Configuration.Instance.MetricsFontScale));
     }
 
     private static float GetStandaloneMetricsRowStride()
@@ -2765,7 +3600,8 @@ public static class StorageMenuPatch
 
     private static string FormatStandaloneProductPrice(float price)
     {
-        return "$" + Mathf.Max(0f, price).ToString("0");
+        return "$" + Mathf.Max(0f, price).ToString("#,0",
+            System.Globalization.CultureInfo.InvariantCulture);
     }
 
     /// <summary>
@@ -3036,6 +3872,8 @@ public static class StorageMenuPatch
     {
         if (state == null)
             return;
+        if (state.EditorStandaloneBrowser != null)
+            return;
 
         ConfigureHeaderLabel(state.VisualTitleLabel, new Vector2(12f, -31f), new Vector2(-42f, -8f),
             TextAnchor.MiddleLeft);
@@ -3182,6 +4020,8 @@ public static class StorageMenuPatch
         var showOrganize = state.IsBackpackInventory;
         if (state.OrganizeButton != null)
             state.OrganizeButton.gameObject.SetActive(showOrganize);
+        if (state.EditorStandaloneBrowser != null)
+            return;
 
         var buttonCount = showOrganize ? 5 : 4;
         var nextIndex = 0;
@@ -3242,6 +4082,11 @@ public static class StorageMenuPatch
     {
         if (header == null || state == null)
             return;
+        if (state.EditorStandaloneBrowser != null)
+        {
+            UpdateStandaloneSortTabs(state);
+            return;
+        }
 
         if (state.SortTabsRoot == null)
         {
@@ -3320,6 +4165,12 @@ public static class StorageMenuPatch
     {
         if (slotContainer == null || state == null)
             return;
+        if (state.EditorStandaloneBrowser?.SlotViewport != null)
+        {
+            state.SlotsPanelRoot = state.EditorStandaloneBrowser.SlotViewport;
+            state.SlotsPanelRoot.gameObject.SetActive(true);
+            return;
+        }
 
         if (state.SlotsPanelRoot == null)
         {
@@ -3353,7 +4204,13 @@ public static class StorageMenuPatch
         if (state == null)
             return;
 
-        var selectedColor = new Color32(48, 128, 170, 255);
+        var usesEditorBrowser = state.EditorStandaloneBrowser != null;
+        var palette = BackpackUiThemes.Get(Configuration.Instance.BackpackUiTheme,
+            Configuration.Instance.CustomBackpackUiPrimaryColor);
+        Color selectedColor = usesEditorBrowser
+            ? palette.Accent
+            : (Color)new Color32(48, 128, 170, 255);
+        Button selectedButton = null;
         for (var i = 0; i < state.SortTabs.Count; i++)
         {
             var tab = state.SortTabs[i];
@@ -3361,12 +4218,89 @@ public static class StorageMenuPatch
                 continue;
 
             var selected = tab.SortMode == state.SortMode;
-            UpdateStandaloneSortTab(tab.Button, selected);
+            if (selected)
+                selectedButton = tab.Button;
+            // The authored active overlay owns the cyan fill and sits above the shared divider.
+            // Its source tab stays dark behind the slot viewport like every inactive tab.
+            if (usesEditorBrowser)
+                UpdateEditorStandaloneSortTab(tab.Button, palette);
+            else
+                UpdateStandaloneSortTab(tab.Button, selected);
             if (tab.Label != null)
-                tab.Label.color = selected ? Color.white : new Color32(190, 212, 225, 255);
+                tab.Label.color = usesEditorBrowser
+                    ? selected ? palette.PrimaryText : palette.SecondaryText
+                    : selected ? Color.white : new Color32(190, 212, 225, 255);
         }
         if (state.HeaderAccent != null)
             state.HeaderAccent.color = selectedColor;
+        if (usesEditorBrowser && state.EditorStandaloneBrowser.ActiveFilterTab != null)
+        {
+            var activeImage = Utils.GetComponentSafe<Image>(state.EditorStandaloneBrowser.ActiveFilterTab.gameObject);
+            if (activeImage != null)
+                activeImage.color = selectedColor;
+        }
+        UpdateEditorStandaloneActiveTab(state, selectedButton);
+    }
+
+    private static void UpdateEditorStandaloneSortTab(Button button, BackpackUiThemePalette palette)
+    {
+        if (button == null)
+            return;
+
+        var colors = button.colors;
+        colors.normalColor = palette.Control;
+        colors.highlightedColor = palette.ControlAlt;
+        colors.pressedColor = palette.Search;
+        colors.selectedColor = palette.Control;
+        colors.disabledColor = new Color(palette.Control.r, palette.Control.g, palette.Control.b, 0.6f);
+        colors.colorMultiplier = 1f;
+        button.colors = colors;
+
+        var image = button.targetGraphic as Image;
+        if (image != null)
+            image.color = palette.Control;
+    }
+
+    private static void UpdateEditorStandaloneActiveTab(StandaloneBackpackState state, Button selectedButton)
+    {
+        var binding = state?.EditorStandaloneBrowser;
+        var source = selectedButton?.GetComponent<RectTransform>();
+        if (binding?.OverlayHost == null || binding.ActiveFilterTab == null || binding.SlotViewport == null ||
+            source == null)
+            return;
+
+        var active = binding.ActiveFilterTab;
+        active.gameObject.SetActive(true);
+        if (binding.ActiveFilterTabLabel != null)
+            binding.ActiveFilterTabLabel.text = GetSortModeLabel(state.SortMode);
+
+        // The first binding pass runs before the authored HorizontalLayoutGroup has completed its
+        // first player-side layout cycle. Keep the serialized ALL geometry visible for that frame;
+        // measuring the unresolved source button here collapses the active overlay to zero. A
+        // one-frame coroutine below reapplies the selected state once the layout owns valid bounds.
+        if (!state.EditorActiveTabLayoutResolved)
+            return;
+
+        var tabBounds = CalculateRelativeRectBounds(binding.OverlayHost, source);
+        var viewportBounds = CalculateRelativeRectBounds(binding.OverlayHost, binding.SlotViewport);
+        var minimumY = Mathf.Max(tabBounds.Minimum.y, viewportBounds.Maximum.y);
+        active.anchorMin = binding.OverlayHost.pivot;
+        active.anchorMax = binding.OverlayHost.pivot;
+        active.pivot = new Vector2(0.5f, 0.5f);
+        active.anchoredPosition = new Vector2(tabBounds.Center.x, (minimumY + tabBounds.Maximum.y) * 0.5f);
+        active.sizeDelta = new Vector2(tabBounds.Size.x, Mathf.Max(0f, tabBounds.Maximum.y - minimumY));
+    }
+
+    private static IEnumerator ResolveEditorStandaloneActiveTabLayout(StandaloneBackpackState state,
+        EditorUiStandaloneBrowserBinding binding, int generation)
+    {
+        yield return null;
+        if (state == null || state.EditorStandaloneBrowser != binding ||
+            state.EditorActiveTabLayoutGeneration != generation || binding?.Root == null)
+            yield break;
+
+        state.EditorActiveTabLayoutResolved = true;
+        UpdateStandaloneSortTabs(state);
     }
 
     private static void UpdateStandaloneSortTab(Button button, bool selected)
@@ -3389,6 +4323,51 @@ public static class StorageMenuPatch
             image.color = selected ? selectedColor : normalColor;
         // The HorizontalLayoutGroup owns visual order and position. Unlike the overlapping
         // settings tabs, these tabs must keep their semantic left-to-right order when selected.
+    }
+
+    /// <summary>
+    /// Calculates a child rectangle in an owner's local coordinate system without calling
+    /// RectTransformUtility.CalculateRelativeRectTransformBounds. That Unity API has no usable
+    /// body in Schedule I beta's generated IL2CPP assemblies and throws "Method unstripping
+    /// failed" at runtime. TransformPoint and InverseTransformPoint are already exercised by the
+    /// established PackRat UI paths in both runtimes.
+    /// </summary>
+    private readonly struct RelativeRectBounds
+    {
+        internal readonly Vector3 Minimum;
+        internal readonly Vector3 Maximum;
+        internal readonly Vector3 Center;
+        internal readonly Vector3 Size;
+
+        internal RelativeRectBounds(Vector3 minimum, Vector3 maximum)
+        {
+            Minimum = minimum;
+            Maximum = maximum;
+            Center = (minimum + maximum) * 0.5f;
+            Size = maximum - minimum;
+        }
+    }
+
+    private static RelativeRectBounds CalculateRelativeRectBounds(Transform owner, RectTransform child)
+    {
+        if (owner == null || child == null)
+            return new RelativeRectBounds(Vector3.zero, Vector3.zero);
+
+        var rect = child.rect;
+        var bottomLeft = owner.InverseTransformPoint(child.TransformPoint(new Vector3(rect.xMin, rect.yMin, 0f)));
+        var topLeft = owner.InverseTransformPoint(child.TransformPoint(new Vector3(rect.xMin, rect.yMax, 0f)));
+        var topRight = owner.InverseTransformPoint(child.TransformPoint(new Vector3(rect.xMax, rect.yMax, 0f)));
+        var bottomRight = owner.InverseTransformPoint(child.TransformPoint(new Vector3(rect.xMax, rect.yMin, 0f)));
+
+        var minimum = new Vector3(
+            Mathf.Min(Mathf.Min(bottomLeft.x, topLeft.x), Mathf.Min(topRight.x, bottomRight.x)),
+            Mathf.Min(Mathf.Min(bottomLeft.y, topLeft.y), Mathf.Min(topRight.y, bottomRight.y)),
+            Mathf.Min(Mathf.Min(bottomLeft.z, topLeft.z), Mathf.Min(topRight.z, bottomRight.z)));
+        var maximum = new Vector3(
+            Mathf.Max(Mathf.Max(bottomLeft.x, topLeft.x), Mathf.Max(topRight.x, bottomRight.x)),
+            Mathf.Max(Mathf.Max(bottomLeft.y, topLeft.y), Mathf.Max(topRight.y, bottomRight.y)),
+            Mathf.Max(Mathf.Max(bottomLeft.z, topLeft.z), Mathf.Max(topRight.z, bottomRight.z)));
+        return new RelativeRectBounds(minimum, maximum);
     }
 
     private static void BindStandaloneFilterControls(StandaloneBackpackState state)
@@ -3933,6 +4912,9 @@ public static class StorageMenuPatch
             return;
 
         if (state.SettingsRoot == null)
+            TryEnsureEditorStandaloneSettingsPanel(surface, state);
+
+        if (state.SettingsRoot == null)
         {
             var settingsGo = new GameObject("PackRat_BackpackSettings");
             var root = settingsGo.AddComponent<RectTransform>();
@@ -4120,6 +5102,74 @@ public static class StorageMenuPatch
             if (wasInactive)
                 PlayStandaloneSettingsOpen(state);
         }
+    }
+
+    private static bool TryEnsureEditorStandaloneSettingsPanel(StandaloneBackpackSurface surface,
+        StandaloneBackpackState state)
+    {
+        if (surface?.Container == null || state?.EditorStandaloneBrowser == null)
+            return false;
+
+        var binding = state.EditorSettingsOverlay;
+        if (binding != null)
+            return binding.Root != null && binding.Card != null && binding.ScrollRect != null;
+        if (!EditorUiAssetBundleBindings.TryCreateSettingsOverlay(surface.Container, out binding))
+            return false;
+
+        state.EditorSettingsOverlay = binding;
+        state.SettingsRoot = binding.Root;
+        state.SettingsCard = binding.Card;
+        state.SettingsTabsRoot = binding.Tabs;
+        state.SettingsContentRoot = binding.Content;
+        state.SettingsScrollRect = binding.ScrollRect;
+        state.SettingsGeneralPage = binding.GeneralPage;
+        state.SettingsThemePage = binding.ThemePage;
+        state.SettingsTiersPage = binding.TiersPage;
+        state.SettingsLayoutPage = binding.LayoutPage;
+        state.SettingsRoutingPage = binding.RoutingPage;
+        state.SettingsMetricsPage = binding.MetricsPage;
+        state.SettingsSessionStatusValue = binding.SessionStatusValue;
+        state.SettingsCloseButton = binding.CloseButton;
+        state.SettingsGeneralButton = binding.GeneralButton;
+        state.SettingsThemeButton = binding.ThemeButton;
+        state.SettingsTiersButton = binding.TiersButton;
+        state.SettingsLayoutButton = binding.LayoutButton;
+        state.SettingsRoutingButton = binding.RoutingButton;
+        state.SettingsMetricsButton = binding.MetricsButton;
+        state.SettingsTabIndicator = null;
+        state.SettingsRootCanvasGroup = binding.RootCanvasGroup;
+        state.SettingsCardCanvasGroup = binding.CardCanvasGroup;
+        state.SettingsCardRestPosition = binding.Card.anchoredPosition;
+        state.SettingsCardRestCaptured = true;
+
+        var canvas = Utils.GetOrAddComponentSafe<Canvas>(binding.Root.gameObject);
+        if (canvas != null)
+        {
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = 3000;
+        }
+        Utils.GetOrAddComponentSafe<GraphicRaycaster>(binding.Root.gameObject);
+
+        binding.ScrollRect.content = binding.GeneralPage;
+        EventHelper.AddListener(() => ToggleStandaloneSettings(state), binding.BlockerButton.onClick);
+        EventHelper.AddListener(() => ToggleStandaloneSettings(state), binding.CloseButton.onClick);
+        EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.General),
+            binding.GeneralButton.onClick);
+        EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.Theme),
+            binding.ThemeButton.onClick);
+        EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.Tiers),
+            binding.TiersButton.onClick);
+        EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.Layout),
+            binding.LayoutButton.onClick);
+        EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.Routing),
+            binding.RoutingButton.onClick);
+        EventHelper.AddListener(() => SetStandaloneSettingsPage(state, StandaloneBackpackSettingsPage.Metrics),
+            binding.MetricsButton.onClick);
+
+        binding.Root.gameObject.SetActive(false);
+        state.AppliedThemePaletteCaptured = false;
+        ModLogger.Info("[EditorUI] Bound the editor-authored backpack settings overlay.");
+        return true;
     }
 
     private static void ToggleStandaloneSettings(StandaloneBackpackState state)
@@ -4497,12 +5547,18 @@ public static class StorageMenuPatch
 
     private static void UpdateStandaloneSettingsTabs(StandaloneBackpackState state)
     {
-        UpdateStandaloneSettingsTab(state.SettingsGeneralButton, state.SettingsPage == StandaloneBackpackSettingsPage.General);
-        UpdateStandaloneSettingsTab(state.SettingsThemeButton, state.SettingsPage == StandaloneBackpackSettingsPage.Theme);
-        UpdateStandaloneSettingsTab(state.SettingsTiersButton, state.SettingsPage == StandaloneBackpackSettingsPage.Tiers);
-        UpdateStandaloneSettingsTab(state.SettingsLayoutButton, state.SettingsPage == StandaloneBackpackSettingsPage.Layout);
-        UpdateStandaloneSettingsTab(state.SettingsRoutingButton, state.SettingsPage == StandaloneBackpackSettingsPage.Routing);
-        UpdateStandaloneSettingsTab(state.SettingsMetricsButton, state.SettingsPage == StandaloneBackpackSettingsPage.Metrics);
+        UpdateStandaloneSettingsTab(state, state.SettingsGeneralButton,
+            state.SettingsPage == StandaloneBackpackSettingsPage.General);
+        UpdateStandaloneSettingsTab(state, state.SettingsThemeButton,
+            state.SettingsPage == StandaloneBackpackSettingsPage.Theme);
+        UpdateStandaloneSettingsTab(state, state.SettingsTiersButton,
+            state.SettingsPage == StandaloneBackpackSettingsPage.Tiers);
+        UpdateStandaloneSettingsTab(state, state.SettingsLayoutButton,
+            state.SettingsPage == StandaloneBackpackSettingsPage.Layout);
+        UpdateStandaloneSettingsTab(state, state.SettingsRoutingButton,
+            state.SettingsPage == StandaloneBackpackSettingsPage.Routing);
+        UpdateStandaloneSettingsTab(state, state.SettingsMetricsButton,
+            state.SettingsPage == StandaloneBackpackSettingsPage.Metrics);
         UpdateStandaloneSettingsTabIndicator(state);
     }
 
@@ -4576,43 +5632,45 @@ public static class StorageMenuPatch
         };
     }
 
-    private static void UpdateStandaloneSettingsTab(Button button, bool selected)
+    private static void UpdateStandaloneSettingsTab(StandaloneBackpackState state, Button button, bool selected)
     {
         if (button == null)
             return;
 
-        var selectedColor = new Color32(48, 128, 170, 255);
-        var selectedHoverColor = new Color32(64, 153, 196, 255);
-        var normalColor = new Color32(20, 35, 47, 255);
-        var normalHoverColor = new Color32(35, 65, 84, 255);
+        var config = Configuration.Instance;
+        var palette = BackpackUiThemes.Get(config.BackpackUiTheme, config.CustomBackpackUiPrimaryColor);
         var colors = button.colors;
-        colors.normalColor = selected ? selectedColor : normalColor;
-        colors.highlightedColor = selected ? selectedHoverColor : normalHoverColor;
-        colors.pressedColor = selected ? new Color32(36, 103, 137, 255) : new Color32(16, 31, 42, 255);
-        // EventSystem selection is keyboard/pointer focus, not the logical settings page. An
-        // inactive tab must therefore retain its normal presentation even when it still owns
-        // EventSystem.currentSelectedGameObject after switching pages.
-        colors.selectedColor = selected ? selectedColor : normalColor;
-        colors.disabledColor = new Color32(58, 70, 78, 150);
+        // The Image owns the logical page colour. Button ColorTint is multiplicative, so assigning
+        // semantic colours to both layers double-tints the editor-authored General tab and lets
+        // EventSystem focus preserve a stale active-looking state after another page is selected.
+        colors.normalColor = Color.white;
+        colors.highlightedColor = selected ? Color.white : new Color(1.08f, 1.08f, 1.08f, 1f);
+        colors.pressedColor = new Color(0.82f, 0.88f, 0.92f, 1f);
+        colors.selectedColor = Color.white;
+        colors.disabledColor = new Color(0.45f, 0.48f, 0.50f, 0.65f);
         colors.colorMultiplier = 1f;
         button.colors = colors;
 
         var image = button?.targetGraphic as Image;
         if (image != null)
-            image.color = selected ? selectedColor : normalColor;
+            image.color = selected ? palette.SelectedControl : palette.ControlAlt;
 
-        var rect = button.GetComponent<RectTransform>();
-        if (rect != null)
+        // The editor-authored strip is owned by a HorizontalLayoutGroup. Reordering or resizing
+        // those children would move the logical pages, so its selected state is visual only.
+        if (state?.EditorSettingsOverlay == null)
         {
-            rect.offsetMin = new Vector2(rect.offsetMin.x, 0f);
-            rect.offsetMax = new Vector2(rect.offsetMax.x, selected ? 38f : 31f);
-        }
+            var rect = button.GetComponent<RectTransform>();
+            if (rect != null)
+            {
+                rect.offsetMin = new Vector2(rect.offsetMin.x, 0f);
+                rect.offsetMax = new Vector2(rect.offsetMax.x, selected ? 38f : 31f);
+            }
 
-        // The desktop tabs intentionally overlap. The active tab must therefore be the final
-        // sibling drawn inside the tab strip, regardless of its logical General/Tiers/Layout
-        // position. Its anchors were assigned once on creation, so this changes draw order only.
-        if (selected)
-            button.transform.SetAsLastSibling();
+            // The fallback desktop tabs intentionally overlap. Its anchors were assigned once,
+            // so changing draw order does not move the logical page.
+            if (selected)
+                button.transform.SetAsLastSibling();
+        }
     }
 
     /// <summary>
@@ -5352,8 +6410,9 @@ public static class StorageMenuPatch
     }
 
     /// <summary>
-    /// Adds a real uGUI <see cref="Toggle"/> for boolean preferences. The row is recreated after
-    /// a configuration write so the track and knob always reflect the persisted preference.
+    /// Adds a button-backed switch for boolean preferences. Schedule I's IL2CPP Unity UI wrapper
+    /// does not expose <c>Toggle.onValueChanged</c>, while Button.onClick is available in both
+    /// runtimes and also supplies the same keyboard/controller activation semantics.
     /// </summary>
     private static void AddStandaloneSettingsToggleRow(StandaloneBackpackState state, string labelText, bool isOn,
         Action<bool> changedAction)
@@ -5392,25 +6451,32 @@ public static class StorageMenuPatch
         status.alignment = TextAnchor.MiddleCenter;
         AddStandaloneLayoutElement(status.gameObject, minWidth: 60f, flexibleWidth: 1f);
 
-        var toggle = CreateStandaloneSettingsToggle(row, isOn);
+        var toggle = CreateStandaloneSettingsSwitchButton(row, isOn);
         toggle.interactable = changedAction != null;
         if (changedAction != null)
-            EventHelper.AddListener<bool>(changedAction, toggle.onValueChanged);
+            EventHelper.AddListener(() => changedAction(!isOn), toggle.onClick);
 
         state.SettingsRows.Add(rowGo);
     }
 
-    private static Toggle CreateStandaloneSettingsToggle(RectTransform parent, bool isOn)
+    private static Button CreateStandaloneSettingsSwitchButton(RectTransform parent, bool isOn)
     {
-        var toggleGo = new GameObject("Toggle");
+        var toggleGo = new GameObject("ToggleButton");
         var toggleRect = toggleGo.AddComponent<RectTransform>();
         toggleRect.SetParent(parent, worldPositionStays: false);
         var track = toggleGo.AddComponent<Image>();
         track.color = isOn ? new Color32(40, 121, 157, 255) : new Color32(47, 59, 68, 255);
         ApplyPillButtonPresentation(track);
-        var toggle = toggleGo.AddComponent<Toggle>();
+        var toggle = toggleGo.AddComponent<Button>();
         toggle.targetGraphic = track;
-        toggle.isOn = isOn;
+        var colors = toggle.colors;
+        colors.normalColor = Color.white;
+        colors.highlightedColor = new Color32(224, 240, 248, 255);
+        colors.pressedColor = new Color32(191, 221, 236, 255);
+        colors.selectedColor = Color.white;
+        colors.disabledColor = new Color32(140, 150, 158, 170);
+        colors.colorMultiplier = 1f;
+        toggle.colors = colors;
         AddStandaloneLayoutElement(toggleGo, preferredWidth: 52f, preferredHeight: 22f);
 
         var knobGo = new GameObject("Knob");
@@ -6670,6 +7736,11 @@ public static class StorageMenuPatch
     {
         if (surface?.SlotContainer == null || state?.PagingRoot == null)
             return;
+        if (state.EditorStandaloneBrowser != null)
+        {
+            state.PagingRoot.gameObject.SetActive(true);
+            return;
+        }
 
         var scale = GetStandaloneBackpackScale(surface.LayoutView);
         state.PagingRoot.localScale = Vector3.one * scale;
@@ -6691,7 +7762,9 @@ public static class StorageMenuPatch
         if (state.PageLabel != null)
         {
             state.PageLabel.gameObject.SetActive(true);
-            state.PageLabel.text = $"Page {state.CurrentPage + 1}/{Mathf.Max(1, totalPages)}";
+            state.PageLabel.text = state.EditorStandaloneBrowser != null
+                ? $"PAGE {state.CurrentPage + 1}/{Mathf.Max(1, totalPages)}"
+                : $"Page {state.CurrentPage + 1}/{Mathf.Max(1, totalPages)}";
         }
 
         if (state.PrevButton != null)
@@ -6819,6 +7892,10 @@ public static class StorageMenuPatch
         state.RefreshPending = false;
         state.RefreshInProgress = false;
         state.SlotBindings.Clear();
+        state.EmbeddedSession.Close();
+        ApplyEmbeddedVisibility(state);
+        if (state.NativeCloseButtonContainer != null)
+            state.NativeCloseButtonContainer.gameObject.SetActive(true);
         state.IsOpen = false;
         state.SettingsOpen = false;
         state.SettingsClosing = false;
@@ -7721,6 +8798,13 @@ public static class StorageMenuPatch
             !panel.SupportsStorageBulkTransfer)
             return;
 
+        if (TryBindEditorStorageBulkTransferControls(panel))
+        {
+            panel.BulkTransferRoot.gameObject.SetActive(true);
+            RefreshStorageBulkTransferControls(panel);
+            return;
+        }
+
         if (panel.BulkTransferRoot == null)
         {
             var rootGo = new GameObject("PackRat_StorageBulkTransferControls");
@@ -7788,9 +8872,58 @@ public static class StorageMenuPatch
         RefreshStorageBulkTransferControls(panel);
     }
 
+    private static bool TryBindEditorStorageBulkTransferControls(BackpackPanelState panel)
+    {
+        if (panel?.Container == null ||
+            !TryGetEditorBackpackBrowser(panel.Container, out var browser) ||
+            browser.SourcePane != EditorUiPane.Embedded || browser.BulkTransferRow == null ||
+            browser.BulkSelectorButton == null || browser.BulkSelectorLabel == null ||
+            browser.MoveToStorageButton == null || browser.MoveToBackpackButton == null)
+            return false;
+
+        var firstEditorBinding = !panel.UsesEditorBulkTransferControls;
+        if (panel.BulkSelectorAction == null)
+            panel.BulkSelectorAction = () => ToggleStorageBulkDropdown(panel);
+        if (panel.MoveToStorageAction == null)
+            panel.MoveToStorageAction = () => ExecuteStorageBulkTransfer(panel, moveToStorage: true);
+        if (panel.MoveToBackpackAction == null)
+            panel.MoveToBackpackAction = () => ExecuteStorageBulkTransfer(panel, moveToStorage: false);
+
+        if (panel.BulkSelectorButton != null && panel.BulkSelectorButton != browser.BulkSelectorButton)
+            EventHelper.RemoveListener(panel.BulkSelectorAction, panel.BulkSelectorButton.onClick);
+        if (panel.MoveToStorageButton != null && panel.MoveToStorageButton != browser.MoveToStorageButton)
+            EventHelper.RemoveListener(panel.MoveToStorageAction, panel.MoveToStorageButton.onClick);
+        if (panel.MoveToBackpackButton != null && panel.MoveToBackpackButton != browser.MoveToBackpackButton)
+            EventHelper.RemoveListener(panel.MoveToBackpackAction, panel.MoveToBackpackButton.onClick);
+
+        panel.BulkTransferRoot = browser.BulkTransferRow;
+        panel.BulkSelectorButton = browser.BulkSelectorButton;
+        panel.BulkSelectorLabel = browser.BulkSelectorLabel;
+        panel.MoveToStorageButton = browser.MoveToStorageButton;
+        panel.MoveToBackpackButton = browser.MoveToBackpackButton;
+        panel.BulkTransferStatusLabel = null;
+        panel.BulkTransferActionsRoot = browser.BulkTransferRow;
+        panel.BulkTransferActionsCanvasGroup = null;
+        panel.UsesEditorBulkTransferControls = true;
+
+        EventHelper.RemoveListener(panel.BulkSelectorAction, panel.BulkSelectorButton.onClick);
+        EventHelper.AddListener(panel.BulkSelectorAction, panel.BulkSelectorButton.onClick);
+        EventHelper.RemoveListener(panel.MoveToStorageAction, panel.MoveToStorageButton.onClick);
+        EventHelper.AddListener(panel.MoveToStorageAction, panel.MoveToStorageButton.onClick);
+        EventHelper.RemoveListener(panel.MoveToBackpackAction, panel.MoveToBackpackButton.onClick);
+        EventHelper.AddListener(panel.MoveToBackpackAction, panel.MoveToBackpackButton.onClick);
+
+        CreateStorageBulkDropdown(panel);
+        if (firstEditorBinding)
+            ModLogger.Info("[EditorUI] Bound the editor-authored storage bulk-transfer row.");
+        return true;
+    }
+
     private static void PositionStorageBulkTransferControls(BackpackPanelState panel)
     {
         if (panel?.BulkTransferRoot == null || panel.SlotContainer == null)
+            return;
+        if (panel.UsesEditorBulkTransferControls)
             return;
 
         Canvas.ForceUpdateCanvases();
@@ -7826,6 +8959,18 @@ public static class StorageMenuPatch
     {
         if (panel?.BulkTransferRoot == null || panel.SlotContainer == null)
             return;
+
+        if (panel.UsesEditorBulkTransferControls)
+        {
+            panel.BulkTransferRoot.gameObject.SetActive(true);
+            panel.BulkTransferExpanded = expanded;
+            panel.BulkTransferPresentationInitialized = true;
+            if (panel.MoveToStorageButton != null)
+                panel.MoveToStorageButton.gameObject.SetActive(true);
+            if (panel.MoveToBackpackButton != null)
+                panel.MoveToBackpackButton.gameObject.SetActive(true);
+            return;
+        }
 
         PositionStorageBulkTransferControls(panel);
         var scale = GetStandaloneBackpackScale(StandaloneBackpackLayoutView.Storage);

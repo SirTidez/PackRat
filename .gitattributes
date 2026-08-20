@@ -1,0 +1,11 @@
+# Keep Unity's serialized source stable across Windows checkouts. Unity intentionally writes
+# trailing spaces for some empty YAML values, so those generated formats opt out of whitespace
+# diagnostics while authored C#, JSON, and Markdown retain normal checks.
+Unity/PackRat.UI.Authoring/**/*.meta text eol=lf -whitespace
+Unity/PackRat.UI.Authoring/**/*.asset text eol=lf -whitespace
+Unity/PackRat.UI.Authoring/**/*.prefab text eol=lf -whitespace
+Unity/PackRat.UI.Authoring/**/*.cs text eol=lf
+Unity/PackRat.UI.Authoring/**/*.json text eol=lf
+Unity/PackRat.UI.Authoring/**/*.md text eol=lf
+Unity/PackRat.UI.Authoring/**/*.png binary
+assets/packrat_ui_windows.bundle binary

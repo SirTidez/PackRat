@@ -589,7 +589,14 @@ public class PlayerBackpack : MonoBehaviour
             }
             catch (Exception ex)
             {
-                ModLogger.Error("Failed to open backpack storage menu", ex);
+                // Reflection wraps failures raised by StorageMenu.Open. Report the actual UI
+                // exception so IL2CPP member/body drift is visible instead of only the generic
+                // "target of an invocation" shell.
+                var rootException = ex is TargetInvocationException invocationException &&
+                                    invocationException.InnerException != null
+                    ? invocationException.InnerException
+                    : ex;
+                ModLogger.Error("Failed to open backpack storage menu", rootException);
                 return;
             }
         }

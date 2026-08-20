@@ -153,12 +153,12 @@ public class Configuration
         _showProductQuantityMetricEntry = _category.CreateEntry(
             "ShowProductQuantityMetric",
             true,
-            "Show each product's quantity in the backpack metrics tray"
+            "Show each product's saleable unit quantity after accounting for package capacity"
         );
         _showProductQuantityTotalMetricEntry = _category.CreateEntry(
             "ShowProductQuantityTotalMetric",
             true,
-            "Show the total product quantity in the backpack metrics tray"
+            "Show the total saleable product units in the backpack metrics tray"
         );
         _showProductUnitPriceMetricEntry = _category.CreateEntry(
             "ShowProductUnitPriceMetric",

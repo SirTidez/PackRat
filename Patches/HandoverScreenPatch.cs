@@ -46,7 +46,7 @@ public static class HandoverScreenPatch
     private const float VehicleMaxDistance = 20f;
     private const float BackpackGridScale = 0.74f;
     private const float BackpackContentCenterY = 125f;
-    private static readonly Vector2 BackpackCardSize = new Vector2(380f, 450f);
+    private static readonly Vector2 BackpackCardSize = new Vector2(420f, 660f);
     private const string VehicleHeaderTitle = "Vehicle";
     private const string VehicleHeaderSubtitle = "This is the vehicle you last drove.\nMust be within 20 meters.";
 
@@ -63,6 +63,7 @@ public static class HandoverScreenPatch
         public RectTransform BackpackHeaderRoot;
         public RectTransform BackpackVisualRoot;
         public Canvas DedicatedCanvas;
+        public EditorUiDedicatedCanvasBinding EditorDedicatedCanvas;
         public RectTransform DedicatedCard;
         // The shared browser normalizes its supplied host to local position zero on every
         // refresh. Keep that normalization inside this child so it can never reposition the
@@ -87,6 +88,8 @@ public static class HandoverScreenPatch
         public RectTransform TransferRoot;
         public Button TransferButton;
         public Button BoundTransferButton;
+        public Button EditorBackpackModeButton;
+        public Button EditorVehicleModeButton;
         public Text TransferStatusLabel;
         public Text PageLabel;
         public Text VisualTitleLabel;
@@ -95,6 +98,8 @@ public static class HandoverScreenPatch
         public Action NextAction;
         public Action ToggleAction;
         public Action TransferAction;
+        public Action ShowBackpackAction;
+        public Action ShowVehicleAction;
         public S1LandVehicle NearbyVehicle;
         public Vector2 VehicleOriginalAnchoredPos;
         public int CurrentPage;
@@ -442,7 +447,11 @@ public static class HandoverScreenPatch
         }
 
         for (var i = 0; i < staleIds.Count; i++)
+        {
+            if (States.TryGetValue(staleIds[i], out var stale) && stale?.DedicatedCanvas != null)
+                UnityEngine.Object.Destroy(stale.DedicatedCanvas.gameObject);
             States.Remove(staleIds[i]);
+        }
     }
 
     private static void RefreshHeaderBindings(PanelState state, HandoverScreen screen)
@@ -964,16 +973,36 @@ public static class HandoverScreenPatch
 
         if (state.DedicatedCanvas == null)
         {
-            var canvasGo = new GameObject("PackRat_HandoverBackpackCanvas");
+            GameObject canvasGo;
+            Canvas canvas;
+            UnityEngine.UI.CanvasScaler scaler;
+            GraphicRaycaster raycaster;
+            if (EditorUiAssetBundleBindings.TryCreateDedicatedCanvas(screen.transform,
+                    out var editorCanvas))
+            {
+                state.EditorDedicatedCanvas = editorCanvas;
+                canvasGo = editorCanvas.Root.gameObject;
+                canvas = editorCanvas.Canvas;
+                scaler = editorCanvas.Scaler;
+                raycaster = editorCanvas.Raycaster;
+                // Match the established detached-overlay lifetime. The handover close hooks own
+                // visibility explicitly, so animated screen ancestors cannot scale or clip it.
+                editorCanvas.Root.SetParent(null, worldPositionStays: false);
+                ModLogger.Info("[EditorUI] Bound the editor-authored dedicated handover canvas.");
+            }
+            else
+            {
+                canvasGo = new GameObject("PackRat_HandoverBackpackCanvas");
 #if !MONO
-            var canvas = Utils.AddComponentSafe<Canvas>(canvasGo);
-            var scaler = Utils.AddComponentSafe<UnityEngine.UI.CanvasScaler>(canvasGo);
-            var raycaster = Utils.AddComponentSafe<GraphicRaycaster>(canvasGo);
+                canvas = Utils.AddComponentSafe<Canvas>(canvasGo);
+                scaler = Utils.AddComponentSafe<UnityEngine.UI.CanvasScaler>(canvasGo);
+                raycaster = Utils.AddComponentSafe<GraphicRaycaster>(canvasGo);
 #else
-            var canvas = canvasGo.AddComponent<Canvas>();
-            var scaler = canvasGo.AddComponent<UnityEngine.UI.CanvasScaler>();
-            var raycaster = canvasGo.AddComponent<GraphicRaycaster>();
+                canvas = canvasGo.AddComponent<Canvas>();
+                scaler = canvasGo.AddComponent<UnityEngine.UI.CanvasScaler>();
+                raycaster = canvasGo.AddComponent<GraphicRaycaster>();
 #endif
+            }
             if (canvas == null || scaler == null)
             {
                 UnityEngine.Object.Destroy(canvasGo);
@@ -987,13 +1016,18 @@ public static class HandoverScreenPatch
             canvas.sortingOrder = (screen.Canvas != null ? screen.Canvas.sortingOrder : 0) + 1;
             scaler.uiScaleMode = UnityEngine.UI.CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920f, 1080f);
-            scaler.matchWidthOrHeight = 0.5f;
+            scaler.screenMatchMode = UnityEngine.UI.CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+            scaler.matchWidthOrHeight = 1f;
             RegisterItemUiRaycaster(raycaster);
             state.DedicatedCanvas = canvas;
+            UpdateDedicatedSafeArea(state);
 
             var cardGo = new GameObject("PackRat_BackpackCard");
             var card = cardGo.AddComponent<RectTransform>();
-            card.SetParent(canvas.transform, worldPositionStays: false);
+            Transform cardParent = state.EditorDedicatedCanvas?.PaneHost != null
+                ? state.EditorDedicatedCanvas.PaneHost
+                : canvas.transform;
+            card.SetParent(cardParent, worldPositionStays: false);
             card.anchorMin = new Vector2(0.5f, 0.5f);
             card.anchorMax = new Vector2(0.5f, 0.5f);
             card.pivot = new Vector2(0.5f, 0.5f);
@@ -1182,11 +1216,123 @@ public static class HandoverScreenPatch
         }
 
         UpdateDedicatedDealMatchAccents(screen, state);
-        EnsureDedicatedTransferControls(screen, state);
+        if (StorageMenuPatch.TryGetEditorBackpackBrowser(browserHost, out var editorBrowser) &&
+            editorBrowser.SourcePane == EditorUiPane.Handover)
+            BindEditorHandoverControls(screen, state, editorBrowser);
+        else
+            EnsureDedicatedTransferControls(screen, state);
         var overlayScale = Mathf.Clamp(Configuration.Instance.HandoverOverlayScale, 0.5f, 1.5f);
         ApplyDedicatedCardPlacement(state, overlayScale);
         DisableDedicatedDecorativeRaycasts(state);
 
+    }
+
+    private static void BindEditorHandoverControls(HandoverScreen screen, PanelState state,
+        EditorUiStandaloneBrowserBinding browser)
+    {
+        if (screen == null || state == null || browser == null || browser.ModeRow == null ||
+            browser.BackpackModeButton == null || browser.VehicleModeButton == null ||
+            browser.TransferRow == null || browser.AutoFillButton == null || browser.TransferStatusLabel == null)
+            return;
+
+        var firstEditorBinding = state.EditorBackpackModeButton != browser.BackpackModeButton ||
+            state.EditorVehicleModeButton != browser.VehicleModeButton ||
+            state.BoundTransferButton != browser.AutoFillButton;
+        if (state.ShowBackpackAction == null)
+            state.ShowBackpackAction = () => SelectDedicatedStorageMode(state, showVehicle: false);
+        if (state.ShowVehicleAction == null)
+            state.ShowVehicleAction = () => SelectDedicatedStorageMode(state, showVehicle: true);
+
+        if (state.EditorBackpackModeButton != null && state.EditorBackpackModeButton != browser.BackpackModeButton)
+            EventHelper.RemoveListener(state.ShowBackpackAction, state.EditorBackpackModeButton.onClick);
+        if (state.EditorVehicleModeButton != null && state.EditorVehicleModeButton != browser.VehicleModeButton)
+            EventHelper.RemoveListener(state.ShowVehicleAction, state.EditorVehicleModeButton.onClick);
+
+        state.EditorBackpackModeButton = browser.BackpackModeButton;
+        state.EditorVehicleModeButton = browser.VehicleModeButton;
+        EventHelper.RemoveListener(state.ShowBackpackAction, state.EditorBackpackModeButton.onClick);
+        EventHelper.AddListener(state.ShowBackpackAction, state.EditorBackpackModeButton.onClick);
+        EventHelper.RemoveListener(state.ShowVehicleAction, state.EditorVehicleModeButton.onClick);
+        EventHelper.AddListener(state.ShowVehicleAction, state.EditorVehicleModeButton.onClick);
+
+        if (state.DedicatedToggleRoot != null)
+        {
+            if (state.DedicatedToggleButton != null && state.ToggleAction != null)
+                EventHelper.RemoveListener(state.ToggleAction, state.DedicatedToggleButton.onClick);
+            UnityEngine.Object.Destroy(state.DedicatedToggleRoot.gameObject);
+            state.DedicatedToggleRoot = null;
+            state.DedicatedToggleButton = null;
+        }
+
+        state.TransferRoot = browser.TransferRow;
+        state.TransferButton = browser.AutoFillButton;
+        state.TransferStatusLabel = browser.TransferStatusLabel;
+        if (state.TransferAction == null)
+            state.TransferAction = () => AutoFillDeal(FindOwningScreen(state), state);
+        if (state.BoundTransferButton != state.TransferButton)
+        {
+            if (state.BoundTransferButton != null)
+                EventHelper.RemoveListener(state.TransferAction, state.BoundTransferButton.onClick);
+            EventHelper.AddListener(state.TransferAction, state.TransferButton.onClick);
+            state.BoundTransferButton = state.TransferButton;
+        }
+
+        var hasVehicle = ResolveNearbyVehicleStorage(state, forceRefresh: false) != null;
+        state.EditorVehicleModeButton.interactable = hasVehicle;
+        ApplyEditorHandoverModePresentation(state, hasVehicle);
+
+        var requirements = GetHandoverRequirements(screen, GetCustomerSlots(screen));
+        state.TransferButton.interactable = requirements.Count > 0;
+        if (string.IsNullOrEmpty(state.TransferStatus))
+            state.TransferStatusLabel.gameObject.SetActive(false);
+        else
+        {
+            state.TransferStatusLabel.gameObject.SetActive(true);
+            state.TransferStatusLabel.text = state.TransferStatus;
+        }
+
+        if (firstEditorBinding)
+            ModLogger.Info("[EditorUI] Bound the editor-authored handover mode and transfer rows.");
+    }
+
+    private static void SelectDedicatedStorageMode(PanelState state, bool showVehicle)
+    {
+        if (state == null)
+            return;
+
+        var hasVehicle = ResolveNearbyVehicleStorage(state, forceRefresh: true) != null;
+        state.ShowingVehicle = showVehicle && hasVehicle;
+        ApplyVisibleStorageMode(state, hasVehicle);
+        var screen = FindOwningScreen(state);
+        ApplyPrimaryHeaderForMode(screen, state, state.ShowingVehicle);
+        if (!state.ShowingVehicle)
+            MelonLoader.MelonCoroutines.Start(ReapplyHeaderNextFrame(screen, state));
+
+        if (state.DedicatedCanvas != null)
+            UpdateDedicatedOverlayLayout(screen, state);
+        else if (!state.ShowingVehicle)
+            ApplyBackpackPage(state);
+        else
+            UpdatePagerControls(state, GetTotalPages(state), hasVehicle);
+
+        UpdateDedicatedVehicleToggle(screen, state, hasVehicle);
+        ApplyEditorHandoverModePresentation(state, hasVehicle);
+    }
+
+    private static void ApplyEditorHandoverModePresentation(PanelState state, bool hasVehicle)
+    {
+        if (state?.EditorBackpackModeButton == null || state.EditorVehicleModeButton == null)
+            return;
+
+        var selected = GetCurrentBackpackThemePalette().Accent;
+        var idle = GetCurrentBackpackThemePalette().ControlAlt;
+        var unavailable = new Color32(54, 61, 69, 220);
+        var backpackImage = state.EditorBackpackModeButton.GetComponent<Image>();
+        var vehicleImage = state.EditorVehicleModeButton.GetComponent<Image>();
+        if (backpackImage != null)
+            backpackImage.color = state.ShowingVehicle ? idle : selected;
+        if (vehicleImage != null)
+            vehicleImage.color = !hasVehicle ? unavailable : state.ShowingVehicle ? selected : idle;
     }
 
     /// <summary>
@@ -1238,13 +1384,45 @@ public static class HandoverScreenPatch
         if (card == null)
             return;
 
+        UpdateDedicatedSafeArea(state);
         card.anchorMin = new Vector2(0.5f, 0.5f);
         card.anchorMax = new Vector2(0.5f, 0.5f);
         card.pivot = new Vector2(0.5f, 0.5f);
-        card.sizeDelta = BackpackCardSize;
+        var cardSize = BackpackCardSize;
+        if (state.DedicatedBrowserHost != null &&
+            StorageMenuPatch.TryGetEditorBackpackBrowser(state.DedicatedBrowserHost, out var browser) &&
+            browser?.Root != null)
+        {
+            var browserSize = browser.AppliedRootSize.x > 0f && browser.AppliedRootSize.y > 0f
+                ? browser.AppliedRootSize
+                : browser.Root.rect.size;
+            if (browserSize.x > 0f && browserSize.y > 0f)
+                cardSize = browserSize;
+        }
+        // The dedicated card is the safe-area owner for handover. Keep its bounds synchronized
+        // with the runtime-expanded authored pane so clamping measures the complete slot surface.
+        card.sizeDelta = cardSize;
         card.localScale = Vector3.one * overlayScale;
         card.anchoredPosition = GetDedicatedHandoverBackpackPosition();
         ClampDedicatedCardToSafeArea(state);
+    }
+
+    private static void UpdateDedicatedSafeArea(PanelState state)
+    {
+        var binding = state?.EditorDedicatedCanvas;
+        if (binding?.SafeAreaRoot == null || binding.Canvas == null)
+            return;
+
+        var scaleFactor = Mathf.Max(0.001f, binding.Canvas.scaleFactor);
+        var safePixels = Screen.safeArea;
+        var safeRoot = binding.SafeAreaRoot;
+        safeRoot.anchorMin = Vector2.zero;
+        safeRoot.anchorMax = Vector2.one;
+        safeRoot.pivot = new Vector2(0.5f, 0.5f);
+        safeRoot.offsetMin = new Vector2(safePixels.xMin / scaleFactor, safePixels.yMin / scaleFactor);
+        safeRoot.offsetMax = new Vector2(
+            -(Screen.width - safePixels.xMax) / scaleFactor,
+            -(Screen.height - safePixels.yMax) / scaleFactor);
     }
 
     private static void ClampDedicatedCardToSafeArea(PanelState state)
@@ -1255,13 +1433,23 @@ public static class HandoverScreenPatch
         if (card == null || canvasRoot == null)
             return;
 
-        var scaleFactor = Mathf.Max(0.001f, canvas.scaleFactor);
-        var safePixels = Screen.safeArea;
-        var safeArea = new FloatRect(
-            canvasRoot.rect.xMin + safePixels.xMin / scaleFactor,
-            canvasRoot.rect.yMin + safePixels.yMin / scaleFactor,
-            safePixels.width / scaleFactor,
-            safePixels.height / scaleFactor);
+        FloatRect safeArea;
+        if (state.EditorDedicatedCanvas?.PaneHost != null && card.parent == state.EditorDedicatedCanvas.PaneHost)
+        {
+            var safeHost = state.EditorDedicatedCanvas.PaneHost;
+            safeArea = new FloatRect(safeHost.rect.xMin, safeHost.rect.yMin,
+                safeHost.rect.width, safeHost.rect.height);
+        }
+        else
+        {
+            var scaleFactor = Mathf.Max(0.001f, canvas.scaleFactor);
+            var safePixels = Screen.safeArea;
+            safeArea = new FloatRect(
+                canvasRoot.rect.xMin + safePixels.xMin / scaleFactor,
+                canvasRoot.rect.yMin + safePixels.yMin / scaleFactor,
+                safePixels.width / scaleFactor,
+                safePixels.height / scaleFactor);
+        }
         var cardScale = Mathf.Max(0.001f, card.localScale.x);
         var desired = new FloatRect(
             card.anchoredPosition.x + card.rect.xMin * cardScale,
@@ -1341,6 +1529,15 @@ public static class HandoverScreenPatch
 
     private static void UpdateDedicatedVehicleToggle(HandoverScreen screen, PanelState state, bool hasVehicle)
     {
+        if (state?.EditorBackpackModeButton != null && state.EditorVehicleModeButton != null)
+        {
+            if (state.DedicatedToggleRoot != null)
+                state.DedicatedToggleRoot.gameObject.SetActive(false);
+            state.EditorVehicleModeButton.interactable = hasVehicle;
+            ApplyEditorHandoverModePresentation(state, hasVehicle);
+            return;
+        }
+
         if (state?.DedicatedToggleRoot == null)
             return;
 

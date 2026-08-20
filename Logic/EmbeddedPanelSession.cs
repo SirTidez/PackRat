@@ -24,4 +24,10 @@ public sealed class EmbeddedPanelSession
     {
         IsHidden = false;
     }
+
+    public void Close()
+    {
+        _ownerId = null;
+        IsHidden = false;
+    }
 }

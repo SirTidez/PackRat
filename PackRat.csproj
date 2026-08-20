@@ -27,6 +27,7 @@
         <!--<ModList Include="$(CommonDir)\Mods\DisclaimerSkipMono.dll" />-->
         <!--<ModList Include="$(CommonDir)\Mods\DisclaimerSkipIL2CPP.dll" />-->
         <Compile Remove="Tests/**/*.cs" />
+        <Compile Remove="Unity/**/*.cs" />
     </ItemGroup>
 
     <PropertyGroup Condition="'$(Configuration)' == 'Debug Mono'">
@@ -68,6 +69,9 @@
         <EmbeddedResource Include="assets\tacticalpack.png"/>
         <EmbeddedResource Include="assets\hikingbackpack.png"/>
         <EmbeddedResource Include="assets\settings-cog-ui.png"/>
+        <EmbeddedResource Include="assets\packrat_ui_windows.bundle"
+                          LogicalName="PackRat.assets.packrat_ui_windows.bundle"
+                          Condition="Exists('assets\packrat_ui_windows.bundle')"/>
     </ItemGroup>
 
     <!-- Events -->

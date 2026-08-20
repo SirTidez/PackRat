@@ -28,6 +28,7 @@ public class PackRat : MelonMod
     public override void OnInitializeMelon()
     {
         Configuration.Instance.Load();
+        EditorUiAssetBundle.Prewarm();
         UiProfiler.ApplyEnabledState(Configuration.Instance.EnableDeveloperProfiler);
         UiProfiler.Event("lifecycle", "initialize");
         ModLogger.Info("PackRat initialized.");
@@ -60,12 +61,14 @@ public class PackRat : MelonMod
     public override void OnDeinitializeMelon()
     {
         UiProfiler.Event("lifecycle", "deinitialize");
+        EditorUiAssetBundle.Unload();
         UiProfiler.Shutdown();
     }
 
     public override void OnApplicationQuit()
     {
         UiProfiler.Event("lifecycle", "application_quit");
+        EditorUiAssetBundle.Unload();
         UiProfiler.Shutdown();
     }
 }
