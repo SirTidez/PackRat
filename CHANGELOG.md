@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.1.0
+
+### Editor-authored responsive UI
+- Replaced the primary runtime-built backpack chrome with an editor-authored Unity AssetBundle across the standalone backpack, storage, station, deal-handover, settings, and dedicated-canvas surfaces.
+- Unified anchoring, safe-area fitting, UI scaling, slot-grid placement, and input/raycaster behavior so backpack surfaces remain usable across display resolutions and supported UI scales.
+- Added the integrated settings overlay, scalable slider-style settings icon, side-mounted collapse rail with explanatory tooltips, and visually connected active filter tabs.
+- Improved the product metrics drawer with package counts, unit and total values, drug-family colors, unpackaged product imagery, overflow ellipses, and a scroll indicator for longer lists.
+- Retained the runtime-authored UI as a compatibility fallback when the embedded AssetBundle is missing or fails contract validation.
+
+### Backpack, storage, and handover reliability
+- Fixed larger backpack tiers restoring with the wrong capacity and prevented non-local player initialization from taking ownership of the local backpack UI.
+- Stabilized storage, station, employee-inventory, and handover panel lifecycles so embedded backpack surfaces bind, dismiss, and reopen without leaking layout or visibility state into their host UI.
+- Preserved vanilla handover completion controls and corrected backpack slot layering, anchoring, active-tab state, search alignment, and metrics-panel joins.
+- Added guarded runtime compatibility discovery so optional station patches are skipped cleanly when their target methods are unavailable on a game branch.
+
+### Transfers and large-inventory performance
+- Made deal auto-fill package-aware so requested unit counts are assembled correctly from bags, jars, bricks, and unpackaged product.
+- Bounded large auto-fill combination searches and moved backpack stacking to a deterministic planner so large inventories remain responsive.
+- Prewarmed reflection metadata, UI assets, menu overloads, and camera-lock state to reduce first-open and hotkey latency.
+- Added an opt-in UI profiler and summary tooling for measuring full backpack, storage, station, and handover interaction paths without enabling diagnostics by default.
+
+### Runtime compatibility and validation
+- Preserved Mono and IL2CPP support across current/beta and alternate/legacy Schedule One branches.
+- Added focused tests for auto-fill planning, stack planning, embedded-panel sessions, runtime target discovery, reflection caching, UI bounds, and scaling policy.
+
+### Release metadata
+- Bumped the mod version to `2.1.0`.
+
+---
+
 ## 2.0.0
 
 ### Redesigned backpack browser
