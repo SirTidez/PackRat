@@ -28,13 +28,15 @@ PackRat/
 │   ├── BodySearchBehaviourPatch.cs  # Police search includes backpack when config enabled
 │   ├── CartPatch.cs                 # Adjusts shop cart warning to account for backpack capacity
 │   └── ShopInterfacePatch.cs        # Allows selling items directly from backpack
-├── Helpers/                         # Template helpers — do not modify
+├── Helpers/                         # Shared cross-runtime and input/UI helpers
 │   ├── Utils.cs                     # Cross-platform utilities, component helpers, WaitFor* coroutines
 │   ├── ModLogger.cs                 # Centralized logging (wraps MelonLogger)
 │   ├── ReflectionUtils.cs           # Reflection helpers for cross-runtime member access
 │   ├── NetworkHelper.cs             # FishNet networking utilities
 │   ├── JsonHelper.cs                # Cross-platform JSON (STJ in IL2CPP, Newtonsoft in Mono)
 │   └── EventHelper.cs               # IL2CPP-safe Unity event subscription/unsubscription
+│   ├── ControllerBackpackToggle.cs  # Guards native controller Interact before backpack toggle/tier use
+│   └── ControllerUiSupport.cs        # Adds PackRat UI to Schedule I's controller-navigation graph
 ├── build/                           # MSBuild props/targets — do not modify
 │   ├── paths.props
 │   ├── conditions.props
@@ -116,6 +118,48 @@ CartPatch (postfix on Cart.GetWarning)
 ShopInterfacePatch (postfix on ShopInterface.GetAvailableSlots)
   └── If unlocked → inject backpack slots after hotbar slots in result list
 ```
+
+---
+
+## Controller Input and UI Navigation
+
+PackRat deliberately reuses Schedule I's controller systems instead of registering a separate input action or replacing the game's UI navigation.
+
+### Opening the backpack
+
+`PlayerBackpack.Update()` checks both the configurable keyboard toggle and `ControllerBackpackToggle.WasPressedThisFrame()`.
+
+```
+ControllerBackpackToggle
+  ├── GameInput.GetCurrentInputDeviceIsGamepad()
+  ├── GameInput.IsTyping == false
+  ├── GameInput.GetButtonDown(ButtonCode.Interact)
+  └── InteractionManager has no hovered or active interactable
+        └── PlayerBackpack.Toggle path
+              ├── consume selected PackRat tier item, if present
+              └── otherwise open/close an unlocked backpack
+```
+
+The hover/active-interaction guard preserves vanilla priority. PackRat never claims **Interact** while the player can use a world object.
+
+### UI surfaces and selection graph
+
+`ControllerUiSupport` presents each active PackRat browser or handover surface to the same native `UIPanel` that already owns the surrounding item slots. It registers PackRat-owned UGUI controls as native `UISelectable` objects, keeps them separate from the game-owned slots during cleanup, and restores them when the surface closes.
+
+`MainMod.OnUpdate()` calls `ControllerUiSupport.Tick()` so controls created by paging, dropdowns, metrics, or settings are re-scanned while a gamepad surface is active. `StorageMenuPatch` presents the standalone and embedded backpack browser; `HandoverScreenPatch` presents the deal-handover controls.
+
+Runtime-created `UISelectable` objects do not receive the serialized `NavigationOverride` data that Schedule I's prefab controls have. `ControllerUiSupport` initializes those overrides and builds a local directional graph. It prefers PackRat controls, then the nearest backpack slot, which prevents a control selection from jumping unexpectedly to the vanilla hotbar. Two explicit routes make the browser reliable:
+
+- Moving **up** from any sort tab selects Search; moving **down** from a sort tab returns to the nearest backpack slot.
+- Moving **down** from Search returns to the nearest sort tab, keeping the search, sort, and item grid lanes reciprocal.
+
+Only the direct hotkey backpack browser owns the native Back action. Embedded storage and handover panels keep their host UI's close behavior.
+
+### Controller search and Steam keyboard
+
+Unity's runtime-injected `InputField` is not a stable native selection target, so `ControllerUiSupport` creates an invisible controller-only proxy over Search. The proxy has no visual or raycast target, leaving mouse behavior with the real input field; controller focus is rendered on that real field.
+
+On controller submit, the proxy activates the input and uses Schedule I's native `UITrigger.OnTrigger` callback to request `OnScreenKeyboard`. Steam's gamepad keyboard is only available when a gamepad is active, the Steam overlay is enabled, and the game is running on a Steam Deck or in Big Picture mode. Outside those modes PackRat keeps Search focused and logs a one-time availability warning; this is expected behavior, not a navigation failure.
 
 ---
 
