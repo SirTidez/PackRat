@@ -221,10 +221,16 @@ public class PlayerBackpack : MonoBehaviour
             return;
 
         // Throttle tier check to every N frames to avoid per-frame config/array access (reduces hitches).
-        var keyDown = Input.GetKeyDown(Configuration.Instance.ToggleKey);
-        if (keyDown)
-            UiProfiler.Event("hotkey", "pressed", $"open={IsOpen};unlocked={IsUnlocked};tier={CurrentTierIndex}");
-        if (keyDown || (Time.frameCount % TierCheckIntervalFrames == 0))
+        var keyboardTogglePressed = Input.GetKeyDown(Configuration.Instance.ToggleKey);
+        var controllerTogglePressed = ControllerBackpackToggle.WasPressedThisFrame();
+        var togglePressed = keyboardTogglePressed || controllerTogglePressed;
+        if (togglePressed)
+        {
+            var source = controllerTogglePressed ? "controller_interact" : "keyboard";
+            UiProfiler.Event("hotkey", "pressed",
+                $"source={source};open={IsOpen};unlocked={IsUnlocked};tier={CurrentTierIndex}");
+        }
+        if (togglePressed || (Time.frameCount % TierCheckIntervalFrames == 0))
         {
             var tierIdx = CurrentTierIndex;
             if (tierIdx != _lastTierIndex)
@@ -242,11 +248,11 @@ public class PlayerBackpack : MonoBehaviour
             if (IsOpen && Patches.StorageMenuPatch.HandleStandaloneBackpackKeyboardNavigation())
                 return;
 
-            if (!keyDown)
+            if (!togglePressed)
                 return;
 
-            // The toggle key is also a valid character in the live search field. Let the focused
-            // InputField consume it before considering an open/close backpack action.
+            // A keyboard toggle key is also a valid character in the live search field. Let the
+            // focused InputField consume it before considering an open/close backpack action.
             if (IsOpen && Patches.StorageMenuPatch.IsStandaloneBackpackSearchFocused())
             {
                 UiProfiler.Event("hotkey", "consumed_by_search");
