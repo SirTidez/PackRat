@@ -472,6 +472,7 @@ public static class StorageMenuPatch
         public RectTransform NativeCloseButtonContainer;
         public Action EditorSettingsAction;
         public Action EditorDoneAction;
+        public string ControllerSurfaceKey;
         public string SearchTerm;
         public string TypeFilter;
         public string QualityFilter;
@@ -1369,6 +1370,7 @@ public static class StorageMenuPatch
         state.RefreshPending = false;
         state.PointerBlockingSurfaceSlotUis = surface.SlotUIs;
         state.IsOpen = true;
+        state.ControllerSurfaceKey = "PackRatBrowser:" + surface.Id;
         if (!state.IsHotkeyBackpack)
             state.EmbeddedSession.Open(surface.OwnerId != 0 ? surface.OwnerId : surface.Id);
         CaptureStandaloneRecentBaseline(state, backpackSlots);
@@ -1386,6 +1388,7 @@ public static class StorageMenuPatch
         UpdateStandaloneBackpackPresentationAnchor(surface, state);
         EnsureStandaloneBackpackVisuals(surface, state, backpackSlots.Count, CountUsedStandaloneSlots(backpackSlots),
             displaySlots.Count, totalPages);
+        PresentStandaloneControllerSurface(state);
         UpdateStandalonePointerBlockingInputCapture(state);
         var chromeMilliseconds = timing?.ElapsedMilliseconds ?? 0L;
         var revealPageWipe = BeginStandalonePageWipe(surface, state);
@@ -5184,6 +5187,7 @@ public static class StorageMenuPatch
             state.AwaitingToggleKey = false;
             state.KeyboardSettingsControlIndex = -1;
             PlayStandaloneSettingsClose(state);
+            PresentStandaloneControllerSurface(state);
             return;
         }
 
@@ -5196,6 +5200,7 @@ public static class StorageMenuPatch
         state.KeyboardSettingsControlIndex = openedFromKeyboard ? 0 : -1;
         state.ShowSettingsAction?.Invoke();
         UpdateStandalonePointerBlockingInputCapture(state);
+        PresentStandaloneControllerSurface(state);
     }
 
     private static Image CreateStandaloneSettingsTabIndicator(RectTransform tabs)
@@ -7879,6 +7884,9 @@ public static class StorageMenuPatch
         if (state == null)
             return;
 
+        ControllerUiSupport.Dismiss(state.ControllerSurfaceKey);
+        state.ControllerSurfaceKey = null;
+
         state.CurrentPage = 0;
         state.SearchTerm = string.Empty;
         state.TypeFilter = string.Empty;
@@ -7910,6 +7918,34 @@ public static class StorageMenuPatch
             state.SettingsRoot.gameObject.SetActive(false);
         if (state.SearchInput != null)
             state.SearchInput.SetTextWithoutNotify(string.Empty);
+    }
+
+    /// <summary>
+    /// Adds PackRat chrome to the same native controller-navigation graph as the item slots.
+    /// Only the direct hotkey browser owns Back.
+    /// </summary>
+    private static void PresentStandaloneControllerSurface(StandaloneBackpackState state)
+    {
+        if (state == null || !state.IsOpen || string.IsNullOrWhiteSpace(state.ControllerSurfaceKey))
+            return;
+
+        ControllerUiSupport.Present(state.ControllerSurfaceKey,
+            state.IsHotkeyBackpack
+                ? () =>
+                {
+                    if (state.SettingsOpen)
+                        ToggleStandaloneSettings(state);
+                    else
+                        state.DoneButton?.onClick.Invoke();
+                }
+                : null,
+            state.SearchInput,
+            state.PresentationRoot,
+            state.SortTabsRoot,
+            state.VisualRoot,
+            state.DropdownRoot,
+            state.SettingsRoot,
+            state.PagingRoot);
     }
 
     private static bool IsStandaloneBackpackOpen(StorageMenu menu)

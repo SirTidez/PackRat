@@ -243,6 +243,7 @@ public static class HandoverScreenPatch
             }
 
             RebuildQuickMove(__instance, nearbyVehicle);
+            PresentControllerSurface(__instance, panel);
         }
         catch (Exception ex)
         {
@@ -322,6 +323,7 @@ public static class HandoverScreenPatch
                 return;
 
             ClearSlotAssignments(panel);
+            DismissControllerSurface(__instance);
             panel.IsOpen = false;
             if (panel.BackpackContainer != null)
                 panel.BackpackContainer.gameObject.SetActive(false);
@@ -4196,6 +4198,7 @@ public static class HandoverScreenPatch
         if (!States.TryGetValue(screen.GetInstanceID(), out var state))
             return;
 
+        DismissControllerSurface(screen);
         state.IsOpen = false;
 
         if (state.BackpackContainer != null)
@@ -4211,5 +4214,32 @@ public static class HandoverScreenPatch
         SetHeaderPairActive(state.SourceTitleLabel, state.SourceSubtitleLabel, true);
         if (state.VehicleContainer != null)
             state.VehicleContainer.anchoredPosition = state.VehicleOriginalAnchoredPos;
+    }
+
+    /// <summary>
+    /// Exposes PackRat-owned handover controls through the native Schedule I controller panel.
+    /// The vanilla handover screen remains responsible for Back, so this surface intentionally
+    /// has no consume action.
+    /// </summary>
+    private static void PresentControllerSurface(HandoverScreen screen, PanelState state)
+    {
+        if (screen == null || state == null || !state.IsOpen)
+            return;
+
+        var navigationRoot = state.BackpackContainer ?? state.DedicatedCard;
+        var chromeRoot = state.DedicatedCard ?? state.BackpackContainer;
+        ControllerUiSupport.Present("PackRatHandover:" + screen.GetInstanceID(), null, null,
+            navigationRoot,
+            null,
+            chromeRoot,
+            state.PagingRoot,
+            state.DedicatedToggleRoot,
+            state.TransferRoot);
+    }
+
+    private static void DismissControllerSurface(HandoverScreen screen)
+    {
+        if (screen != null)
+            ControllerUiSupport.Dismiss("PackRatHandover:" + screen.GetInstanceID());
     }
 }

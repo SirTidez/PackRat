@@ -20,7 +20,7 @@ public static class BuildInfo
     public const string Name = "PackRat";
     public const string Description = "Portable backpack storage for Schedule One";
     public const string Author = "SirTidez";
-    public const string Version = "2.1.0";
+    public const string Version = "2.1.1";
 }
 
 public class PackRat : MelonMod
@@ -54,6 +54,8 @@ public class PackRat : MelonMod
 
     public override void OnUpdate()
     {
+        ControllerUiSupport.Tick();
+
         if (UiProfiler.IsEnabled)
             UiProfiler.FlushIfDue();
     }
@@ -61,6 +63,7 @@ public class PackRat : MelonMod
     public override void OnDeinitializeMelon()
     {
         UiProfiler.Event("lifecycle", "deinitialize");
+        ControllerUiSupport.Shutdown();
         EditorUiAssetBundle.Unload();
         UiProfiler.Shutdown();
     }
@@ -68,6 +71,7 @@ public class PackRat : MelonMod
     public override void OnApplicationQuit()
     {
         UiProfiler.Event("lifecycle", "application_quit");
+        ControllerUiSupport.Shutdown();
         EditorUiAssetBundle.Unload();
         UiProfiler.Shutdown();
     }

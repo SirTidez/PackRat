@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.1
+
+### Controller support
+- Added native controller opening for the backpack through the Interact face button when no world interaction is available.
+- Added controller navigation across backpack item slots, sort tabs, search, pagination, metrics, settings, and integrated storage and handover controls.
+- Added controller search focus and Steam gamepad keyboard integration, with a clear in-game warning when Steam's gamepad keyboard is unavailable outside supported modes.
+
+### Release metadata
+- Bumped the mod version to `2.1.1`.
+
+---
+
 ## 2.1.0
 
 ### Editor-authored responsive UI
