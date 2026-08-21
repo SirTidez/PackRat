@@ -49,6 +49,11 @@ Backpack tiers are **purchased at the Hardware Store** (not automatic). Each tie
 ### Extra Storage
 Open your backpack at any time with the toggle key (default: **B**). Your backpack is separate from your hotbar and inventory, giving you dedicated space for stockpiling product, supplies, or anything else you need to haul around.
 
+### Controller Support
+PackRat supports controllers through Schedule I's native input and UI-navigation systems. Press the game's **Interact** face button to open or close the backpack (or apply a selected backpack tier item), then use the normal controller UI navigation to move between backpack slots, the hotbar, and PackRat controls. Sort tabs, search, paging, product metrics, settings, and integrated storage and handover controls are all selectable.
+
+World interactions always take priority: PackRat opens only when there is no hovered or active interactable, so the same button continues to work normally on doors, stations, and other game objects. See [Controller Support](docs/controller-support.md) for the full control reference, navigation behavior, and Steam keyboard requirements.
+
 ### Backpack Browser and Organization
 The backpack browser is built for large, paged bags. Search by item name, quality, category, drug type, base strain, or derived mixed product; filter and sort the visible contents; mark favorite items; and use recent-item history to return to what you just handled. `Organize` groups contents by type, name, and quality, while `Stack` consolidates compatible stacks into the earliest available slots.
 
@@ -89,12 +94,14 @@ In a multiplayer session, the host's configuration is automatically pushed to al
 
 ## Controls
 
-| Action | Default Key | Notes |
-|--------|:-----------:|-------|
-| Open / close backpack | `B` | When the backpack is already unlocked. |
-| **Use** backpack item (apply tier) | `B` | When a backpack tier item is in your hotbar, select it and press **B** to consume it, apply that tier to your backpack, and open the backpack. |
+| Action | Keyboard | Controller |
+|--------|:--------:|------------|
+| Open / close unlocked backpack | `B` by default | **Interact** (the west face button: `X` on Xbox-style controllers, `Square` on PlayStation-style controllers) when no world object is interactable. |
+| **Use** backpack item (apply tier) | Select the backpack tier item in the hotbar and press `B`. | Select the tier item in the hotbar and press **Interact** when no world object is interactable. |
+| Navigate backpack UI | Arrow keys / existing keyboard navigation | Use Schedule I's standard controller UI navigation. PackRat controls and item slots participate in one selection path. |
+| Search backpack contents | Click the search field and type. | Select Search and submit it. Steam's gamepad keyboard opens on Steam Deck or in Steam Big Picture when the Steam overlay is available. |
 
-Pagination supports the left/right and up/down arrow keys. Keyboard navigation covers PackRat controls and settings; item drag/drop remains mouse-driven.
+Pagination supports the left/right and up/down arrow keys. Keyboard navigation covers PackRat controls and settings; item drag/drop remains mouse-driven. Controller search can still focus on desktop, but Steam's on-screen gamepad keyboard is unavailable outside supported Steam modes; use a physical keyboard there.
 
 The toggle key is fully configurable. See [Configuration](#configuration) below.
 
