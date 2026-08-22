@@ -244,7 +244,9 @@ public static class SomeClassPatch
 ## Configuration
 
 - All config lives in `PackRat.Config.Configuration` singleton (`Configuration.Instance`)
-- MelonPreferences category name: `"PackRat"`
+- MelonPreferences general category: `"PackRat"`
+- Additional category identifiers must be namespaced as `"PackRat_*"` to avoid collisions with other mods
+- Preferences moved to a new category must use `LegacyPreferenceMigration` so existing values survive upgrades
 - Config file path: `UserData/PackRat.cfg`
 - Access config values via properties, not entries directly
 

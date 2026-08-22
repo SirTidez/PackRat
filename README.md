@@ -130,6 +130,10 @@ Edit this file while the game is closed. In a multiplayer session, only the **ho
 
 The browser, layout, appearance, routing, and metrics options are best adjusted through the in-game settings cog; PackRat mirrors those changes directly to this config file.
 
+The file is split into `PackRat`-namespaced sections for general settings, diagnostics, routing,
+metrics, theme, each overlay surface, and each backpack tier. Existing single-section config files
+are reorganized automatically the first time the updated mod loads; customized values are preserved.
+
 ### Core Config Example
 
 ```ini
@@ -137,40 +141,63 @@ The browser, layout, appearance, routing, and metrics options are best adjusted 
 
 # Key to open and close your backpack
 # Accepts any Unity KeyCode name: B, Tab, F1, Backslash, etc.
-ToggleKey = B
+ToggleKey = "B"
 
 # When false, police body searches will not check backpack contents
 EnableSearch = true
 
+[PackRat_Routing]
+EnableSmartRouting = false
+RouteProducts = true
+RouteSeeds = true
+RouteMixers = false
+RouteReagents = false
+
+[PackRat_Theme]
+BackpackUiTheme = 0
+BackpackCustomThemeRed = 35
+BackpackCustomThemeGreen = 61
+BackpackCustomThemeBlue = 86
+
+[PackRat_Tier0]
 # Tier 0 — Rucksack
 # First backpack; can buy at Hardware Store at Hoodlum I
-Tier0_UnlockRank = Hoodlum : 1
+Tier0_UnlockRank = { Rank = "Hoodlum", Tier = 1 }
 Tier0_SlotCount = 8
-Tier0_Price = 25
+Tier0_Enabled = true
+Tier0_Price = 25.0
 
+[PackRat_Tier1]
 # Tier 1 — Small Pack
 # Can buy at Peddler I; still under the radar
-Tier1_UnlockRank = Peddler : 1
+Tier1_UnlockRank = { Rank = "Peddler", Tier = 1 }
 Tier1_SlotCount = 16
-Tier1_Price = 75
+Tier1_Enabled = true
+Tier1_Price = 75.0
 
+[PackRat_Tier2]
 # Tier 2 — Duffel Bag
 # Can buy at Hustler I. Police will search this and above.
-Tier2_UnlockRank = Hustler : 1
+Tier2_UnlockRank = { Rank = "Hustler", Tier = 1 }
 Tier2_SlotCount = 24
-Tier2_Price = 150
+Tier2_Enabled = true
+Tier2_Price = 150.0
 
+[PackRat_Tier3]
 # Tier 3 — Tactical Pack
 # Can buy at Enforcer I
-Tier3_UnlockRank = Enforcer : 1
+Tier3_UnlockRank = { Rank = "Enforcer", Tier = 1 }
 Tier3_SlotCount = 32
-Tier3_Price = 300
+Tier3_Enabled = true
+Tier3_Price = 300.0
 
+[PackRat_Tier4]
 # Tier 4 — Hiking Backpack
 # Largest tier; can buy at Block Boss I
-Tier4_UnlockRank = Block_Boss : 1
+Tier4_UnlockRank = { Rank = "Block_Boss", Tier = 1 }
 Tier4_SlotCount = 40
-Tier4_Price = 500
+Tier4_Enabled = true
+Tier4_Price = 500.0
 ```
 
 ### Config Reference
@@ -179,7 +206,7 @@ Tier4_Price = 500
 |-----|---------|-------------|
 | `ToggleKey` | `B` | Key to open/close the backpack and to use a backpack item in the hotbar. Any [Unity KeyCode](https://docs.unity3d.com/ScriptReference/KeyCode.html) name. |
 | `EnableSearch` | `true` | When `false`, police body searches never inspect the backpack, even for Duffel Bag and larger tiers. |
-| `Tier{n}_UnlockRank` | See table above | Rank required before the tier appears at the Hardware Store. Format: `RankName : TierNumber` (1–5). |
+| `Tier{n}_UnlockRank` | See table above | Rank required before the tier appears at the Hardware Store. TOML inline table with `Rank` and `Tier` (1–5). |
 | `Tier{n}_SlotCount` | See table above | Number of storage slots for tier n. Minimum 1; no fixed maximum. The backpack UI paginates larger capacities. |
 | `Tier{n}_Price` | 25, 75, 150, 300, 500 | Price (account funds) to buy tier n at the Hardware Store. |
 

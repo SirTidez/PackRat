@@ -173,7 +173,9 @@ Configuration.Instance
   └── StorageSlots      12 (max 128)       Slot count for backpack storage
 ```
 
-Stored in `UserData/PackRat.cfg` via MelonPreferences (`"PackRat"` category).
+Stored in `UserData/PackRat.cfg` via MelonPreferences. General options remain in `PackRat`; diagnostics,
+routing, metrics, theme, overlay layouts, and each backpack tier use `PackRat_*` categories. On upgrade,
+`LegacyPreferenceMigration` moves existing values out of the original all-in-one category before saving.
 
 ---
 
