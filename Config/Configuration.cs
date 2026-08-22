@@ -13,7 +13,7 @@ namespace PackRat.Config;
 
 /// <summary>
 /// Singleton configuration class backed by MelonPreferences.
-/// Stored in UserData/PackRat.cfg under the "PackRat" category.
+/// Stored in UserData/PackRat.cfg under organized, PackRat-namespaced categories.
 /// </summary>
 public class Configuration
 {
@@ -22,7 +22,16 @@ public class Configuration
 
     private readonly string _configFile = Path.Combine("UserData", "PackRat.cfg");
 
-    private readonly MelonPreferences_Category _category;
+    private readonly MelonPreferences_Category _packratCategory;
+    private readonly MelonPreferences_Category _diagnosticsCategory;
+    private readonly MelonPreferences_Category _routingCategory;
+    private readonly MelonPreferences_Category _metricsCategory;
+    private readonly MelonPreferences_Category _themeCategory;
+    private readonly MelonPreferences_Category _backpackOverlayCategory;
+    private readonly MelonPreferences_Category _storageOverlayCategory;
+    private readonly MelonPreferences_Category _stationOverlayCategory;
+    private readonly MelonPreferences_Category _handoverOverlayCategory;
+    private readonly LegacyPreferenceMigration _legacyPreferenceMigration;
     private readonly MelonPreferences_Entry<KeyCode> _toggleKeyEntry;
     private readonly MelonPreferences_Entry<bool> _enableSearchEntry;
     private readonly MelonPreferences_Entry<bool> _enableDebugLoggingEntry;
@@ -82,171 +91,210 @@ public class Configuration
 
     public Configuration()
     {
-        _category = MelonPreferences.CreateCategory("PackRat");
-        _category.SetFilePath(_configFile, false);
-        _toggleKeyEntry = _category.CreateEntry("ToggleKey", KeyCode.B, "Key to toggle backpack");
-        _enableSearchEntry = _category.CreateEntry(
+        _packratCategory = CreateCategory("PackRat", "PackRat - General");
+        _diagnosticsCategory = CreateCategory("PackRat_Diagnostics", "PackRat - Diagnostics");
+        _routingCategory = CreateCategory("PackRat_Routing", "PackRat - Routing");
+        _metricsCategory = CreateCategory("PackRat_Metrics", "PackRat - Metrics");
+        _themeCategory = CreateCategory("PackRat_Theme", "PackRat - Theme");
+        _backpackOverlayCategory = CreateCategory("PackRat_BackpackOverlay", "PackRat - Backpack Overlay");
+        _storageOverlayCategory = CreateCategory("PackRat_StorageOverlay", "PackRat - Storage Overlay");
+        _stationOverlayCategory = CreateCategory("PackRat_StationOverlay", "PackRat - Station Overlay");
+        _handoverOverlayCategory = CreateCategory("PackRat_HandoverOverlay", "PackRat - Handover Overlay");
+        _legacyPreferenceMigration = new LegacyPreferenceMigration(_packratCategory);
+
+        _toggleKeyEntry = _packratCategory.CreateEntry("ToggleKey", KeyCode.B, "Key to toggle backpack");
+        _enableSearchEntry = _packratCategory.CreateEntry(
             "EnableSearch",
             true,
             "Allow police body searches to include searchable backpack tiers"
         );
-        _backpackSyncDebugLoggingEntry = _category.CreateEntry(
+        _backpackSyncDebugLoggingEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _diagnosticsCategory,
             "BackpackSyncDebugLogging",
             false,
             "Enable verbose backpack network synchronization diagnostics in release builds"
         );
-        _enableDebugLoggingEntry = _category.CreateEntry(
+        _enableDebugLoggingEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _diagnosticsCategory,
             "EnableDebugLogging",
             false,
             "Enable verbose PackRat UI, lifecycle, and shop diagnostics in release builds"
         );
-        _enableDeveloperProfilerEntry = _category.CreateEntry(
+        _enableDeveloperProfilerEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _diagnosticsCategory,
             "EnableDeveloperProfiler",
             false,
             "Developer Profiler"
         );
-        _enableUiAnimationsEntry = _category.CreateEntry(
+        _enableUiAnimationsEntry = _packratCategory.CreateEntry(
             "EnableUiAnimations",
             true,
             "Enable PackRat backpack UI transitions"
         );
-        _reduceUiMotionEntry = _category.CreateEntry(
+        _reduceUiMotionEntry = _packratCategory.CreateEntry(
             "ReduceUiMotion",
             false,
             "Use fade-only PackRat backpack UI transitions"
         );
-        _protectFavoritesFromOrganizationEntry = _category.CreateEntry(
+        _protectFavoritesFromOrganizationEntry = _packratCategory.CreateEntry(
             "ProtectFavoritesFromOrganization",
             true,
             "Keep favorited backpack items unchanged by PackRat's organize and stack actions"
         );
-        _enableSmartRoutingEntry = _category.CreateEntry(
+        _enableSmartRoutingEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _routingCategory,
             "EnableSmartRouting",
             false,
             "Prefer routing configured quick-move categories into the backpack"
         );
-        _routeProductsEntry = _category.CreateEntry(
+        _routeProductsEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _routingCategory,
             "RouteProducts",
             true,
             "Route drug products into the backpack during quick move when Smart Routing is enabled"
         );
-        _routeSeedsEntry = _category.CreateEntry(
+        _routeSeedsEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _routingCategory,
             "RouteSeeds",
             true,
             "Route seeds into the backpack during quick move when Smart Routing is enabled"
         );
-        _routeMixersEntry = _category.CreateEntry(
+        _routeMixersEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _routingCategory,
             "RouteMixers",
             false,
             "Route mixers into the backpack during quick move when Smart Routing is enabled"
         );
-        _routeReagentsEntry = _category.CreateEntry(
+        _routeReagentsEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _routingCategory,
             "RouteReagents",
             false,
             "Route reagents into the backpack during quick move when Smart Routing is enabled"
         );
-        _showMetricsTrayEntry = _category.CreateEntry(
+        _showMetricsTrayEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _metricsCategory,
             "ShowMetricsTray",
             true,
             "Show the expandable product metrics tray beside the hotkey backpack"
         );
-        _showProductQuantityMetricEntry = _category.CreateEntry(
+        _showProductQuantityMetricEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _metricsCategory,
             "ShowProductQuantityMetric",
             true,
             "Show each product's saleable unit quantity after accounting for package capacity"
         );
-        _showProductQuantityTotalMetricEntry = _category.CreateEntry(
+        _showProductQuantityTotalMetricEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _metricsCategory,
             "ShowProductQuantityTotalMetric",
             true,
             "Show the total saleable product units in the backpack metrics tray"
         );
-        _showProductUnitPriceMetricEntry = _category.CreateEntry(
+        _showProductUnitPriceMetricEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _metricsCategory,
             "ShowProductUnitPriceMetric",
             true,
             "Show the game's current product unit price in the backpack metrics tray"
         );
-        _showProductTotalPriceMetricEntry = _category.CreateEntry(
+        _showProductTotalPriceMetricEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _metricsCategory,
             "ShowProductTotalPriceMetric",
             true,
             "Show total product value in the backpack metrics tray"
         );
-        _metricsFontScaleEntry = _category.CreateEntry(
+        _metricsFontScaleEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _metricsCategory,
             "MetricsFontScale",
             1f,
             "Text scale for the backpack product metrics tray"
         );
-        _backpackUiThemeEntry = _category.CreateEntry(
+        _backpackUiThemeEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _themeCategory,
             "BackpackUiTheme",
             (int)BackpackUiTheme.S1Blue,
             "PackRat backpack UI color theme"
         );
-        _backpackCustomThemeRedEntry = _category.CreateEntry("BackpackCustomThemeRed", 35,
+        _backpackCustomThemeRedEntry = _legacyPreferenceMigration.CreateMovedEntry(_themeCategory,
+            "BackpackCustomThemeRed", 35,
             "Red channel for PackRat's custom backpack UI theme");
-        _backpackCustomThemeGreenEntry = _category.CreateEntry("BackpackCustomThemeGreen", 61,
+        _backpackCustomThemeGreenEntry = _legacyPreferenceMigration.CreateMovedEntry(_themeCategory,
+            "BackpackCustomThemeGreen", 61,
             "Green channel for PackRat's custom backpack UI theme");
-        _backpackCustomThemeBlueEntry = _category.CreateEntry("BackpackCustomThemeBlue", 86,
+        _backpackCustomThemeBlueEntry = _legacyPreferenceMigration.CreateMovedEntry(_themeCategory,
+            "BackpackCustomThemeBlue", 86,
             "Blue channel for PackRat's custom backpack UI theme");
-        _backpackOverlayOffsetXEntry = _category.CreateEntry(
+        _backpackOverlayOffsetXEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _backpackOverlayCategory,
             "BackpackOverlayOffsetX",
             0f,
             "Horizontal offset for the hotkey backpack display"
         );
-        _backpackOverlayOffsetYEntry = _category.CreateEntry(
+        _backpackOverlayOffsetYEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _backpackOverlayCategory,
             "BackpackOverlayOffsetY",
             0f,
             "Vertical offset for the hotkey backpack display"
         );
-        _backpackOverlayScaleEntry = _category.CreateEntry(
+        _backpackOverlayScaleEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _backpackOverlayCategory,
             "BackpackOverlayScale",
             1f,
             "Scale for the hotkey backpack display"
         );
-        _storageOverlayOffsetXEntry = _category.CreateEntry(
+        _storageOverlayOffsetXEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _storageOverlayCategory,
             "StorageOverlayOffsetX",
             0f,
             "Horizontal offset for backpack overlay in storage container menus"
         );
-        _storageOverlayOffsetYEntry = _category.CreateEntry(
+        _storageOverlayOffsetYEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _storageOverlayCategory,
             "StorageOverlayOffsetY",
             0f,
             "Vertical offset for backpack overlay in storage container menus"
         );
-        _storageOverlayScaleEntry = _category.CreateEntry(
+        _storageOverlayScaleEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _storageOverlayCategory,
             "StorageOverlayScale",
             1f,
             "Scale for backpack overlay in storage container menus"
         );
-        _stationOverlayOffsetXEntry = _category.CreateEntry(
+        _stationOverlayOffsetXEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _stationOverlayCategory,
             "StationOverlayOffsetX",
             0f,
             "Horizontal offset for backpack overlay in station menus"
         );
-        _stationOverlayOffsetYEntry = _category.CreateEntry(
+        _stationOverlayOffsetYEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _stationOverlayCategory,
             "StationOverlayOffsetY",
             0f,
             "Vertical offset for backpack overlay in station menus"
         );
-        _stationOverlayScaleEntry = _category.CreateEntry(
+        _stationOverlayScaleEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _stationOverlayCategory,
             "StationOverlayScale",
             1f,
             "Scale for backpack overlay in station menus"
         );
-        _handoverOverlayOffsetXEntry = _category.CreateEntry(
+        _handoverOverlayOffsetXEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _handoverOverlayCategory,
             "HandoverOverlayOffsetX",
             0f,
             "Horizontal offset for backpack overlay in deal handover menus"
         );
-        _handoverOverlayOffsetYEntry = _category.CreateEntry(
+        _handoverOverlayOffsetYEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _handoverOverlayCategory,
             "HandoverOverlayOffsetY",
             0f,
             "Vertical offset for backpack overlay in deal handover menus"
         );
-        _handoverOverlayScaleEntry = _category.CreateEntry(
+        _handoverOverlayScaleEntry = _legacyPreferenceMigration.CreateMovedEntry(
+            _handoverOverlayCategory,
             "HandoverOverlayScale",
             1f,
             "Scale for backpack overlay in deal handover menus"
         );
-        _embeddedBrowserLayoutDefaultsAppliedEntry = _category.CreateEntry(
+        _embeddedBrowserLayoutDefaultsAppliedEntry = _packratCategory.CreateEntry(
             "EmbeddedBrowserLayoutDefaultsApplied",
             false,
             "Tracks the one-time upgrade to full embedded backpack browser layouts"
@@ -258,22 +306,30 @@ public class Configuration
         _tierPriceEntries = new MelonPreferences_Entry<float>[BackpackTiers.Length];
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
-            _tierUnlockRankEntries[i] = _category.CreateEntry(
+            var tierCategory = CreateCategory(
+                $"PackRat_Tier{i}",
+                $"PackRat - Tier {i}: {BackpackTiers[i].Name}"
+            );
+            _tierUnlockRankEntries[i] = _legacyPreferenceMigration.CreateMovedEntry(
+                tierCategory,
                 $"Tier{i}_UnlockRank",
                 BackpackTiers[i].DefaultUnlockRank,
                 $"Required rank to unlock tier {i} ({BackpackTiers[i].Name})"
             );
-            _tierSlotCountEntries[i] = _category.CreateEntry(
+            _tierSlotCountEntries[i] = _legacyPreferenceMigration.CreateMovedEntry(
+                tierCategory,
                 $"Tier{i}_SlotCount",
                 BackpackTiers[i].DefaultSlotCount,
                 $"Number of storage slots for tier {i} ({BackpackTiers[i].Name})"
             );
-            _tierEnabledEntries[i] = _category.CreateEntry(
+            _tierEnabledEntries[i] = _legacyPreferenceMigration.CreateMovedEntry(
+                tierCategory,
                 $"Tier{i}_Enabled",
                 true,
                 $"Enable tier {i} ({BackpackTiers[i].Name}) - when disabled, this tier is not available"
             );
-            _tierPriceEntries[i] = _category.CreateEntry(
+            _tierPriceEntries[i] = _legacyPreferenceMigration.CreateMovedEntry(
+                tierCategory,
                 $"Tier{i}_Price",
                 DefaultTierPrices[i],
                 $"Price at hardware store for tier {i} ({BackpackTiers[i].Name})"
@@ -324,7 +380,8 @@ public class Configuration
     public int[] TierSlotCounts { get; internal set; }
 
     /// <summary>
-    /// Per-tier enable flags. When false, that tier is not available (not shown as unlockable, not used for current tier).
+    /// Per-tier enable flags. When false, that tier is not available
+    /// (not shown as unlockable and not used for the current tier).
     /// </summary>
     public bool[] TierEnabled { get; internal set; }
 
@@ -339,7 +396,13 @@ public class Configuration
     public void Load()
     {
         MelonPreferences.Load();
+        var migratedPreferenceCount = _legacyPreferenceMigration.Apply();
         Reset();
+        if (migratedPreferenceCount > 0)
+        {
+            MelonPreferences.Save();
+            ModLogger.Info($"Migrated {migratedPreferenceCount} preferences into organized categories.");
+        }
         ApplyEmbeddedBrowserLayoutDefaults();
         EnsureConfigFileExists();
     }
@@ -446,12 +509,22 @@ public class Configuration
         _embeddedBrowserLayoutDefaultsAppliedEntry.Value = EmbeddedBrowserLayoutDefaultsApplied;
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
-            _tierUnlockRankEntries[i].Value = new FullRank(TierUnlockRanks[i].Rank, Math.Clamp(TierUnlockRanks[i].Tier, 1, 5));
+            _tierUnlockRankEntries[i].Value = new FullRank(
+                TierUnlockRanks[i].Rank,
+                Math.Clamp(TierUnlockRanks[i].Tier, 1, 5)
+            );
             _tierSlotCountEntries[i].Value = Math.Max(PlayerBackpack.MinimumStorageSlots, TierSlotCounts[i]);
             _tierEnabledEntries[i].Value = TierEnabled[i];
             _tierPriceEntries[i].Value = Math.Max(0f, TierPrices[i]);
         }
         MelonPreferences.Save();
+    }
+
+    private MelonPreferences_Category CreateCategory(string identifier, string displayName)
+    {
+        var category = MelonPreferences.CreateCategory(identifier, displayName);
+        category.SetFilePath(_configFile, false);
+        return category;
     }
 
     private void EnsureConfigFileExists()
@@ -503,57 +576,85 @@ public class Configuration
         var sb = new StringBuilder();
         sb.AppendLine("[PackRat]");
         sb.AppendLine($"ToggleKey = \"{ToggleKey}\"");
-        sb.AppendLine($"EnableSearch = {EnableSearch.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"EnableSearch = {FormatConfigBool(EnableSearch)}");
+        sb.AppendLine($"EnableUiAnimations = {FormatConfigBool(EnableUiAnimations)}");
+        sb.AppendLine($"ReduceUiMotion = {FormatConfigBool(ReduceUiMotion)}");
+        sb.AppendLine($"ProtectFavoritesFromOrganization = {FormatConfigBool(ProtectFavoritesFromOrganization)}");
+        sb.Append("EmbeddedBrowserLayoutDefaultsApplied = ");
+        sb.AppendLine(FormatConfigBool(EmbeddedBrowserLayoutDefaultsApplied));
+
+        AppendConfigSection(sb, "PackRat_Diagnostics");
+        sb.AppendLine($"EnableDebugLogging = {FormatConfigBool(EnableDebugLogging)}");
+        sb.AppendLine($"EnableDeveloperProfiler = {FormatConfigBool(EnableDeveloperProfiler)}");
+        sb.AppendLine($"BackpackSyncDebugLogging = {FormatConfigBool(BackpackSyncDebugLogging)}");
+
+        AppendConfigSection(sb, "PackRat_Routing");
+        sb.AppendLine($"EnableSmartRouting = {FormatConfigBool(EnableSmartRouting)}");
+        sb.AppendLine($"RouteProducts = {FormatConfigBool(RouteProducts)}");
+        sb.AppendLine($"RouteSeeds = {FormatConfigBool(RouteSeeds)}");
+        sb.AppendLine($"RouteMixers = {FormatConfigBool(RouteMixers)}");
+        sb.AppendLine($"RouteReagents = {FormatConfigBool(RouteReagents)}");
+
+        AppendConfigSection(sb, "PackRat_Metrics");
+        sb.AppendLine($"ShowMetricsTray = {FormatConfigBool(ShowMetricsTray)}");
+        sb.AppendLine($"ShowProductQuantityMetric = {FormatConfigBool(ShowProductQuantityMetric)}");
+        sb.AppendLine($"ShowProductQuantityTotalMetric = {FormatConfigBool(ShowProductQuantityTotalMetric)}");
+        sb.AppendLine($"ShowProductUnitPriceMetric = {FormatConfigBool(ShowProductUnitPriceMetric)}");
+        sb.AppendLine($"ShowProductTotalPriceMetric = {FormatConfigBool(ShowProductTotalPriceMetric)}");
+        sb.AppendLine($"MetricsFontScale = {FormatConfigFloat(ClampMetricsFontScale(MetricsFontScale), "0.00")}");
+
+        AppendConfigSection(sb, "PackRat_Theme");
         sb.AppendLine($"BackpackUiTheme = {(int)BackpackUiThemes.Clamp((int)BackpackUiTheme)}");
         var customPrimary = (Color32)CustomBackpackUiPrimaryColor;
         sb.AppendLine($"BackpackCustomThemeRed = {customPrimary.r}");
         sb.AppendLine($"BackpackCustomThemeGreen = {customPrimary.g}");
         sb.AppendLine($"BackpackCustomThemeBlue = {customPrimary.b}");
-        sb.AppendLine($"BackpackOverlayOffsetX = {BackpackOverlayOffsetX.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
-        sb.AppendLine($"BackpackOverlayOffsetY = {BackpackOverlayOffsetY.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
-        sb.AppendLine($"BackpackOverlayScale = {ClampOverlayScale(BackpackOverlayScale).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}");
-        sb.AppendLine($"StorageOverlayOffsetX = {StorageOverlayOffsetX.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
-        sb.AppendLine($"StorageOverlayOffsetY = {StorageOverlayOffsetY.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
-        sb.AppendLine($"StorageOverlayScale = {ClampOverlayScale(StorageOverlayScale).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}");
-        sb.AppendLine($"StationOverlayOffsetX = {StationOverlayOffsetX.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
-        sb.AppendLine($"StationOverlayOffsetY = {StationOverlayOffsetY.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
-        sb.AppendLine($"StationOverlayScale = {ClampOverlayScale(StationOverlayScale).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}");
-        sb.AppendLine($"HandoverOverlayOffsetX = {HandoverOverlayOffsetX.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
-        sb.AppendLine($"HandoverOverlayOffsetY = {HandoverOverlayOffsetY.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
-        sb.AppendLine($"HandoverOverlayScale = {ClampOverlayScale(HandoverOverlayScale).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}");
-        sb.AppendLine($"EmbeddedBrowserLayoutDefaultsApplied = {EmbeddedBrowserLayoutDefaultsApplied.ToString().ToLowerInvariant()}");
+
+        AppendConfigSection(sb, "PackRat_BackpackOverlay");
+        AppendOverlayConfig(sb, "Backpack", BackpackOverlayOffsetX, BackpackOverlayOffsetY, BackpackOverlayScale);
+
+        AppendConfigSection(sb, "PackRat_StorageOverlay");
+        AppendOverlayConfig(sb, "Storage", StorageOverlayOffsetX, StorageOverlayOffsetY, StorageOverlayScale);
+
+        AppendConfigSection(sb, "PackRat_StationOverlay");
+        AppendOverlayConfig(sb, "Station", StationOverlayOffsetX, StationOverlayOffsetY, StationOverlayScale);
+
+        AppendConfigSection(sb, "PackRat_HandoverOverlay");
+        AppendOverlayConfig(sb, "Handover", HandoverOverlayOffsetX, HandoverOverlayOffsetY, HandoverOverlayScale);
 
         for (var i = 0; i < BackpackTiers.Length; i++)
         {
+            AppendConfigSection(sb, $"PackRat_Tier{i}");
             var rank = TierUnlockRanks[i];
             sb.AppendLine($"Tier{i}_UnlockRank = {{ Rank = \"{rank.Rank}\", Tier = {Math.Clamp(rank.Tier, 1, 5)} }}");
             sb.AppendLine($"Tier{i}_SlotCount = {Math.Max(PlayerBackpack.MinimumStorageSlots, TierSlotCounts[i])}");
+            sb.AppendLine($"Tier{i}_Enabled = {FormatConfigBool(TierEnabled[i])}");
+            sb.AppendLine($"Tier{i}_Price = {FormatConfigFloat(Math.Max(0f, TierPrices[i]), "0.0")}");
         }
-
-        for (var i = 0; i < BackpackTiers.Length; i++)
-            sb.AppendLine($"Tier{i}_Enabled = {TierEnabled[i].ToString().ToLowerInvariant()}");
-
-        for (var i = 0; i < BackpackTiers.Length; i++)
-            sb.AppendLine($"Tier{i}_Price = {Math.Max(0f, TierPrices[i]).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
-
-        sb.AppendLine($"EnableDebugLogging = {EnableDebugLogging.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"EnableDeveloperProfiler = {EnableDeveloperProfiler.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"BackpackSyncDebugLogging = {BackpackSyncDebugLogging.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"EnableUiAnimations = {EnableUiAnimations.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"ReduceUiMotion = {ReduceUiMotion.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"ProtectFavoritesFromOrganization = {ProtectFavoritesFromOrganization.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"EnableSmartRouting = {EnableSmartRouting.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"RouteProducts = {RouteProducts.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"RouteSeeds = {RouteSeeds.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"RouteMixers = {RouteMixers.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"RouteReagents = {RouteReagents.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"ShowMetricsTray = {ShowMetricsTray.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"ShowProductQuantityMetric = {ShowProductQuantityMetric.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"ShowProductQuantityTotalMetric = {ShowProductQuantityTotalMetric.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"ShowProductUnitPriceMetric = {ShowProductUnitPriceMetric.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"ShowProductTotalPriceMetric = {ShowProductTotalPriceMetric.ToString().ToLowerInvariant()}");
-        sb.AppendLine($"MetricsFontScale = {ClampMetricsFontScale(MetricsFontScale).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}");
         return sb.ToString();
+    }
+
+    private static void AppendConfigSection(StringBuilder sb, string category)
+    {
+        sb.AppendLine();
+        sb.AppendLine($"[{category}]");
+    }
+
+    private static void AppendOverlayConfig(StringBuilder sb, string prefix, float offsetX, float offsetY, float scale)
+    {
+        sb.AppendLine($"{prefix}OverlayOffsetX = {FormatConfigFloat(offsetX, "0.0")}");
+        sb.AppendLine($"{prefix}OverlayOffsetY = {FormatConfigFloat(offsetY, "0.0")}");
+        sb.AppendLine($"{prefix}OverlayScale = {FormatConfigFloat(ClampOverlayScale(scale), "0.00")}");
+    }
+
+    private static string FormatConfigFloat(float value, string format)
+    {
+        return value.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static string FormatConfigBool(bool value)
+    {
+        return value.ToString().ToLowerInvariant();
     }
 
     private static float ClampOverlayScale(float value)
